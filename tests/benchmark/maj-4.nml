@@ -1,0 +1,6 @@
+# x y width height name clock type magnetization
+85  50 50 100 A 0  INPUT  1 
+25 174 50 100 B 0  INPUT  1
+85 298 50 100 C 0  INPUT -1
+85 174 50 100 M 1 OUTPUT  0
+

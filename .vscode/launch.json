@@ -1,0 +1,29 @@
+{
+    // launch.json
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "FCN-QT-UI",
+                "type": "cppdbg",
+                "request": "launch",
+                "program": "${workspaceFolder}/build/fcnx_gui",
+                "args": [],
+                "stopAtEntry": false,
+                "cwd": "${workspaceFolder}",
+                "environment": [],
+                "externalConsole": false,
+                "MIMode": "gdb",
+                "setupCommands": [
+                    {
+                        "description": "为 gdb 启用整齐打印",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ],
+                "preLaunchTask": "Build",
+                "miDebuggerPath": "/usr/bin/gdb",
+                "miDebuggerArgs": "-q -ex quit; wait() { fg >/dev/null; }; /bin/gdb -q --interpreter=mi",
+                "visualizerFile": "/home/lys/.vscode-server/data/User/workspaceStorage/b968b32c6607d78e6c043fc75b440178/tonka3000.qtvsctools/qt.natvis.xml"
+            }
+        ]
+    }

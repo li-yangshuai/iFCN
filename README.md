@@ -13,7 +13,7 @@
 - **Flexible Output and Export Options**: Provides `.qca`, `.rst`, and `.tex` formats for academic and engineering applications.
 ## Design Workflows
 
-*IFCN* tool is implemented in C++based on cross platform QT framework, and its workflow is divided into manual design and automatic design: Figure []
+*IFCN* tool is implemented in C++based on cross platform QT framework, and its workflow is divided into manual design and automatic design: Figure![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/ifcn2.pdf)
 ### Manual Design Flow
 
 The manual design mode in *iFCN* enables intuitive graphical interaction for:

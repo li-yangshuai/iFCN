@@ -1,4 +1,3 @@
-
 #include "QCADCellItem.h"
 #include <QPainter>
 #include <QRectF>
@@ -6,6 +5,9 @@
 #include <QString>
 #include <QDebug>
 #include"QCADScene.h"
+#include "MainWindow.h"
+
+
 
 QDataStream &operator<<(QDataStream &out, const QCADCellItem &cellItem)
 {
@@ -44,7 +46,9 @@ QCADCellItem::QCADCellItem(CellType _qcaCellType)
     simon::x(dots[3]) = -4.5;
     simon::y(dots[3]) = -4.5;
     myCellType = _qcaCellType;
-    setFlags(ItemIsSelectable | ItemIsFocusable); 
+    setFlags(ItemIsSelectable | ItemIsFocusable);
+    setFlag(ItemSendsGeometryChanges);
+
     setAcceptHoverEvents(true);
 
 }
@@ -119,7 +123,9 @@ QCADCellItem::QCADCellItem()
     simon::y(dots[3]) = -4.5;
 
 
-    setFlags(ItemIsSelectable | ItemIsFocusable); 
+    setFlags(ItemIsSelectable | ItemIsFocusable);
+    setFlag(ItemSendsGeometryChanges);
+
     setAcceptHoverEvents(true);
 }
 
@@ -210,7 +216,9 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
             break;
     }
     //setPos(simon::x(*this), simon::y(*this));     //在scene层添加
-    setFlags(ItemIsSelectable | ItemIsFocusable ); 
+    setFlags(ItemIsSelectable | ItemIsFocusable);
+    setFlag(ItemSendsGeometryChanges);
+
     setAcceptHoverEvents(true);
 }
 
@@ -246,7 +254,9 @@ QCADCellItem::QCADCellItem(const QCACell &cell)
         simon::potential(dots[i]) = simon::potential(simon::dots(cell)[i]);
     }
 
-    setFlags(ItemIsSelectable | ItemIsFocusable ); 
+    setFlags(ItemIsSelectable | ItemIsFocusable);
+    setFlag(ItemSendsGeometryChanges);
+
     setAcceptHoverEvents(true);
 }
 
@@ -368,15 +378,59 @@ void QCADCellItem::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)  {
 }
 
 void QCADCellItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) {
-    // 弹出输入框获取新文本
-
     if (myCellType == CellType::InputCell || myCellType == CellType::OutputCell) {
+        QString oldName = QString::fromStdString(simon::name(*this));
         QString newName = QInputDialog::getText(nullptr, "Edit Cell Name", 
-                                                "Enter new name:", QLineEdit::Normal);
-        if(!newName.isEmpty() && nameLabel != nullptr){
-            nameLabel->setText(newName);
+                                                "Enter new name:", QLineEdit::Normal,
+                                                oldName);  // 默认值为旧名
+        if (!newName.isEmpty() && newName != oldName) {
+            // 更新 label 显示
+            if (!nameLabel) {
+                nameLabel = new QGraphicsSimpleTextItem(newName, this);
+                nameLabel->setPos(-7.5, 3);
+                nameLabel->setZValue(10);
+                QFont font = nameLabel->font();
+                font.setPointSize(15);
+                nameLabel->setFont(font);
+                nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+            } else {
+                nameLabel->setText(newName);
+            }
+
+            // 同步逻辑层数据
+            simon::name(*this) = newName.toStdString();
+
+            // 设置为“已修改”
+            if (scene()) {
+                const QList<QGraphicsView*> views = scene()->views();
+                if (!views.isEmpty()) {
+                    QWidget* viewWidget = views.first()->window();
+                    MainWindow* mainWin = qobject_cast<MainWindow*>(viewWidget);
+                    if (mainWin) {
+                        mainWin->setDirty(true);
+                    }
+                }
+            }
         }
     }
 
     QGraphicsItem::mouseDoubleClickEvent(event);
+}
+
+
+QVariant QCADCellItem::itemChange(GraphicsItemChange change, const QVariant &value)
+{
+    return QGraphicsItem::itemChange(change, value);
+}
+
+void QCADCellItem::createNameLabel(const QString &name) {
+    if (!name.isEmpty()) {
+        nameLabel = new QGraphicsSimpleTextItem(name, this);
+        nameLabel->setPos(-7.5, 3);
+        nameLabel->setZValue(10);
+        QFont font = nameLabel->font();
+        font.setPointSize(15);
+        nameLabel->setFont(font);
+        nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+    }
 }

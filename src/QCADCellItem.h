@@ -37,6 +37,8 @@ class QCADCellItem : public QGraphicsItem, public QCACell
         void drawCrossoverCell(QPainter* painter, QColor _color);
 
         QRectF boundingRect() const override;
+
+        void createNameLabel(const QString &name);
        
     protected:
         
@@ -45,6 +47,8 @@ class QCADCellItem : public QGraphicsItem, public QCACell
         void mousePressEvent(QGraphicsSceneMouseEvent *event) override;
         void mouseReleaseEvent(QGraphicsSceneMouseEvent *event) override;
         void mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) override;
+        QVariant itemChange(GraphicsItemChange change, const QVariant &value) override;
+
         
     public:
         CellType myCellType;

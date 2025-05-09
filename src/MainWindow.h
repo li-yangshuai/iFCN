@@ -205,7 +205,7 @@ private:
         QAction *startCoherenceSimWithSelectiveAction;
         QAction *energyAnalysisAction;
         QAction *SimWithSelective;
-                QThread *sthread;              // 线程指针  
+        QThread *sthread;              // 线程指针  
         /********帮助菜单项********/
         //添加帮助action
         

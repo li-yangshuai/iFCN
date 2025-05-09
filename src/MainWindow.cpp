@@ -566,8 +566,12 @@ void MainWindow::loadFile(const QString &fileName)
             cellItem->setPos(simon::x(*cellItem), simon::y(*cellItem));     //在scene层添加
             cellItem->setZValue(i);     //由layerComboBox的索引号决定
             cellItem->setVisible(true);
+            if (!QString::fromStdString(simon::name(*cellItem)).isEmpty()) {
+                cellItem->createNameLabel(QString::fromStdString(simon::name(*cellItem)));
+            }
             scene->addItem(cellItem);
             layers[i].push_back(cellItem);
+            
         }
     }
 
@@ -966,8 +970,6 @@ bool MainWindow::slotSaveAs()
     emit savedname(fileName);
     simfileName = fileName;//for 仿真文件名
     return saveFile(fileName);
-
-
 }
         
 void MainWindow::slotAddLayer()
@@ -1024,6 +1026,7 @@ void MainWindow::slotDeleteLayer()
     layers.remove(idx);    
 
     updateLayerAndCellZValue();
+    
 }
 
 void MainWindow::slotClockIndexChanged(int idx)
@@ -1159,16 +1162,28 @@ void MainWindow::slotDeleteItem()
 {
     QList<QGraphicsItem *> selectedItems = scene->selectedItems();
 
-    // qDebug()<< "lys";
     for (QGraphicsItem *item : selectedItems)
     {
+        // 从 scene 中移除
         scene->removeItem(item);
-        
 
+        // 从 layers 中查找并移除
+        for (int i = 0; i < layers.size(); ++i)
+        {
+            int index = layers[i].indexOf(item);
+            if (index != -1)
+            {
+                layers[i].remove(index);  // 从该层移除
+                break; // 找到后即可退出循环
+            }
+        }
+
+        // 删除对象
         delete item;
-
     }
+    setDirty(true);
 }
+
 
 void MainWindow::checkCellInserted(QVector<QVector<QGraphicsItem*>> &_layers, QCADCellItem* cellItem, int cell_layer, int x_coord, int y_coord)
 {

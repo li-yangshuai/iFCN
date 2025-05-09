@@ -1,6 +1,7 @@
 #include "QCADScene.h"
 #include <QGraphicsSceneMouseEvent>
 #include<QStandardItem>
+#include "MainWindow.h"
 
 bool QCADScene::is_gridVisible()
 {
@@ -160,14 +161,48 @@ void QCADScene::mouseMoveEvent(QGraphicsSceneMouseEvent *event){
 }
 
 void QCADScene::mouseReleaseEvent(QGraphicsSceneMouseEvent *event) {
-    if(currentMode == EditMode::Select){
-        foreach (QGraphicsItem *item, selectedItems()){
-            QPointF nextpos = caculateRealPostion(item->pos().x(), item->pos().y());
-            item->setPos(nextpos);
+    if (currentMode == EditMode::Select) {
+        foreach (QGraphicsItem *item, selectedItems()) {
+            if (item->type() == QCADCellItem::Type) {
+                QCADCellItem* cellItem = static_cast<QCADCellItem*>(item);
+
+                // 鼠标释放后的位置，吸附对齐
+                QPointF nextpos = caculateRealPostion(item->pos().x(), item->pos().y());
+
+                // 检查该位置是否已有其他 Cell（排除自己）
+                bool conflict = false;
+                QList<QGraphicsItem*> itemsAtPos = items(nextpos);
+                for (QGraphicsItem* other : itemsAtPos) {
+                    if (other == item) continue;
+                    if (other->type() == QCADCellItem::Type &&
+                        int(other->zValue()) == currentLayerIndex) {
+                        conflict = true;
+                        break;
+                    }
+                }
+
+                if (conflict) {
+                    // 冲突，回退到原逻辑位置
+                    cellItem->setPos(QPointF(simon::x(*cellItem), simon::y(*cellItem)));
+                    // qDebug() << "位置冲突，移动已取消";
+                } else {
+                    // 吸附 + 更新数据
+                    cellItem->setPos(nextpos);
+                    simon::x(*cellItem) = nextpos.x();
+                    simon::y(*cellItem) = nextpos.y();
+
+                    if (!views().isEmpty()) {
+                        if (MainWindow* mw = qobject_cast<MainWindow*>(views().first()->window())) {
+                            mw->setDirty(true);
+                        }
+                    }
+                }
+            }
         }
     }
 
     QGraphicsScene::mouseReleaseEvent(event);
 }
+
 
 

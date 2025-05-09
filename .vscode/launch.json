@@ -23,7 +23,7 @@
                 "preLaunchTask": "Build",
                 "miDebuggerPath": "/usr/bin/gdb",
                 "miDebuggerArgs": "-q -ex quit; wait() { fg >/dev/null; }; /bin/gdb -q --interpreter=mi",
-                "visualizerFile": "/home/lys/.vscode-server/data/User/workspaceStorage/b968b32c6607d78e6c043fc75b440178/tonka3000.qtvsctools/qt.natvis.xml"
+                "visualizerFile": "/home/lys/.vscode-server/data/User/workspaceStorage/f538a40993d6e0fb232b463276da440a/tonka3000.qtvsctools/qt.natvis.xml"
             }
         ]
     }

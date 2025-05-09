@@ -34,9 +34,15 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 ## 🛠️ Design Workflows
 
 <div align="center">
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/framework.png" width="400"/>
+  <p><b>Figure 2:</b> iFCN framework.</p>
+</div>
+
+
+<div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(a).png" width="400"/>
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(b).png" width="340"/>
-  <p><b>Figure 2:</b> GUI scenarios for manual and automatic layout design.</p>
+  <p><b>Figure 3 :</b> GUI scenarios for manual and automatic layout design.</p>
 </div>
 
 - **Manual Flow**: Integrated with *QCADesigner* for `.qca` file import and editing  
@@ -60,7 +66,7 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 <div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135020426.png" width="700"/>
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135035291.png" width="700"/>
-  <p><b>Figure 3:</b> End-to-end design flow of iFCN from Verilog to simulation analysis.</p>
+  <p><b>Figure 4:</b> End-to-end design flow of iFCN from Verilog to simulation analysis.</p>
 </div>
 
 ---
@@ -71,7 +77,7 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/screen3.png" width="500"/>
-  <p><b>Figure 4:</b> Simulation GUI with waveform view, logic trace, and clock visualization.</p>
+  <p><b>Figure 5:</b> Simulation GUI with waveform view, logic trace, and clock visualization.</p>
 </div>
 
 
@@ -122,7 +128,7 @@ make
   📧 fpeng1985@126.com
   📧 2023010123@mail.hfut.edu.cn
 
-- Installation / Bugs / Algorithm Issues
+- Programming & Coding
 📧 2023010123@mail.hfut.edu.cn
 
 ## 📖 Citation
@@ -134,6 +140,7 @@ If you think our work is useful, please kindly cite it in your work.
 
 
 - Y. Li, G. Xie, Q. Han, X. Li, G. Li, B. Zhang, and F. Peng, "Field-coupled nanocomputing placement and routing with genetic and A* algorithms,"IEEE Transactions on Circuits and Systems I: Regular Papers, vol. 69, no. 11, pp. 4619–4631, 2022.[DOI:10.1109/TCSI.2022.3197450](10.1109/TCSI.2022.3197450)
+- 李杨帅 , 彭斐 , 韩倩 , 李小帅 , 解光军. 一种针对QCA电路自动布局布线的混合策略研究[J]. 电子学报, 2023, 51(3): 666-674. https://doi.org/10.12263/DZXB.20211212
 
 📌 Simulation Engine:
 

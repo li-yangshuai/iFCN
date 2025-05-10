@@ -161,7 +161,7 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
             nameLabel->setPos(-7.5, 3);
             nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
             QFont font = nameLabel->font();
-            font.setPointSize(15);  // 设置字体大小为10，可以根据需要调整
+            font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
             nameLabel->setFont(font);
             nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
 
@@ -179,7 +179,7 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
             nameLabel->setPos(-7.5, 3);
             nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
             QFont font = nameLabel->font();
-            font.setPointSize(15);  // 设置字体大小为10，可以根据需要调整
+            font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
             nameLabel->setFont(font);
             nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
             // 如果需要改变颜色
@@ -390,7 +390,7 @@ void QCADCellItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) {
                 nameLabel->setPos(-7.5, 3);
                 nameLabel->setZValue(10);
                 QFont font = nameLabel->font();
-                font.setPointSize(15);
+                font.setPointSize(7);
                 nameLabel->setFont(font);
                 nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
             } else {
@@ -429,7 +429,7 @@ void QCADCellItem::createNameLabel(const QString &name) {
         nameLabel->setPos(-7.5, 3);
         nameLabel->setZValue(10);
         QFont font = nameLabel->font();
-        font.setPointSize(15);
+        font.setPointSize(7);
         nameLabel->setFont(font);
         nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
     }

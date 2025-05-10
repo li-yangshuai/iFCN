@@ -28,9 +28,9 @@ public slots:
     void slotCoherenceSim();
     void slotCoherenceSimWithSelective();
     void slotEnergyAnalysis();
-    void savedname(QString fileName);
-    void savedinputname(QVector<QString> inputname);
-    void sendvtnames(const QString &fileName);
+    void slotSavedname(QString fileName);
+    void slotSavedinputname(QVector<QString> inputname);
+    void slotSendvtnames(const QString &fileName);
     void slotSimWithSelective();
 public:
     QString curfileName;

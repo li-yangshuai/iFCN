@@ -205,7 +205,7 @@ private:
         QAction *startCoherenceSimWithSelectiveAction;
         QAction *energyAnalysisAction;
         QAction *SimWithSelective;
-        QThread *sthread;              // 线程指针  
+        // QThread *sthread;              // 线程指针  
         /********帮助菜单项********/
         //添加帮助action
         
@@ -215,7 +215,7 @@ private:
 
         /****** auto P&R *******/
         VerilogHandler *verilogHandler; 
-        QThread *thread;              // 线程指针     
+        // QThread *thread;              // 线程指针     
 
         /********状态栏********/   
 
@@ -225,7 +225,7 @@ signals:
 
 private:
         QVector<QString> inputname;
-        QString simfileName;//多线程仿真文件名
+        // QString simfileName;//多线程仿真文件名
 };
 
 #endif  //HFUT_GUI_MAINWINDOW_H

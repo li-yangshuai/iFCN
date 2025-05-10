@@ -74,7 +74,7 @@ void SimulationManager::energyAnalysis(const std::string &fname, Result &result)
     algo.run(design, vector_table, result, SimulationMode::Exhaustive);
  
 }
-void SimulationManager::savedname(QString fileName)//for 仿真文件名
+void SimulationManager::slotSavedname(QString fileName)//for 仿真文件名
 {
     this->curfileName = fileName;
 }
@@ -82,12 +82,7 @@ void SimulationManager::slotBistableSim() {
 
     //QString curFile = QFileDialog::getOpenFileName(nullptr, tr("Open File"), ".", tr("QCA files (*.qca)"));
     QString curFile = curfileName;
-    if (curFile.isEmpty()) {
-        qDebug()<<"文件为空";
-        return;
-    }
     Result result;
-    qDebug() << "当前线程对象的地址: " << QThread::currentThread();
     bistableSim(curFile.toStdString(), result);
     QString output_file_name;
     QFileInfo fileInfo(curFile);
@@ -100,15 +95,15 @@ void SimulationManager::slotSimWithSelective()
 {
     Typewindow * typewindow = new Typewindow(nullptr, this->lablename);
     typewindow->show();
-    connect(typewindow, &Typewindow::sendvtnames, this, &SimulationManager::sendvtnames);
+    connect(typewindow, &Typewindow::sendvtnames, this, &SimulationManager::slotSendvtnames);
 }
 
-void SimulationManager::savedinputname(QVector<QString> inputname)
+void SimulationManager::slotSavedinputname(QVector<QString> inputname)
 {
     this->lablename = inputname;
 }
 
-void SimulationManager::sendvtnames(const QString &fileName)
+void SimulationManager::slotSendvtnames(const QString &fileName)
 {
     this->vtfilenames = fileName;
 }
@@ -136,7 +131,7 @@ void SimulationManager::slotCoherenceSim() {
         return;
     }
     Result result;
-    qDebug() << "当前线程对象的地址: " << QThread::currentThread();
+    // qDebug() << "当前线程对象的地址: " << QThread::currentThread();
     coherenceSim(curFile.toStdString(), result);
     QString output_file_name;
     QFileInfo fileInfo(curFile);

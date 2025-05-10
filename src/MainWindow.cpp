@@ -170,7 +170,7 @@ void MainWindow::createActions()
 
     /******** "仿真"动作 *********/
     // connect(simulationManager, &SimulationManager::simulationFinished, this, &MainWindow::onSimulationFinished);
-    // connect(this, &MainWindow::savedname, simulationManager, &SimulationManager::savedname);//for 仿真文件名
+    connect(this, &MainWindow::savedname, simulationManager, &SimulationManager::slotSavedname);//for 仿真文件名
 
     startBistableSimAction = new QAction(tr("&Start Bistable Simulation"), this);
     startBistableSimAction->setShortcut(tr("Ctrl+B"));
@@ -180,18 +180,19 @@ void MainWindow::createActions()
     startCoherenceSimAction = new QAction(tr("&Start Coherence Simulation"), this);
     startCoherenceSimAction->setShortcut(tr("Ctrl+C"));
     startCoherenceSimAction->setStatusTip(tr("Start Coherence Simulation"));
+    connect(startCoherenceSimAction, &QAction::triggered, simulationManager, &SimulationManager::slotCoherenceSim);
 
-    sthread = new QThread;
-    simulationManager->moveToThread(sthread);
-    connect(sthread, &QThread::started, simulationManager, &SimulationManager::slotCoherenceSim);
-    connect(startCoherenceSimAction, &QAction::triggered, this, [=] () {
-        sthread->start();
-        simulationManager->curfileName = simfileName;
-        ;});
-    qDebug() << "主线程对象的地址: " << QThread::currentThread();
-    connect(simulationManager, &SimulationManager::simulationFinished, this, &MainWindow::onSimulationFinished);
-    connect(simulationManager, &SimulationManager::simulationFinished, sthread, &QThread::quit);
-    connect(sthread, &QThread::finished, sthread, &QThread::deleteLater);
+    // sthread = new QThread;
+    // simulationManager->moveToThread(sthread);
+    // connect(sthread, &QThread::started, simulationManager, &SimulationManager::slotCoherenceSim);
+    // connect(startCoherenceSimAction, &QAction::triggered, this, [=] () {
+    //     sthread->start();
+    //     simulationManager->curfileName = simfileName;
+    //     ;});
+    // qDebug() << "主线程对象的地址: " << QThread::currentThread();
+    // connect(simulationManager, &SimulationManager::simulationFinished, this, &MainWindow::onSimulationFinished);
+    // connect(simulationManager, &SimulationManager::simulationFinished, sthread, &QThread::quit);
+    // connect(sthread, &QThread::finished, sthread, &QThread::deleteLater);
     // connect(startCoherenceSimAction, &QAction::triggered, simulationManager, &SimulationManager::slotCoherenceSim);
 
     starBistableSimWithSelectiveAction = new QAction(tr("&Strar Bistable With Selective Simulation"));
@@ -214,7 +215,7 @@ void MainWindow::createActions()
     SimWithSelective->setStatusTip(tr("SimWithSelective"));
     connect(SimWithSelective, &QAction::triggered, simulationManager, &SimulationManager::slotSimWithSelective);
 
-    connect(this, &MainWindow::savedinputname, simulationManager, &SimulationManager::savedinputname);
+    connect(this, &MainWindow::savedinputname, simulationManager, &SimulationManager::slotSavedinputname);
     
     /******** "添加元胞层"动作 *********/
     addLayerAction = new QAction(QIcon(QDir::toNativeSeparators(":/addLayerAction.png")), tr("&AddLayer"), this);
@@ -274,14 +275,12 @@ void MainWindow::createActions()
     connect(dragModeButton, &QToolButton::toggled, this, &MainWindow::viewModeChange);
 
     // verilog parse
-    thread = new QThread(this);
-    verilogHandler->moveToThread(thread);
+    // thread = new QThread(this);
+    // verilogHandler->moveToThread(thread);
 
     verParseButton = new QPushButton("Heuristic");
     verParseButton->setCheckable(true);
-    connect(thread, &QThread::started, verilogHandler, &VerilogHandler::handleParseVerilogFile);
-    connect(verParseButton, &QPushButton::toggled, this, [=] () {
-        thread->start();});
+    connect(verParseButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::handleParseVerilogFile);
 
 
     graphRenderButton = new QPushButton("Graph Render");
@@ -578,7 +577,8 @@ void MainWindow::loadFile(const QString &fileName)
     setCurrentFile(fileName);
     statusBar()->showMessage(tr("Loaded %1").arg(fileName), 2000);
     emit savedname(fileName);
-    simfileName = fileName;//for 仿真文件名
+    // curFile = fileName;
+    // simfileName = fileName;//for 仿真文件名
 }
 
 void MainWindow::printToStatusBar(QString &message)
@@ -854,12 +854,6 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         // 保存窗口的设置
         settings.setValue(MostRecentFile, windowFilePath());
 
-        // 如果线程正在运行，先退出线程
-        if (thread->isRunning()) {
-            thread->quit();  // 请求线程退出
-            thread->wait();  // 等待线程完成
-        }
-
         event->accept();  // 允许窗口关闭
     } else {
         event->ignore();  // 如果取消了保存，则忽略窗口关闭事件
@@ -938,8 +932,6 @@ void MainWindow::slotOpen()
         {
             //QMessageBox::information(this, tr("Information"), tr("打开文件!"));
             loadFile(fileName);
-            emit savedname(fileName);
-            simfileName = fileName;//for 仿真文件名
         }
         else
         {
@@ -949,7 +941,6 @@ void MainWindow::slotOpen()
             newMainWindow->loadFile(fileName);
         }
     }
-
 }
 
 bool MainWindow::slotSave()
@@ -967,8 +958,10 @@ bool MainWindow::slotSaveAs()
         return false;
     if(!fileName.toLower().endsWith(".qca"))
         fileName += ".qca";
+    
     emit savedname(fileName);
-    simfileName = fileName;//for 仿真文件名
+    qDebug() << "fileName:" << fileName;
+    // simfileName = fileName;//for 仿真文件名
     return saveFile(fileName);
 }
         

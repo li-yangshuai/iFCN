@@ -23,12 +23,16 @@ class QCADCellItem : public QGraphicsItem, public QCACell
         int type() const override {return Type;}
 
 
+        //加载.qca文件，读取文件，绘制qca电路图
         QCADCellItem(CellType _qcaCellType);
 
-        QCADCellItem();
+        // QCADCellItem();
+        //鼠标点击，选择cell类型，放置cell
         QCADCellItem( int mousePointX, int mousePointY, int layerIdx = 0, int clockIdx = 0, CellType _qcaCellType = CellType::NormalCell, QString _name = "default");
+        
         QCADCellItem(const QCACell &cell);
         //QCADCellItem(const QCADCellItem &cellItem);
+        CellType getCellType() const; 
 
         QPixmap image(int _clockIdx);
         void drawNormalCell(QPainter* painter, QColor _color);

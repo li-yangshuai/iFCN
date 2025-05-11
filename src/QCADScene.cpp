@@ -145,6 +145,7 @@ void QCADScene::mousePressEvent(QGraphicsSceneMouseEvent *event){
         emit cellItemInserted(cellItem);
 
     }else if (currentMode == EditMode::Select) {
+        // check if the item is cell， is not clockzone
         foreach (QGraphicsItem *item, selectedItems()){
             if(item->type() == QCADCellItem::Type){
                 item->setFlag(QGraphicsItem::ItemIsMovable, true);

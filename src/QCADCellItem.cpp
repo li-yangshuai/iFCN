@@ -37,21 +37,51 @@ QDataStream &operator<<(QDataStream &out, const QCADCellItem &cellItem)
 
 QCADCellItem::QCADCellItem(CellType _qcaCellType)
 {
-    simon::x(dots[0]) =  4.5;
-    simon::y(dots[0]) = -4.5;
-    simon::x(dots[1]) =  4.5;
-    simon::y(dots[1]) =  4.5;
-    simon::x(dots[2]) = -4.5;
-    simon::y(dots[2]) =  4.5;
-    simon::x(dots[3]) = -4.5;
-    simon::y(dots[3]) = -4.5;
-    myCellType = _qcaCellType;
+    // 初始化 dots
+    simon::x(dots[0]) =  4.5; simon::y(dots[0]) = -4.5;
+    simon::x(dots[1]) =  4.5; simon::y(dots[1]) =  4.5;
+    simon::x(dots[2]) = -4.5; simon::y(dots[2]) =  4.5;
+    simon::x(dots[3]) = -4.5; simon::y(dots[3]) = -4.5;
+
+    // 设置逻辑类型
+    switch (_qcaCellType) {
+        case CellType::InputCell:
+            simon::function(*this) = FCNCellFunction::INPUT;
+            simon::cellMode(*this) = QCACellMode::NORMAL;
+            simon::name(*this) = ""; // 可后续更新
+            break;
+        case CellType::OutputCell:
+            simon::function(*this) = FCNCellFunction::OUTPUT;
+            simon::cellMode(*this) = QCACellMode::NORMAL;
+            simon::name(*this) = "";
+            break;
+        case CellType::FixedCell_0:
+            simon::function(*this) = FCNCellFunction::FIXED;
+            simon::name(*this) = "-1.00";
+            break;
+        case CellType::FixedCell_1:
+            simon::function(*this) = FCNCellFunction::FIXED;
+            simon::name(*this) = "1.00";
+            break;
+        case CellType::VerticalCell:
+            simon::function(*this) = FCNCellFunction::NORMAL;
+            simon::cellMode(*this) = QCACellMode::VERTICAL;
+            break;
+        case CellType::CrossoverCell:
+            simon::function(*this) = FCNCellFunction::NORMAL;
+            simon::cellMode(*this) = QCACellMode::CROSSOVER;
+            break;
+        default:
+            simon::function(*this) = FCNCellFunction::NORMAL;
+            simon::cellMode(*this) = QCACellMode::NORMAL;
+            break;
+    }
+
     setFlags(ItemIsSelectable | ItemIsFocusable);
     setFlag(ItemSendsGeometryChanges);
-
     setAcceptHoverEvents(true);
-
 }
+
 
 
 QPixmap QCADCellItem::image(int _clockIdx) {
@@ -62,74 +92,67 @@ QPixmap QCADCellItem::image(int _clockIdx) {
     painter->translate(10, 10);
     QColor cellColor;
     switch(_clockIdx) {
-        case 0 :
-            cellColor = QColor(PARSE_0);
-            break;
-        case 1 :
-            cellColor = QColor(PARSE_1);
-            break;
-        case 2 :
-            cellColor = QColor(PARSE_2);
-            break;
-        case 3 :
-            cellColor = QColor(PARSE_3);
-            break;
-        default:
-            cellColor = QColor(0, 0, 0, 255);
-            break;
+        case 0 : cellColor = QColor(PARSE_0); break;
+        case 1 : cellColor = QColor(PARSE_1); break;
+        case 2 : cellColor = QColor(PARSE_2); break;
+        case 3 : cellColor = QColor(PARSE_3); break;
+        default: cellColor = QColor(0, 0, 0, 255); break;
     }
-
-    switch (myCellType)
-    {
-        case CellType::NormalCell :
-            drawNormalCell(painter, cellColor);
-            break;
-        case CellType::InputCell :
-            drawNormalCell(painter, INPUT_COLOR);
-            break;
-        case CellType::OutputCell :
-            drawNormalCell(painter, OUTPUT_COLOR);
-            break;
-        case CellType::FixedCell_0 :
-            drawFixedCell(painter, "-1.00");
-            break;
-        case CellType::FixedCell_1:
-            drawFixedCell(painter, "1.00");
-            break;
-        case CellType::VerticalCell :
-            drawHoleCell(painter, cellColor);
-            break;
-        case CellType::CrossoverCell :
-            drawCrossoverCell(painter, cellColor);
-            break;
-        default:
-            break;
+    switch (getCellType()) {
+        case CellType::NormalCell : drawNormalCell(painter, cellColor); break;
+        case CellType::InputCell : drawNormalCell(painter, INPUT_COLOR); break;
+        case CellType::OutputCell : drawNormalCell(painter, OUTPUT_COLOR); break;
+        case CellType::FixedCell_0 : drawFixedCell(painter, "-1.00"); break;
+        case CellType::FixedCell_1 : drawFixedCell(painter, "1.00"); break;
+        case CellType::VerticalCell : drawHoleCell(painter, cellColor); break;
+        case CellType::CrossoverCell : drawCrossoverCell(painter, cellColor); break;
+        default: break;
     }
-
-
     return pixmap;
 }
 
 
-QCADCellItem::QCADCellItem()
-{
-    simon::x(dots[0]) =  4.5;
-    simon::y(dots[0]) = -4.5;
-    simon::x(dots[1]) =  4.5;
-    simon::y(dots[1]) =  4.5;
-    simon::x(dots[2]) = -4.5;
-    simon::y(dots[2]) =  4.5;
-    simon::x(dots[3]) = -4.5;
-    simon::y(dots[3]) = -4.5;
+// QCADCellItem::QCADCellItem(){
+//     simon::x(dots[0]) =  4.5;
+//     simon::y(dots[0]) = -4.5;
+//     simon::x(dots[1]) =  4.5;
+//     simon::y(dots[1]) =  4.5;
+//     simon::x(dots[2]) = -4.5;
+//     simon::y(dots[2]) =  4.5;
+//     simon::x(dots[3]) = -4.5;
+//     simon::y(dots[3]) = -4.5;
 
 
-    setFlags(ItemIsSelectable | ItemIsFocusable);
-    setFlag(ItemSendsGeometryChanges);
+//     setFlags(ItemIsSelectable | ItemIsFocusable);
+//     setFlag(ItemSendsGeometryChanges);
+//     setAcceptHoverEvents(true);
+// }
 
-    setAcceptHoverEvents(true);
+CellType QCADCellItem::getCellType() const {
+    auto func = simon::function(*this);
+    auto mode = simon::cellMode(*this);
+
+    if (func == FCNCellFunction::INPUT)
+        return CellType::InputCell;
+    else if (func == FCNCellFunction::OUTPUT)
+        return CellType::OutputCell;
+    else if (func == FCNCellFunction::FIXED) {
+        if (simon::name(*this) == "-1.00")
+            return CellType::FixedCell_0;
+        else if (simon::name(*this) == "1.00")
+            return CellType::FixedCell_1;
+        else
+            return CellType::FixedCell_0;
+    } else if (mode == QCACellMode::CROSSOVER)
+        return CellType::CrossoverCell;
+    else if (mode == QCACellMode::VERTICAL)
+        return CellType::VerticalCell;
+    else
+        return CellType::NormalCell;
 }
 
-QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*/, int clockIdx /*=0*/,CellType _qcaCellType, QString _name)
+QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*/, 
+    int clockIdx /*=0*/,CellType _qcaCellType, QString _name)
 {
     myCellType = _qcaCellType;
     simon::x(*this) = mousePointX;
@@ -158,7 +181,7 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
             IOName = _name;
             nameLabel = new QGraphicsSimpleTextItem(_name, this);
             
-            nameLabel->setPos(-7.5, 3);
+            nameLabel->setPos(12, -5);
             nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
             QFont font = nameLabel->font();
             font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
@@ -176,7 +199,7 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
         case CellType::OutputCell:{
             IOName = _name;
             nameLabel = new QGraphicsSimpleTextItem(_name, this);
-            nameLabel->setPos(-7.5, 3);
+            nameLabel->setPos(12, -5);
             nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
             QFont font = nameLabel->font();
             font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
@@ -189,15 +212,32 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
             simon::cellMode(*this) = QCACellMode::NORMAL;
             break;
         }
-        case CellType::FixedCell_0:
+        case CellType::FixedCell_0:{
             simon::name(*this) = "-1.00";
             simon::function(*this) = FCNCellFunction::FIXED;
             simon::cellMode(*this) = QCACellMode::NORMAL;
+            nameLabel = new QGraphicsSimpleTextItem("-1.00", this);
+            nameLabel->setPos(12, -5);
+            nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
+            
+            QFont font = nameLabel->font();
+            font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
+            nameLabel->setFont(font);
+            nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+            }
             break;
-        case CellType::FixedCell_1:
+        case CellType::FixedCell_1:{
             simon::name(*this) = "1.00";
             simon::function(*this) = FCNCellFunction::FIXED;
             simon::cellMode(*this) = QCACellMode::NORMAL;
+            nameLabel = new QGraphicsSimpleTextItem("1.00", this);
+            nameLabel->setPos(12, -5);
+            nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
+            QFont font = nameLabel->font();
+            font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
+            nameLabel->setFont(font);
+            nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+        }
             break;
         case CellType::VerticalCell:
             simon::name(*this) = "";
@@ -256,7 +296,6 @@ QCADCellItem::QCADCellItem(const QCACell &cell)
 
     setFlags(ItemIsSelectable | ItemIsFocusable);
     setFlag(ItemSendsGeometryChanges);
-
     setAcceptHoverEvents(true);
 }
 
@@ -378,29 +417,25 @@ void QCADCellItem::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)  {
 }
 
 void QCADCellItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) {
-    if (myCellType == CellType::InputCell || myCellType == CellType::OutputCell) {
+    // qDebug() << "QCADCellItem::mouseDoubleClickEvent";
+
+    if (getCellType() == CellType::InputCell || getCellType() == CellType::OutputCell) {
         QString oldName = QString::fromStdString(simon::name(*this));
-        QString newName = QInputDialog::getText(nullptr, "Edit Cell Name", 
-                                                "Enter new name:", QLineEdit::Normal,
-                                                oldName);  // 默认值为旧名
+        QString newName = QInputDialog::getText(nullptr, "Edit Cell Name", "Enter new name:", QLineEdit::Normal, oldName);
+
         if (!newName.isEmpty() && newName != oldName) {
-            // 更新 label 显示
             if (!nameLabel) {
                 nameLabel = new QGraphicsSimpleTextItem(newName, this);
-                nameLabel->setPos(-7.5, 3);
+                nameLabel->setPos(12, -5);
                 nameLabel->setZValue(10);
-                QFont font = nameLabel->font();
-                font.setPointSize(7);
+                QFont font = nameLabel->font(); font.setPointSize(7);
                 nameLabel->setFont(font);
                 nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
             } else {
                 nameLabel->setText(newName);
             }
-
-            // 同步逻辑层数据
             simon::name(*this) = newName.toStdString();
 
-            // 设置为“已修改”
             if (scene()) {
                 const QList<QGraphicsView*> views = scene()->views();
                 if (!views.isEmpty()) {
@@ -413,7 +448,6 @@ void QCADCellItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) {
             }
         }
     }
-
     QGraphicsItem::mouseDoubleClickEvent(event);
 }
 
@@ -426,7 +460,7 @@ QVariant QCADCellItem::itemChange(GraphicsItemChange change, const QVariant &val
 void QCADCellItem::createNameLabel(const QString &name) {
     if (!name.isEmpty()) {
         nameLabel = new QGraphicsSimpleTextItem(name, this);
-        nameLabel->setPos(-7.5, 3);
+        nameLabel->setPos(12, -5);
         nameLabel->setZValue(10);
         QFont font = nameLabel->font();
         font.setPointSize(7);

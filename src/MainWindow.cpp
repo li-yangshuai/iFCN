@@ -901,7 +901,7 @@ void MainWindow::setCurrentFile(const QString &fileName)
     if(curFile.isEmpty())
         shownName = "Unnamed";
     //setWindowFilePath(shownName);
-    setWindowTitle(tr("%1[*] - Spars2.0-HFUT").arg(shownName));
+    setWindowTitle(tr("%1[*] - iFCN").arg(shownName));
 }
         
 void MainWindow::setDirty(bool on)

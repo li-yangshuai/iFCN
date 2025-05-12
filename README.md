@@ -19,30 +19,93 @@ The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and *
 
 ---
 
-## 🌱 MolQCA Fundamentals
+# 👨‍💻 Author 
+
+### **Yangshuai Li**  
+🎓 *Ph.D. Candidate*  
+🏫 School of Microelectronics, Hefei University of Technology (HFUT)  
+🔧 Lead developer of **iFCN-EDA**  
+📧 2023010123@mail.hfut.edu.cn
+- Designed automated placement & routing algorithms  
+- Built the UI framework  
+- Maintains and integrates the full codebase  
+
+
+
+### 🤝 Core Contributors (under development since 2018 )
+
+| Name               | Title / Affiliation                            | Contribution                                                                 | Email                        |
+|--------------------|--------------------------------------------------|------------------------------------------------------------------------------|------------------------------|
+| **Prof. Guangjun Xie** | Professor, HFUT     | Founder of iFCN Lab, academic advisor; guidance on FCN design methodology | gjxie8005@hfut.edu.cn       |
+| **Dr. Fei Peng**   | Lecturer, HBFU              | Initiator of iFCN-EDA; designed logic synthesis algorithm, placement and routing algorithm, and simulation engine | fpeng1985@126.com           |
+| **Xiansheng Tong** | M.Sc. Candidate, HFUT                           | Developed gate-to-cell level mapping algorithm for placement and routing results                            | 2023171256@mail.hfut.edu.cn|
+| **Rongjie Zhu**    | M.Sc. Candidate, HFUT                           | Designed UI interface for simulation module                                  | 2023110949@mail.hfut.edu.cn  |
+| **JiaChen Gao**    | M.Sc. Candidate, HFUT                           | ---                                 | --- |
+| **XiangHan Wang**    | M.Sc. Candidate, HFUT                           | ---                                 | --- |
+
+🙌 Others Contributors (graduated): 
+Zhengjie Xiao, Dong Xu, Rui Kuang, GaiSheng Li, Bing Zhang, Qian Han
+
+---
+
+
+# 🌱 MolQCA Fundamentals
 
 Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computing paradigm with ultra-low power consumption and high integration density. **Molecular QCA (MolQCA)** forms its physical foundation.
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141423048.png" width="400"/>
+   <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141607113.png" width="335"/>
   <p><b>Figure 1:</b> Left: MolQCA cell types and clocking schemes. Right: Standard cell library and corresponding layouts.</p>
 </div>
 
 ---
 
-## 🛠️ Design Workflows
+
+# 🧩 iFCN display
+
+### 😲Manual circuit design
+<div align="center">
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif" width="400"/>
+   <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif" width="400"/>
+  <p><b>Figure 1 :</b> Insertion of different cell types, clocking schemes, and simulation results.</p>
+</div>
+
+### 🤓🔥Automated circuit design
+<div align="center">
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate3.gif" width="400"/>
+   <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate4.gif" width="400"/>
+  <p><b>Figure 2 :</b> Automated circuit design by P&R algorithm.</p>
+</div>
+
+### 😎Compatible with QCADesigner 
+<div align="center">
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate5.gif" width="500"/>
+  <p><b>Figure 3:</b> It is also compatible with QCADesigner.</p>
+</div>
+
+
+
+
+
+---
+
+## 🛠️ iFCN Design Workflow
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/framework.png" width="400"/>
-  <p><b>Figure 2:</b> iFCN framework.</p>
+  <p><b>Figure 5:</b> iFCN framework.</p>
 </div>
 
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(a).png" width="400"/>
+  <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(b).png" width="340"/>
-  <p><b>Figure 3 :</b> GUI scenarios for manual and automatic layout design.</p>
+  <p><b>Figure 6 :</b> GUI scenarios for manual and automatic layout design.</p>
 </div>
 
 - **Manual Flow**: Integrated with *QCADesigner* for `.qca` file import and editing  
@@ -50,9 +113,9 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 - **Simulation & Energy Analysis**: Supports bistable/coherence vector models and real-time energy visualization  
 - **Output Support**: `.qca`, `.rst`, `.tex` formats for downstream use
 
----
 
-## 🔄 Automated Placement & Routing (P&R)
+
+## 🔥 Automated Placement & Routing (P&R)
 
 *iFCN* integrates several advanced techniques:
 
@@ -64,27 +127,25 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 - Adaptive mapping: Converts logical layout to **cell-level design**
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135020426.png" width="700"/>
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135035291.png" width="700"/>
-  <p><b>Figure 4:</b> End-to-end design flow of iFCN from Verilog to simulation analysis.</p>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135020426.png" width="800"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135035291.png" width="800"/>
+  <p><b>Figure 7:</b> End-to-end design flow of iFCN from Verilog to simulation analysis.</p>
 </div>
 
 ---
 
-## ⚡ Simulation and Energy Analysis
+## ✅ Simulation and Energy Analysis
 
 *iFCN* includes a modular C++ simulation engine supporting both **bistable** and **coherence vector** models. Read more in our [published paper](https://ietresearch.onlinelibrary.wiley.com/doi/full/10.1049/el.2019.1861).
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/screen3.png" width="500"/>
-  <p><b>Figure 5:</b> Simulation GUI with waveform view, logic trace, and clock visualization.</p>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/simulation.png" width="500"/>
+  <p><b>Figure 8:</b> Simulation GUI with waveform view, logic trace, and clock visualization.</p>
 </div>
-
-
 
 ---
 
-# 🧩 Installation Guide
+# 📦 Installation Guide
 
 ## Environment
 
@@ -122,17 +183,10 @@ make
 ./fcnx_gui
 ```
 
-## 📬 Contact Us
-- Academic Cooperation
-  📧 gjxie8005@hfut.edu.cn
-  📧 fpeng1985@126.com
-  📧 2023010123@mail.hfut.edu.cn
-
-- Programming & Coding
-📧 2023010123@mail.hfut.edu.cn
 
 ## 📖 Citation
-If you think our work is useful, please kindly cite it in your work.
+If you think our work is useful, please kindly ⭐️ star this repository or cite our work in your research.
+📬 For any software-related questions or issues, feel free to contact me via the email provided at the top.  
 
 📌 Layout and Routing Algorithms & Framework:
 

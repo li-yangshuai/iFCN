@@ -13,7 +13,7 @@
 
 ---
 
-**iFCN** is an automated design platform for **Molecular Field-Coupled Nanocomputing (MolFCN)** circuits, developed by the iFCN Lab at the School of Microelectronics, Hefei University of Technology (HFUT), China.
+*iFCN* is an automated design platform for **Molecular Field-Coupled Nanocomputing (MolFCN)** circuits, developed by the **iFCN** Lab at the School of Microelectronics, Hefei University of Technology (HFUT), China.
 
 The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and **Python**, supporting both **manual** and **automatic** design flows. It enables researchers and engineers to construct, visualize, and analyze MolFCN circuits through a **clock-aware and layout-driven workflow**.
 
@@ -32,7 +32,7 @@ The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and *
 
 
 
-### 🤝 Core Contributors (under development since 2018 )
+### 🧑‍💻 Core Contributors (since 2018)
 
 | Name               | Title / Affiliation                            | Contribution                                                                 | Email                        |
 |--------------------|--------------------------------------------------|------------------------------------------------------------------------------|------------------------------|
@@ -43,7 +43,7 @@ The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and *
 | **JiaChen Gao**    | M.Sc. Candidate, HFUT                           | ---                                 | --- |
 | **XiangHan Wang**    | M.Sc. Candidate, HFUT                           | ---                                 | --- |
 
-🙌 Others Contributors (graduated): 
+👥 Others Contributors (graduated): 
 Zhengjie Xiao, Dong Xu, Rui Kuang, GaiSheng Li, Bing Zhang, Qian Han
 
 ---
@@ -51,53 +51,65 @@ Zhengjie Xiao, Dong Xu, Rui Kuang, GaiSheng Li, Bing Zhang, Qian Han
 
 # 🌱 MolQCA Fundamentals
 
-Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computing paradigm with ultra-low power consumption and high integration density. **Molecular QCA (MolQCA)** forms its physical foundation.
+Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computing paradigm with ultra-low power consumption and high integration density. Molecular QCA (MolQCA) forms its physical foundation.
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141423048.png" width="400"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141423048.png" width="450"/>
    <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141607113.png" width="335"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141607113.png" width="370"/>
   <p><b>Figure 1:</b> Left: MolQCA cell types and clocking schemes. Right: Standard cell library and corresponding layouts.</p>
 </div>
 
 ---
 
 
-# 🧩 iFCN display
+# 🧩 UI 
 
 ### 😲Manual circuit design
 <div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif" width="400"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif" width="500"/>
    <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif" width="400"/>
-  <p><b>Figure 1 :</b> Insertion of different cell types, clocking schemes, and simulation results.</p>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif" width="500"/>
+  <p><b>Figure 2 :</b> Insertion of different cell types, clocking schemes, and simulation results.</p>
 </div>
 
-### 🤓🔥Automated circuit design
+
+
+### 🔥 Automated placement & routing in two scenarios
+
+To meet different design needs, iFCN-EDA supports two distinct placement and routing strategies:
+
+| Scenario                    | Clock Scheme   | Area         | Routing Speed | Suitable For                               |
+|-----------------------------|----------------|--------------|---------------|--------------------------------------------|
+| 🔹 **Regular Clocking**     | Structured     |  Smaller    |  Moderate    | Small-scale circuits with simple topology  |
+| 🔸 **Random Clocking**      | Irregular      |  Larger     |  Faster       | Medium-to-large and complex circuit designs |
+
+
 <div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate3.gif" width="400"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr1.gif" width="500"/>
    <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate4.gif" width="400"/>
-  <p><b>Figure 2 :</b> Automated circuit design by P&R algorithm.</p>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr2.gif" width="500"/>
+    <p><b>Figure 3:</b> Two Scenarios P&R alogorithm.</p>
 </div>
 
 ### 😎Compatible with QCADesigner 
+iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling seamless comparison, co-validation, and integration of layout and simulation results.
 <div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate5.gif" width="500"/>
-  <p><b>Figure 3:</b> It is also compatible with QCADesigner.</p>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate5.gif" width="700"/>
+  <p><b>Figure 4:</b> It is also compatible with QCADesigner.</p>
 </div>
-
-
 
 
 
 ---
 
-## 🛠️ iFCN Design Workflow
+# 🛠️ Workflow 
+
+### 🕹️Design flow
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/framework.png" width="400"/>
-  <p><b>Figure 5:</b> iFCN framework.</p>
+  <p><b>Figure 5:</b> *iFCN* framework.</p>
 </div>
 
 
@@ -115,7 +127,7 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 
 
 
-## 🔥 Automated Placement & Routing (P&R)
+### 🔥 Core technologies
 
 *iFCN* integrates several advanced techniques:
 
@@ -129,12 +141,11 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 <div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135020426.png" width="800"/>
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135035291.png" width="800"/>
-  <p><b>Figure 7:</b> End-to-end design flow of iFCN from Verilog to simulation analysis.</p>
+  <p><b>Figure 7:</b> End-to-end design flow of *iFCN* from Verilog to simulation analysis.</p>
 </div>
 
----
 
-## ✅ Simulation and Energy Analysis
+### 📊 Simulation and Energy Analysis
 
 *iFCN* includes a modular C++ simulation engine supporting both **bistable** and **coherence vector** models. Read more in our [published paper](https://ietresearch.onlinelibrary.wiley.com/doi/full/10.1049/el.2019.1861).
 
@@ -147,14 +158,14 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 
 # 📦 Installation Guide
 
-## Environment
+### Environment
 
 > ⚠️ This project is under active development and does not yet have a release version.
 
 - OS: Ubuntu 20.04 (recommended under WSL2 on Windows)
 - Requires: Qt (5 or 6), LaTeX, C++17, and basic Linux dependencies
 
-## Required Packages
+### Required Packages
 
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -172,7 +183,7 @@ sudo apt install -y texlive-full
 sudo apt install -y git g++ cmake pkg-config libboost-all-dev graphviz python3 python3-dev libreadline-dev 
 ```
 
-## Compile and Run
+### Compile and Run
 
 ```bash
 git clone --recursive https://github.com/li-yangshuai/iFCN.git
@@ -184,9 +195,9 @@ make
 ```
 
 
-## 📖 Citation
-If you think our work is useful, please kindly ⭐️ star this repository or cite our work in your research.
-📬 For any software-related questions or issues, feel free to contact me via the email provided at the top.  
+# 📖 Citation
+**If you think our work is useful, please kindly ⭐️ star this repository or cite our work in your research.
+📬 For any software-related questions or issues, feel free to contact me via the email provided at the top.**
 
 📌 Layout and Routing Algorithms & Framework:
 

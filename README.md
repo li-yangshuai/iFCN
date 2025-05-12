@@ -32,7 +32,7 @@ The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and *
 
 
 
-### 🧑‍💻 Core Contributors (since 2018)
+### 🧑‍💻 Core contributors (since 2018)
 
 | Name               | Title / Affiliation                            | Contribution                                                                 | Email                        |
 |--------------------|--------------------------------------------------|------------------------------------------------------------------------------|------------------------------|
@@ -40,16 +40,21 @@ The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and *
 | **Dr. Fei Peng**   | Lecturer, HBFU              | Initiator of iFCN-EDA; designed logic synthesis algorithm, placement and routing algorithm, and simulation engine | fpeng1985@126.com           |
 | **Xiansheng Tong** | M.Sc. Candidate, HFUT                           | Developed gate-to-cell level mapping algorithm for placement and routing results                            | 2023171256@mail.hfut.edu.cn|
 | **Rongjie Zhu**    | M.Sc. Candidate, HFUT                           | Designed UI interface for simulation module                                  | 2023110949@mail.hfut.edu.cn  |
-| **JiaChen Gao**    | M.Sc. Candidate, HFUT                           | ---                                 | --- |
-| **XiangHan Wang**    | M.Sc. Candidate, HFUT                           | ---                                 | --- |
 
-👥 Others Contributors (graduated): 
-Zhengjie Xiao, Dong Xu, Rui Kuang, GaiSheng Li, Bing Zhang, Qian Han
+
+**Current Graduate Students**  
+JiaChen Gao, XiangHan Wang, ZhiXue Jiang
+
+
+**Alumni Contributors**  
+Zhengjie Xiao, Dong Xu, Rui Kuang, Gaisheng Li, Bing Zhang, Qian Han
+
+
 
 ---
 
 
-# 🌱 MolQCA Fundamentals
+# 🌱 MolQCA fundamentals
 
 Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computing paradigm with ultra-low power consumption and high integration density. Molecular QCA (MolQCA) forms its physical foundation.
 
@@ -63,7 +68,7 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 ---
 
 
-#  🎮 GUI Showcase
+#  🎮 GUI showcase
 | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(a).png) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(b).png) |
 |:-----------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------:|
 | 🖱️ Manual Layout Mode                                                              | ⚙️ Automatic Layout Mode                                                           |
@@ -161,7 +166,7 @@ iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling s
 - OS: Ubuntu 20.04 (recommended under WSL2 on Windows)
 - Requires: Qt (5 or 6), LaTeX, C++17, and basic Linux dependencies
 
-### Required Packages
+### Required packages
 
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -179,7 +184,7 @@ sudo apt install -y texlive-full
 sudo apt install -y git g++ cmake pkg-config libboost-all-dev graphviz python3 python3-dev libreadline-dev 
 ```
 
-### Compile and Run
+### Compile and run
 
 ```bash
 git clone --recursive https://github.com/li-yangshuai/iFCN.git

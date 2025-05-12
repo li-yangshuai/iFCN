@@ -67,9 +67,9 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 
 ### 😲Manual circuit design
 <div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif" width="500"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif" width="450"/>
    <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif" width="500"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif" width="450"/>
   <p><b>Figure 2 :</b> Insertion of different cell types, clocking schemes, and simulation results.</p>
 </div>
 
@@ -86,9 +86,9 @@ To meet different design needs, iFCN-EDA supports two distinct placement and rou
 
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr1.gif" width="500"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr1.gif" width="450"/>
    <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr2.gif" width="500"/>
+  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr2.gif" width="450"/>
     <p><b>Figure 3:</b> Two Scenarios P&R alogorithm.</p>
 </div>
 

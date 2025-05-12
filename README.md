@@ -53,25 +53,27 @@ Zhengjie Xiao, Dong Xu, Rui Kuang, GaiSheng Li, Bing Zhang, Qian Han
 
 Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computing paradigm with ultra-low power consumption and high integration density. Molecular QCA (MolQCA) forms its physical foundation.
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141423048.png" width="450"/>
-   <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141607113.png" width="370"/>
-  <p><b>Figure 1:</b> Left: MolQCA cell types and clocking schemes. Right: Standard cell library and corresponding layouts.</p>
-</div>
+| ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141423048.png) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141607113.png) |
+|:-------------------------------------------------------------------------------------------:|:-------------------------------------------------------------------------------------------:|
+| 🧱 MolQCA cell types and clocking schemes                                                   | 📐 Standard cell library and corresponding layouts                                          |
+
+<!-- <p align="center"><b>Figure 1:</b> Left: MolQCA cell types and clocking schemes. Right: Standard cell library and corresponding layouts.</p> -->
+
 
 ---
 
 
-# 🧩 UI 
+#  🎮 GUI Showcase
+| ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(a).png) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(b).png) |
+|:-----------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------:|
+| 🖱️ Manual Layout Mode                                                              | ⚙️ Automatic Layout Mode                                                           |
 
 ### 😲Manual circuit design
-<div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif" width="450"/>
-   <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif" width="450"/>
-  <p><b>Figure 2 :</b> Insertion of different cell types, clocking schemes, and simulation results.</p>
-</div>
+| ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif) |
+|:-----------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------:|
+| 🔹 Basic circuit design and simulation | 🔸Support Clocking schemes                                         |
+
+
 
 
 
@@ -85,12 +87,12 @@ To meet different design needs, iFCN-EDA supports two distinct placement and rou
 | 🔸 **Random Clocking**      | Irregular      |  Larger     |  Faster       | Medium-to-large and complex circuit designs |
 
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr1.gif" width="450"/>
-   <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr2.gif" width="450"/>
-    <p><b>Figure 3:</b> Two Scenarios P&R alogorithm.</p>
-</div>
+| ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr1.gif) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr2.gif) |
+|:-----------------------------------------------------------------------------:|:-----------------------------------------------------------------------------:|
+| 🔹 Regular Clocking: Small Area, Slower Routing                               | 🔸 Random Clocking: Larger Area, Faster Routing                              |
+
+<!-- <p align="center"><b>Figure 3:</b> Two scenarios of placement & routing algorithms.</p> -->
+
 
 ### 😎Compatible with QCADesigner 
 iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling seamless comparison, co-validation, and integration of layout and simulation results.
@@ -107,18 +109,12 @@ iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling s
 
 ### 🕹️Design flow
 
-<div align="center">
+<p align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/framework.png" width="400"/>
-  <p><b>Figure 5:</b> *iFCN* framework.</p>
-</div>
+</p>
+<p align="center"><b>Figure 5:</b> <i>iFCN</i> framework.</p>
 
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(a).png" width="400"/>
-  <span style="display: inline-block; width: 20px;"></span> <!-- 缝隙 -->
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(b).png" width="340"/>
-  <p><b>Figure 6 :</b> GUI scenarios for manual and automatic layout design.</p>
-</div>
 
 - **Manual Flow**: Integrated with *QCADesigner* for `.qca` file import and editing  
 - **Automatic Flow**: Converts RTL-level circuits to physical layouts  
@@ -145,7 +141,7 @@ iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling s
 </div>
 
 
-### 📊 Simulation and Energy Analysis
+### 📊 Simulation and energy analysis
 
 *iFCN* includes a modular C++ simulation engine supporting both **bistable** and **coherence vector** models. Read more in our [published paper](https://ietresearch.onlinelibrary.wiley.com/doi/full/10.1049/el.2019.1861).
 

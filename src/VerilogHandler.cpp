@@ -189,6 +189,7 @@ void VerilogHandler::handleParseVerilogFile()
             break;
         }
         
+
         QString message = "The " +  QString::number(optimizeNOTNode_time)  + "  times optimizeNOTNode results :";
         mainWindow->customStatusBar->addMessage(message);
         QCoreApplication::processEvents();
@@ -201,10 +202,12 @@ void VerilogHandler::handleParseVerilogFile()
 
         auto node_morton = ga.getNodePos();
         auto nodepair_route = ga.getRoutes();
-        ga.printLaTex(CLOCK_SCHEME::USE, {0,0}, {width,height}, node_morton, nodepair_route);
-
+       
+        
         mappingCellItem(node_morton, nodepair_route, parse, morton_phase);
-        putClock(morton_phase);            
+        putClock(morton_phase);      
+        auto crossPos = ga.getCrossPos();
+        ga.printLaTex(CLOCK_SCHEME::USE, {0,0}, {width,height}, node_morton, nodepair_route, crossPos);      
     }
     
 

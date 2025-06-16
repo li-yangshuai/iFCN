@@ -46,9 +46,14 @@ private:
 
 public:
     PhaseSolver(const std::vector<Path> &p, const std::vector<int> &sp);
+    PhaseSolver(const std::vector<Path> &p);
 
     // 主求解函数
     std::vector<std::vector<int>> solve();
+
+    const auto& return_cross_nodes() const {
+        return cross_nodes;
+    }
 
 private:
     std::map<std::pair<size_t, size_t>, Path> find_all_reused_paths(const std::vector<Path> &paths);

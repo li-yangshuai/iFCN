@@ -2,6 +2,7 @@
 #include "mortonGrid.h"
 #include "parse.h"
 #include "astar.h"
+#include "phaseSolver.h"
 
 namespace fcngraph {
 
@@ -136,7 +137,9 @@ public:
     void add_routing_value_to();
     void add_synchronization_value_to();
     void add_area_value_to();
+    void caculate_crossover_value();
     void computeFitness();
+
 
     bool is_placed;
     bool is_routed;
@@ -145,6 +148,8 @@ public:
     std::map<unsigned int, unsigned int> nodeindex_morton; 
     std::vector<unsigned int> layer_length;
     std::map<std::pair<unsigned int, unsigned int>, std::vector<unsigned int>> routes;
+
+    std::vector<unsigned int> cross_nodes_mortonPos;
 private:
     Parse &parse;
     MortonChessboard &chessboard;

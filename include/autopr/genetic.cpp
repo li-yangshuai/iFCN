@@ -179,7 +179,9 @@ bool GeneticAlgorithm::gaRun(){
 
 
 
-void GeneticAlgorithm::printLaTex(CLOCK_SCHEME  _clockType, position _northWest, position _southEast, std::map<unsigned int, unsigned int> nodeIndex_morton, std::map<std::pair<unsigned int, unsigned int>, std::vector<unsigned int>>routes){
+void GeneticAlgorithm::printLaTex(CLOCK_SCHEME  _clockType, position _northWest, position _southEast, 
+    std::map<unsigned int, unsigned int> nodeIndex_morton, std::map<std::pair<unsigned int, unsigned int>, 
+    std::vector<unsigned int>>routes, std::vector<unsigned int> cross_nodes) {
     //坐标转换
     int widget_H = _southEast.second;
     std::string filename = parse.get_moduleName() +".tex";
@@ -305,6 +307,18 @@ v/.style={circle, draw, fill=white, line width = 0.8pt, minimum size=0.7cm},
                 }
                 os << "(" << node_2 << ");" << std::endl;
             }
+
+            if(!cross_nodes.empty()){
+                for(auto &morton_pos : cross_nodes){
+                auto xy_pos = MortonChessboard::decodeMortonCode(morton_pos);
+                auto x = xy_pos.first;
+                auto y = widget_H - xy_pos.second - 1;
+                os << R"(\node[red]()" << ") [v] at (" << x << "," << y << ") {" << "x" << "};" << std::endl;
+            }
+
+            }
+
+
 
             os << std::endl;
 

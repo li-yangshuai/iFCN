@@ -9,6 +9,14 @@ namespace fcngraph
         find_cross_nodes();
     }
 
+    PhaseSolver::PhaseSolver(const std::vector<Path> &p)
+        : paths(p)
+    {
+        find_cross_nodes();
+    }
+
+
+
     // 主求解函数
     std::vector<std::vector<int>> PhaseSolver::solve()
     {

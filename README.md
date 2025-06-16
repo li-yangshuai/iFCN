@@ -19,31 +19,30 @@ The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and *
 
 ---
 
-# 👨‍💻 Author 
+# 👨‍💻 Author Info
 
-### **Yangshuai Li**  
+**Yangshuai Li**  
 🎓 *Ph.D. Candidate*  
-🏫 School of Microelectronics, Hefei University of Technology (HFUT)  
+🏫 School of Microelectronics, HFUT  
 🔧 Lead developer of **iFCN-EDA**  
 📧 2023010123@mail.hfut.edu.cn
 - Designed automated placement & routing algorithms  
-- Built the UI framework  
-- Maintains and integrates the full codebase  
+- Built the UI framework and toolkits
+- Maintains and integrates the full codebase 
 
 
-
-### 🧑‍💻 Core contributors (since 2018)
+### Core Contributors (Since 2018)
 
 | Name               | Title / Affiliation                            | Contribution                                                                 | Email                        |
 |--------------------|--------------------------------------------------|------------------------------------------------------------------------------|------------------------------|
 | **Prof. Guangjun Xie** | Professor, HFUT     | Founder of iFCN Lab, academic advisor; guidance on FCN design methodology | gjxie8005@hfut.edu.cn       |
-| **Dr. Fei Peng**   | Lecturer, HBFU              | Initiator of iFCN-EDA; designed logic synthesis algorithm, placement and routing algorithm, and simulation engine | fpeng1985@126.com           |
+| **Dr. Fei Peng**   | Lecturer, HBFU              | Initiator of iFCN-EDA; designed logic synthesis algorithm; placement and routing algorithm; and simulation engine | fpeng1985@126.com           |
 | **Xiansheng Tong** | M.Sc. Candidate, HFUT                           | Developed gate-to-cell level mapping algorithm for placement and routing results                            | 2023171256@mail.hfut.edu.cn|
 | **Rongjie Zhu**    | M.Sc. Candidate, HFUT                           | Designed UI interface for simulation module                                  | 2023110949@mail.hfut.edu.cn  |
 
 
 **Current Graduate Students**  
-JiaChen Gao, XiangHan Wang, ZhiXue Jiang
+Jiachen Gao, Xianghan Wang, Zhixue Jiang
 
 
 **Alumni Contributors**  
@@ -54,7 +53,7 @@ Zhengjie Xiao, Dong Xu, Rui Kuang, Gaisheng Li, Bing Zhang, Qian Han
 ---
 
 
-# 🌱 MolQCA fundamentals
+# 🌱 MolQCA Fundamentals
 
 Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computing paradigm with ultra-low power consumption and high integration density. Molecular QCA (MolQCA) forms its physical foundation.
 
@@ -68,12 +67,12 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 ---
 
 
-#  🎮 GUI showcase
+#  🎮 iFCN GUI Showcase
 | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(a).png) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(b).png) |
 |:-----------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------:|
-| 🖱️ Manual Layout Mode                                                              | ⚙️ Automatic Layout Mode                                                           |
+| 🔹 Manual Layout Mode                                                              | 🔸Automatic Layout Mode                                                           |
 
-### 😲Manual circuit design
+### Manual Circuit Design
 | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif) |
 |:-----------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------:|
 | 🔹 Basic circuit design and simulation | 🔸Support Clocking schemes                                         |
@@ -82,7 +81,7 @@ Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computin
 
 
 
-### 🔥 Automated placement & routing in two scenarios
+### 🔥 Automated Placement & Routing in Two Scenarios
 
 To meet different design needs, iFCN-EDA supports two distinct placement and routing strategies:
 
@@ -99,7 +98,7 @@ To meet different design needs, iFCN-EDA supports two distinct placement and rou
 <!-- <p align="center"><b>Figure 3:</b> Two scenarios of placement & routing algorithms.</p> -->
 
 
-### 😎Compatible with QCADesigner 
+### Compatible with QCADesigner 
 iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling seamless comparison, co-validation, and integration of layout and simulation results.
 <div align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate5.gif" width="700"/>
@@ -112,7 +111,7 @@ iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling s
 
 # 🛠️ Workflow 
 
-### 🕹️Design flow
+### 🕹️Design Flow
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/framework.png" width="400"/>
@@ -128,7 +127,7 @@ iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling s
 
 
 
-### 🔥 Core technologies
+### 🔥 Core Technologies
 
 *iFCN* integrates several advanced techniques:
 
@@ -146,7 +145,7 @@ iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling s
 </div>
 
 
-### 📊 Simulation and energy analysis
+### 📊 Simulation and Energy Analysis
 
 *iFCN* includes a modular C++ simulation engine supporting both **bistable** and **coherence vector** models. Read more in our [published paper](https://ietresearch.onlinelibrary.wiley.com/doi/full/10.1049/el.2019.1861).
 
@@ -166,7 +165,7 @@ iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling s
 - OS: Ubuntu 20.04 (recommended under WSL2 on Windows)
 - Requires: Qt (5 or 6), LaTeX, C++17, and basic Linux dependencies
 
-### Required packages
+### Required Packages
 
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -184,7 +183,7 @@ sudo apt install -y texlive-full
 sudo apt install -y git g++ cmake pkg-config libboost-all-dev graphviz python3 python3-dev libreadline-dev 
 ```
 
-### Compile and run
+### Compile and Run
 
 ```bash
 git clone --recursive https://github.com/li-yangshuai/iFCN.git

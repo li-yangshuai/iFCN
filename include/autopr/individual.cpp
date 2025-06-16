@@ -183,12 +183,68 @@ void Individual::add_area_value_to() {
 }
 
 
+void Individual::caculate_crossover_value(){
+    auto gridMap = chessboard.getGridMap();
+
+    for(auto &v : gridMap){
+       std::cout << "morton: " << v.first << " weight: " << static_cast<int>(v.second.get_current_weight()) << std::endl;
+    }
+
+
+    for(auto &v : gridMap){
+        if(v.second.get_current_weight() == MAX_CELL_WEIGHT ){
+            auto tempMortonPos = v.first;
+            auto tempXyPos = MortonChessboard::decodeMortonCode(tempMortonPos);
+            //获取上下左右全部的坐标
+
+            //
+
+            auto up = std::make_pair(tempXyPos.first, tempXyPos.second - 1);
+            auto down = std::make_pair(tempXyPos.first, tempXyPos.second + 1);
+            auto left = std::make_pair(tempXyPos.first - 1, tempXyPos.second);
+            auto right = std::make_pair(tempXyPos.first + 1, tempXyPos.second);
+            //上下左右的坐标不能越界
+            //如果越界则不考虑
+            if(up.first < chessboard.chessboard_nw.first || up.second < chessboard.chessboard_nw.second ||
+                down.first > chessboard.chessboard_se.first || down.second > chessboard.chessboard_se.second ||
+                left.first < chessboard.chessboard_nw.first || left.second < chessboard.chessboard_nw.second ||
+                right.first > chessboard.chessboard_se.first || right.second > chessboard.chessboard_se.second){
+                continue;
+            }
+
+
+            auto up_morton = chessboard.calculateMortonCode(up.first, up.second);
+            auto down_morton = chessboard.calculateMortonCode(down.first, down.second);
+            auto left_morton = chessboard.calculateMortonCode(left.first, left.second);
+            auto right_morton = chessboard.calculateMortonCode(right.first, right.second);
+
+            //获取所有morton对应的cell的weight
+            auto up_weight = gridMap[up_morton].get_current_weight();
+            auto down_weight = gridMap[down_morton].get_current_weight();
+            auto left_weight = gridMap[left_morton].get_current_weight();
+            auto right_weight = gridMap[right_morton].get_current_weight();
+
+            //如果都大于等于WIRE_WEIGHT 则记录这个xy pos
+            if(up_weight >= WIRE_WEIGHT && down_weight >= WIRE_WEIGHT && left_weight >= WIRE_WEIGHT && right_weight >= WIRE_WEIGHT){
+                cross_nodes_mortonPos.push_back(tempMortonPos);
+            }
+        }
+
+    }
+
+}
+
+
+
+
+
 
 void Individual::computeFitness(){
     add_placement_value_to();
     add_routing_value_to();
     // add_synchronization_value_to();
     add_area_value_to();
+    // caculate_crossover_value();
 }
 
 

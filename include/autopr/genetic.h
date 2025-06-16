@@ -43,8 +43,16 @@ public:
     auto getRoutes() const {
         return best_individuals.back().routes;
     }
+
+    auto getCrossPos() {
+        best_individuals.back().caculate_crossover_value();
+        return best_individuals.back().cross_nodes_mortonPos;
+    }
+
     
-    void printLaTex(CLOCK_SCHEME  _clockType, position _northWest, position _southEast, std::map<unsigned int, unsigned int> nodeIndex_morton, std::map<std::pair<unsigned int, unsigned int>, std::vector<unsigned int>>routes);
+    void printLaTex(CLOCK_SCHEME  _clockType, position _northWest, position _southEast, 
+        std::map<unsigned int, unsigned int> nodeIndex_morton, std::map<std::pair<unsigned int, unsigned int>, 
+        std::vector<unsigned int>>routes, std::vector<unsigned int> cross_nodes);
     
 
     std::vector<Individual> populations;       //种群

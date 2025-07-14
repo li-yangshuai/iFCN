@@ -245,7 +245,7 @@ void VerilogHandler::handleGraphRender()
     auto outputNum = parse.get_output_num();
     auto wireNum = parse.getm_numEdges();
 
-    parse.optimizeBufferNode();
+    // parse.optimizeBufferNode();
     parse.addLayerRedundancyNode();
     parse.caculateSameLayerNodeRoutePair();
     MortonChessboard chessboard;
@@ -314,9 +314,9 @@ void VerilogHandler::handleGraphRender()
                                     " \& " + QString::number(width)+ " $\\times$ " + QString::number(height) + " = " + QString::number(width*height) +
                                     " \& " + QString::number(elapsedSeconds, 'f', 1) ;
     //测试时间
-
+    graph.printLaTex();
     if(isSuccess){
-        graph.printLaTex();
+        
         QString message =  "Graph layout success! " + elapsedStr + " print LaTeX success!";
         mainWindow->customStatusBar->addMessage(message);
 

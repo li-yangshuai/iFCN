@@ -97,7 +97,13 @@
         "qlabel": "cpp",
         "qicon": "cpp",
         "qbuttongroup": "cpp",
-        "qmessagebox": "cpp"
+        "qmessagebox": "cpp",
+        "charconv": "cpp",
+        "source_location": "cpp",
+        "span": "cpp",
+        "format": "cpp",
+        "__nullptr": "cpp",
+        "__locale": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled",
     "svg.preview.background": "dark-transparent"

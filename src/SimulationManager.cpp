@@ -74,10 +74,12 @@ void SimulationManager::energyAnalysis(const std::string &fname, Result &result)
     algo.run(design, vector_table, result, SimulationMode::Exhaustive);
  
 }
+
 void SimulationManager::slotSavedname(QString fileName)//for 仿真文件名
 {
     this->curfileName = fileName;
 }
+
 void SimulationManager::slotBistableSim() {
 
     //QString curFile = QFileDialog::getOpenFileName(nullptr, tr("Open File"), ".", tr("QCA files (*.qca)"));

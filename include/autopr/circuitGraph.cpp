@@ -184,6 +184,43 @@ namespace fcngraph
             nodeIndex_morton[node] = MortonChessboard::calculateMortonCode(grid_x, grid_y);
         }
 
+//test
+// grid_positions[0] = {45, 50};   nodeIndex_morton[0] = MortonChessboard::calculateMortonCode(45, 50);
+// grid_positions[1] = {47, 50};   nodeIndex_morton[1] = MortonChessboard::calculateMortonCode(47, 50);
+// grid_positions[2] = {51, 50};   nodeIndex_morton[2] = MortonChessboard::calculateMortonCode(51, 50);
+// grid_positions[3] = {55, 50};   nodeIndex_morton[3] = MortonChessboard::calculateMortonCode(55, 50);
+// grid_positions[4] = {49, 50};   nodeIndex_morton[4] = MortonChessboard::calculateMortonCode(49, 50);
+// grid_positions[5] = {53, 50};   nodeIndex_morton[5] = MortonChessboard::calculateMortonCode(53, 50);
+// grid_positions[6] = {50, 32};   nodeIndex_morton[6] = MortonChessboard::calculateMortonCode(50, 32);
+// grid_positions[7] = {45, 47};   nodeIndex_morton[7] = MortonChessboard::calculateMortonCode(45, 47);
+// grid_positions[8] = {43, 44};   nodeIndex_morton[8] = MortonChessboard::calculateMortonCode(43, 44);
+// grid_positions[9] = {45, 41};   nodeIndex_morton[9] = MortonChessboard::calculateMortonCode(45, 41);
+// grid_positions[10] = {47, 44};   nodeIndex_morton[10] = MortonChessboard::calculateMortonCode(47, 44);
+// grid_positions[11] = {47, 38};   nodeIndex_morton[11] = MortonChessboard::calculateMortonCode(47, 38);
+// grid_positions[12] = {51, 44};   nodeIndex_morton[12] = MortonChessboard::calculateMortonCode(51, 44);
+// grid_positions[13] = {51, 41};   nodeIndex_morton[13] = MortonChessboard::calculateMortonCode(51, 41);
+// grid_positions[14] = {55, 44};   nodeIndex_morton[14] = MortonChessboard::calculateMortonCode(55, 44);
+// grid_positions[15] = {51, 38};   nodeIndex_morton[15] = MortonChessboard::calculateMortonCode(51, 38);
+// grid_positions[16] = {49, 47};   nodeIndex_morton[16] = MortonChessboard::calculateMortonCode(49, 47);
+// grid_positions[17] = {49, 44};   nodeIndex_morton[17] = MortonChessboard::calculateMortonCode(49, 44);
+// grid_positions[18] = {49, 35};   nodeIndex_morton[18] = MortonChessboard::calculateMortonCode(49, 35);
+// grid_positions[19] = {51, 35};   nodeIndex_morton[19] = MortonChessboard::calculateMortonCode(51, 35);
+// grid_positions[20] = {51, 47};   nodeIndex_morton[20] = MortonChessboard::calculateMortonCode(51, 47);
+// grid_positions[21] = {43, 47};   nodeIndex_morton[21] = MortonChessboard::calculateMortonCode(43, 47);
+// grid_positions[22] = {45, 44};   nodeIndex_morton[22] = MortonChessboard::calculateMortonCode(45, 44);
+// grid_positions[23] = {47, 47};   nodeIndex_morton[23] = MortonChessboard::calculateMortonCode(47, 47);
+// grid_positions[24] = {53, 47};   nodeIndex_morton[24] = MortonChessboard::calculateMortonCode(53, 47);
+// grid_positions[25] = {53, 44};   nodeIndex_morton[25] = MortonChessboard::calculateMortonCode(53, 44);
+// grid_positions[26] = {55, 47};   nodeIndex_morton[26] = MortonChessboard::calculateMortonCode(55, 47);
+// grid_positions[27] = {57, 47};   nodeIndex_morton[27] = MortonChessboard::calculateMortonCode(57, 47);
+// grid_positions[28] = {57, 44};   nodeIndex_morton[28] = MortonChessboard::calculateMortonCode(57, 44);
+// grid_positions[29] = {55, 41};   nodeIndex_morton[29] = MortonChessboard::calculateMortonCode(55, 41);
+// grid_positions[30] = {53, 38};   nodeIndex_morton[30] = MortonChessboard::calculateMortonCode(53, 38);
+// grid_positions[31] = {47, 41};   nodeIndex_morton[31] = MortonChessboard::calculateMortonCode(47, 41);
+// grid_positions[32] = {53, 41};   nodeIndex_morton[32] = MortonChessboard::calculateMortonCode(53, 41);
+// grid_positions[33] = {49, 41};   nodeIndex_morton[33] = MortonChessboard::calculateMortonCode(49, 41);
+// grid_positions[34] = {49, 38};   nodeIndex_morton[34] = MortonChessboard::calculateMortonCode(49, 38);
+
         // 将 grid_positions 转换为 sorted_grid_positions
         sorted_grid_positions.assign(grid_positions.begin(), grid_positions.end());
 

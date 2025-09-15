@@ -19,30 +19,16 @@ The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and *
 
 ---
 
-# 👨‍💻 Author Info
-
-**Yangshuai Li**  
-🎓 *Ph.D. Candidate*  
-🏫 School of Microelectronics, HFUT  
-🔧 Lead developer of **iFCN-EDA**  
-📧 2023010123@mail.hfut.edu.cn
-- Designed automated placement & routing algorithms  
-- Built the UI framework and toolkits
-- Maintains and integrates the full codebase 
-
-
-### Core Contributors (Since 2018)
+# 👨‍💻 Author Info(Since 2018)
 
 | Name               | Title / Affiliation                            | Contribution                                                                 | Email                        |
 |--------------------|--------------------------------------------------|------------------------------------------------------------------------------|------------------------------|
+|**Yangshuai Li**    |PhD, HFUT| Designed automated P&R algorithms; Built the UI framework and toolkits|2023010123@mail.hfut.edu.cn
 | **Prof. Guangjun Xie** | Professor, HFUT     | Founder of iFCN Lab, academic advisor; guidance on FCN design methodology | gjxie8005@hfut.edu.cn       |
-| **Dr. Fei Peng**   | Lecturer, HBFU              | Initiator of iFCN-EDA; designed logic synthesis algorithm; placement and routing algorithm; and simulation engine | fpeng1985@126.com           |
-| **Xiansheng Tong** | M.Sc. Candidate, HFUT                           | Developed gate-to-cell level mapping algorithm for placement and routing results                            | 2023171256@mail.hfut.edu.cn|
-| **Rongjie Zhu**    | M.Sc. Candidate, HFUT                           | Designed UI interface for simulation module                                  | 2023110949@mail.hfut.edu.cn  |
-
+| **Dr. Fei Peng**   | Lecturer, HBFU              | Initiator of iFCN-EDA; logic synthesis; P&R algorithm; and simulation engine | fpeng1985@126.com           |
 
 **Current Graduate Students**  
-Jiachen Gao, Xianghan Wang, Zhixue Jiang
+Xiansheng Tong, Rongjie Zhu, Jiachen Gao
 
 
 **Alumni Contributors**  
@@ -197,14 +183,17 @@ make
 
 # 📖 Citation
 **If you think our work is useful, please kindly ⭐️ star this repository or cite our work in your research.
-📬 For any software-related questions or issues, feel free to contact me via the email provided at the top.**
+📬 For any software-related questions or issues, we invite to contact us.**
 
 📌 Layout and Routing Algorithms & Framework:
 
-- F. Peng, Y. Zhang, R. Kuang and G. Xie,"Spars: A Full Flow Quantum-Dot Cellular Automata Circuit Design Tool,"IEEE Transactions on Circuits and Systems II: Express Briefs, vol. 68, no. 4, pp. 1233–1237, 2021.[DOI:10.1109/TCSII.2020.3039532](10.1109/TCSII.2020.3039532)
+- F. Peng, Y. Zhang, R. Kuang and G. Xie,"Spars: A Full Flow Quantum-Dot Cellular Automata Circuit Design Tool,"IEEE Transactions on Circuits and Systems II: Express Briefs, vol. 68, no. 4, pp. 1233–1237, 2021. [DOI:10.1109/TCSII.2020.3039532](10.1109/TCSII.2020.3039532)
 
 
-- Y. Li, G. Xie, Q. Han, X. Li, G. Li, B. Zhang, and F. Peng, "Field-coupled nanocomputing placement and routing with genetic and A* algorithms,"IEEE Transactions on Circuits and Systems I: Regular Papers, vol. 69, no. 11, pp. 4619–4631, 2022.[DOI:10.1109/TCSI.2022.3197450](10.1109/TCSI.2022.3197450)
+- Y. Li, G. Xie, Q. Han, X. Li, G. Li, B. Zhang, and F. Peng, "Field-coupled nanocomputing placement and routing with genetic and A* algorithms,"IEEE Transactions on Circuits and Systems I: Regular Papers, vol. 69, no. 11, pp. 4619–4631, 2022. [DOI:10.1109/TCSI.2022.3197450](10.1109/TCSI.2022.3197450)
+
+- Y. Li, F. Peng, X. Tong, R. Zhu, Q. Han and G. Xie, "iFCN: An Automated RTL-to-Device Framework for Molecular Field-Coupled Nanocomputing Circuits," in IEEE Transactions on Circuits and Systems I: Regular Papers, 2025. [DOI: 10.1109/TCSI.2025.3599115](https://ieeexplore.ieee.org/document/11130445)
+
 - 李杨帅 , 彭斐 , 韩倩 , 李小帅 , 解光军. 一种针对QCA电路自动布局布线的混合策略研究[J]. 电子学报, 2023, 51(3): 666-674. https://doi.org/10.12263/DZXB.20211212
 
 📌 Simulation Engine:

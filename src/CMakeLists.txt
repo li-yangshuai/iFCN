@@ -28,6 +28,7 @@ add_executable(
     QCADClockScheme.cpp 
     SimulationManager.cpp
     VerilogHandler.cpp
+    GateLevelMapping.cpp
     widgets/LayerComboBox.cpp             
     widgets/CustomStatusBar.cpp
     widgets/plotWidget.cpp

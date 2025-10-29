@@ -30,6 +30,7 @@
 // #include <QSvgGenerator>
 #include <QPainter>
 #include "VerilogHandler.h"
+#include"GateLevelMapping.h"
 #include "widgets/CustomStatusBar.h"
 
 using namespace fcngraph;
@@ -97,6 +98,9 @@ public:
         //verilog parse
         QPushButton * verParseButton;
         QPushButton * graphRenderButton;
+
+        //gate level mapping
+        QPushButton * gateLevelMappingButton;
 
         //view & scene
         QCADView *view;
@@ -215,7 +219,9 @@ private:
 
         /****** auto P&R *******/
         VerilogHandler *verilogHandler; 
-        // QThread *thread;              // 线程指针     
+
+        /***** Mapping */
+        GateLevelMapping *gateLevelMapping;
 
         /********状态栏********/   
 
@@ -225,7 +231,6 @@ signals:
 
 private:
         QVector<QString> inputname;
-        // QString simfileName;//多线程仿真文件名
 };
 
 #endif  //HFUT_GUI_MAINWINDOW_H

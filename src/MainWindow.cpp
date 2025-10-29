@@ -1,6 +1,4 @@
 #include "MainWindow.h"
-
-
 #include <QPen>
 #include <QBrush>
 #include <QMenuBar>
@@ -26,7 +24,8 @@ namespace {
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), 
                                           currentMode(EditMode::Select),
                                           simulationManager(new SimulationManager),
-                                          verilogHandler(new VerilogHandler(this))
+                                          verilogHandler(new VerilogHandler(this)),
+                                          gateLevelMapping(new GateLevelMapping(this))
 {
     createViewAndScene();
     createActions();
@@ -287,6 +286,11 @@ void MainWindow::createActions()
     graphRenderButton->setCheckable(true);
     connect(graphRenderButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::handleGraphRender);
 
+    //gate level mapping
+    gateLevelMappingButton = new QPushButton("Gate Level Mapping");
+    gateLevelMappingButton->setCheckable(true);
+    connect(gateLevelMappingButton, &QPushButton::toggled, gateLevelMapping, &GateLevelMapping::parseGateLevelMappingFile);
+
     generateCellLevelLayoutGraph = new QAction(QIcon(QDir::toNativeSeparators(":/cameraColor.png")), tr("Save cell-level layout"), this);
     generateCellLevelLayoutGraph->setStatusTip(tr("Save cell-level layout"));
     connect(generateCellLevelLayoutGraph, &QAction::triggered, verilogHandler, &VerilogHandler::generateSVG);
@@ -380,6 +384,7 @@ void MainWindow::createToolBars()
     verilogTool = addToolBar("verilog parse");
     verilogTool->addWidget(verParseButton);
     verilogTool->addWidget(graphRenderButton);
+    verilogTool->addWidget(gateLevelMappingButton);
 }
 
 

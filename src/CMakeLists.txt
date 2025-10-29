@@ -38,7 +38,7 @@ add_executable(
     widgets/GaChessboardInputDialog.cpp
     ${RES_RCC})
     
-target_link_libraries(fcnx_gui PRIVATE autopr simon  ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg
+target_link_libraries(fcnx_gui PRIVATE autopr simon  ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg 
                        ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
 
 

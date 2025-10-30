@@ -8,7 +8,7 @@ MappingExecutor::MappingExecutor(GateLevelMapping* m, MainWindow* w)
 
 void MappingExecutor::executeMapping()
 {
-    // ✅ 直接访问 GateLevelMapping 的 public 成员
+    // 直接访问 GateLevelMapping 的 public 成员
     QString circuitName = gatelevelmapping->circuitName;
     auto& nodes = gatelevelmapping->nodes;
     auto& routes = gatelevelmapping->routes;
@@ -17,6 +17,7 @@ void MappingExecutor::executeMapping()
     Mapping mapping;
 
     //QMap transform to std::map (coordPhaseMap -> positionPhaseMap)
+    /*
     std::map<position, int> positionPhaseMap;
     for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
     {
@@ -26,6 +27,8 @@ void MappingExecutor::executeMapping()
         positionPhaseMap[{static_cast<unsigned int>(p.x()), 
                         static_cast<unsigned int>(p.y())}] = phase;
     }
+    */
+    auto positionPhaseMap = toPositionPhaseMap(coordPhaseMap);
 
     //get circle_line from routes(containing all paths)
     std::vector<std::vector<position>> circle_line;
@@ -154,6 +157,7 @@ void MappingExecutor::executeMapping()
         mainWindow->customStatusBar->addMessage(message);
         return;
     }
+    /*
     for(auto &cell : nodeexample)
     {
         auto cellpos_list = cell.second;
@@ -223,6 +227,47 @@ void MappingExecutor::executeMapping()
             }
         }
     }
+    */
+    for (const auto& [type, cellList] : nodeexample)
+    {
+        // 统一映射类型到 CellType 枚举
+        static const std::map<std::string, CellType> typeMap = {
+            {"input", CellType::InputCell},
+            {"output", CellType::OutputCell},
+            {"normal", CellType::NormalCell},
+            {"fix0",  CellType::FixedCell_0},
+            {"fix1",  CellType::FixedCell_1}
+        };
+
+        auto itType = typeMap.find(type);
+        if (itType == typeMap.end()) continue;  // 未知类型，跳过
+
+        CellType cellType = itType->second;
+
+        for (const auto& cellPos : cellList)
+        {
+            QString nodeName = "default";
+
+            // 仅 input/output 需要节点名匹配
+            if (cellType == CellType::InputCell || cellType == CellType::OutputCell)
+            {
+                unsigned int xNode = cellPos.first / 5;
+                unsigned int yNode = cellPos.second / 5;
+                QPoint nodePoint(xNode, yNode);
+
+                for (const auto& node : nodes)
+                {
+                    if (nodePoint == node.pos)
+                    {
+                        nodeName = node.name;
+                        break;
+                    }
+                }
+            }
+
+            putCellItem(cellPos, 0, cellType, positionPhaseMap, nodeName);
+        }
+    }
 
     auto routeexample = mapping.mapping_line(circle_line);
     auto crossexample = mapping.crossline_list;
@@ -237,7 +282,7 @@ void MappingExecutor::executeMapping()
         }
         
     }
-
+    /*
     //Cross线路元胞放置
     std::vector<position> crosscell;
     std::vector<position> verticalcell;
@@ -403,11 +448,132 @@ void MappingExecutor::executeMapping()
             }
         }
     }
+    */
+    // === Cross线路元胞放置 ===
+    std::vector<position> crosscell;
+    std::vector<position> verticalcell;
+
+    auto contains = [](const std::vector<position>& vec, const position& p) {
+        return std::find(vec.begin(), vec.end(), p) != vec.end();
+    };
+
+    if (!crossexample.empty())
+    {
+        // 收集所有交叉线坐标
+        for (const auto& [_, lines] : crossexample)
+            for (const auto& seg : lines)
+                crosscell.insert(crosscell.end(), seg.begin(), seg.end());
+
+        // 遍历交叉线路
+        for (const auto& [_, lines] : crossexample)
+        {
+            for (const auto& seg : lines)
+            {
+                for (auto it = seg.begin(); it != seg.end(); ++it)
+                {
+                    const position p = *it;
+                    const bool isEnd = (it == seg.begin()) || (std::next(it) == seg.end());
+
+                    // --- 中间点：直接放置交叉线 ---
+                    if (!isEnd)
+                    {
+                        putCellItem(p, 2, CellType::CrossoverCell, positionPhaseMap);
+                        continue;
+                    }
+
+                    // --- 端点处理 ---
+                    const position dirs[4] = {
+                        {p.first, p.second + 1},
+                        {p.first, p.second - 1},
+                        {p.first - 1, p.second},
+                        {p.first + 1, p.second}
+                    };
+
+                    int neighborCount = 0;
+                    for (auto& d : dirs)
+                        if (contains(crosscell, d)) ++neighborCount;
+
+                    //情况1：足够连接 → 直接交叉元胞
+                    if (neighborCount >= 2)
+                    {
+                        putCellItem(p, 2, CellType::CrossoverCell, positionPhaseMap);
+                        continue;
+                    }
+
+                    //情况2：连接不足 → 需要柱状延伸
+                    bool extended = false;
+
+                    const auto extendVertical = [&](const position& base, const position& dirCross) {
+                        putCellItem(base, 2, CellType::CrossoverCell, positionPhaseMap);
+                        putCellItem(dirCross, 2, CellType::CrossoverCell, positionPhaseMap);
+
+                        position pillar = {dirCross.first, dirCross.second + 1};
+                        for (int l = 0; l < 3; ++l)
+                            putCellItem(pillar, l, CellType::VerticalCell, positionPhaseMap);
+
+                        verticalcell.push_back(pillar);
+                        crosscell.push_back(dirCross);
+                        crosscell.push_back(pillar);
+                    };
+
+                    // 左右/上下方向延伸条件保持一致
+                    if (contains(crosscell, dirs[1]) &&
+                        contains(allroutecells, dirs[2]) &&
+                        contains(allroutecells, dirs[3]))
+                    {
+                        extendVertical(p, dirs[0]);
+                        extended = true;
+                    }
+                    else if (contains(crosscell, dirs[2]) &&
+                            contains(allroutecells, dirs[0]) &&
+                            contains(allroutecells, dirs[1]))
+                    {
+                        extendVertical(p, dirs[3]);
+                        extended = true;
+                    }
+
+                    // 情况3：无法延伸 → 三层垂直柱点
+                    if (!extended)
+                    {
+                        for (int l = 0; l < 3; ++l)
+                            putCellItem(p, l, CellType::VerticalCell, positionPhaseMap);
+                        verticalcell.push_back(p);
+                    }
+                }
+            }
+        }
+    }
+
+    // === Normal线路元胞放置 ===
+    if (!routeexample.empty())
+    {
+        for (const auto& [_, lines] : routeexample)
+        {
+            for (const auto& seg : lines)
+            {
+                for (const auto& p : seg)
+                {
+                    const bool isCross = contains(crosscell, p);
+                    if (!isCross)
+                    {
+                        putCellItem(p, 0, CellType::NormalCell, positionPhaseMap);
+                        continue;
+                    }
+
+                    // 检查是否为垂直冲突点
+                    bool isVertical = contains(verticalcell, p);
+                    if (!isVertical)
+                        putCellItem(p, 0, CellType::NormalCell, positionPhaseMap);
+                }
+            }
+        }
+    }
 
 }
 
 void MappingExecutor::putClock(){
 
+    /*
     auto& coordPhaseMap = gatelevelmapping->coordPhaseMap;
     //QMap transform to std::map (coordPhaseMap -> positionPhaseMap)
     std::map<position, int> positionPhaseMap;
@@ -419,6 +585,9 @@ void MappingExecutor::putClock(){
         positionPhaseMap[{static_cast<unsigned int>(p.x()), 
                         static_cast<unsigned int>(p.y())}] = phase;
     }
+    */
+    auto positionPhaseMap = toPositionPhaseMap(gatelevelmapping->coordPhaseMap);
+
 
     for(auto &v : positionPhaseMap)
     {
@@ -447,4 +616,16 @@ void MappingExecutor::putCellItem(position _cellpos, int _celllayer, CellType _c
 
     QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
     mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);
+}
+
+std::map<position, int> MappingExecutor::toPositionPhaseMap(const QHash<QPoint, int>& coordPhaseMap)
+{
+    std::map<position, int> result;
+
+    for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
+    {
+        const QPoint& p = it.key();
+        result[{static_cast<unsigned>(p.x()), static_cast<unsigned>(p.y())}] = it.value();
+    }
+    return result;
 }

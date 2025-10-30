@@ -24,6 +24,7 @@ public:
 private:
     GateLevelMapping* gatelevelmapping; 
     MainWindow* mainWindow;
+    std::map<position, int> toPositionPhaseMap(const QHash<QPoint, int>& coordPhaseMap);
 };
 
 #endif // MAPPINGEXECUTOR_H

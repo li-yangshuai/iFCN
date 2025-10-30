@@ -190,14 +190,31 @@ int GateLevelMapping::getPhaseAtCoord(const QPoint &pt) const
 }
 
 
+QHash<position, int> positionPhaseMap;
+for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it) {
+    positionPhaseMap[position(it.key())] = it.value();
+}
+
+
+
 void GateLevelMapping::mappingCellItem(){
     Mapping mapping;
 
     std::vector<std::vector<position>> circle_line;
     circle_line.clear();
-    for(auto &v: routes)
-    {
-        circle_line.push_back(std::vector<position>(v.second.begin(), v.second.end()));
+    for (auto &v : routes) {
+        std::vector<position> convertedRoute;
+        const QVector<QPoint>& qPoints = v.second;
+    
+        // 预分配空间
+        convertedRoute.reserve(qPoints.size());
+    
+        // 手动转换每个 QPoint 到 position
+        for (const QPoint& point : qPoints) {
+            convertedRoute.emplace_back(point.x(), point.y());
+        }
+    
+        circle_line.push_back(std::move(convertedRoute));
     }
 
 
@@ -279,7 +296,7 @@ void GateLevelMapping::mappingCellItem(){
                         break;
                     }
                 }
-                putCellItem(cellpos, 0, CellType::InputCell, coordPhaseMap, Iname);
+                putCellItem(cellpos, 0, CellType::InputCell, positionPhaseMap, Iname);
                 
             }
         }
@@ -299,7 +316,7 @@ void GateLevelMapping::mappingCellItem(){
                         break;
                     }
                 }
-                putCellItem(cellpos, 0, CellType::OutputCell, coordPhaseMap, Oname);
+                putCellItem(cellpos, 0, CellType::OutputCell, positionPhaseMap, Oname);
 
             }
         }
@@ -307,7 +324,7 @@ void GateLevelMapping::mappingCellItem(){
         {
             for(auto &cellpos : cellpos_list)
             {
-                putCellItem(cellpos, 0, CellType::NormalCell, coordPhaseMap);
+                putCellItem(cellpos, 0, CellType::NormalCell, positionPhaseMap);
                 
             }
         }
@@ -315,7 +332,7 @@ void GateLevelMapping::mappingCellItem(){
         {
             for(auto &cellpos : cellpos_list)
             {
-                putCellItem(cellpos, 0, CellType::FixedCell_0, coordPhaseMap);
+                putCellItem(cellpos, 0, CellType::FixedCell_0, positionPhaseMap);
 
             }
         }
@@ -323,7 +340,7 @@ void GateLevelMapping::mappingCellItem(){
         {
             for(auto &cellpos : cellpos_list)
             {
-                putCellItem(cellpos, 0, CellType::FixedCell_1, coordPhaseMap);
+                putCellItem(cellpos, 0, CellType::FixedCell_1, positionPhaseMap);
                 
             }
         }
@@ -386,7 +403,7 @@ void GateLevelMapping::mappingCellItem(){
                         if (count >= 2) 
                         {  
                             position cellpos = *unit;
-                            putCellItem(cellpos, 2, CellType::CrossoverCell, coordPhaseMap);
+                            putCellItem(cellpos, 2, CellType::CrossoverCell, positionPhaseMap);
                             
                         } 
 
@@ -398,17 +415,17 @@ void GateLevelMapping::mappingCellItem(){
                             &&(std::find(allroutecells.begin(), allroutecells.end(), dir4) != allroutecells.end()))
                             {
                                 position cellpos1 = *unit;
-                                putCellItem(cellpos1, 2, CellType::CrossoverCell, coordPhaseMap);
+                                putCellItem(cellpos1, 2, CellType::CrossoverCell, positionPhaseMap);
 
 
                                 position cellpos2 = dir1;
-                                putCellItem(cellpos2, 2, CellType::CrossoverCell, coordPhaseMap);
+                                putCellItem(cellpos2, 2, CellType::CrossoverCell, positionPhaseMap);
 
 
                                 position cellpos3 = {dir1.first, dir1.second + 1};
-                                putCellItem(cellpos3, 0, CellType::VerticalCell, coordPhaseMap);
-                                putCellItem(cellpos3, 1, CellType::VerticalCell, coordPhaseMap);
-                                putCellItem(cellpos3, 2, CellType::VerticalCell, coordPhaseMap);
+                                putCellItem(cellpos3, 0, CellType::VerticalCell, positionPhaseMap);
+                                putCellItem(cellpos3, 1, CellType::VerticalCell, positionPhaseMap);
+                                putCellItem(cellpos3, 2, CellType::VerticalCell, positionPhaseMap);
                                 verticalcell.push_back(cellpos3);
 
 
@@ -420,17 +437,17 @@ void GateLevelMapping::mappingCellItem(){
                             &&(std::find(allroutecells.begin(), allroutecells.end(), dir2) != allroutecells.end()))
                             {
                                 position cellpos1 = *unit;
-                                putCellItem(cellpos1, 2, CellType::CrossoverCell, coordPhaseMap);
+                                putCellItem(cellpos1, 2, CellType::CrossoverCell, positionPhaseMap);
 
 
                                 position cellpos2 = dir4;
-                                putCellItem(cellpos2, 2, CellType::CrossoverCell, coordPhaseMap);
+                                putCellItem(cellpos2, 2, CellType::CrossoverCell, positionPhaseMap);
 
 
                                 position cellpos3 = {dir4.first + 1, dir4.second};
-                                putCellItem(cellpos3, 0, CellType::VerticalCell, coordPhaseMap);
-                                putCellItem(cellpos3, 1, CellType::VerticalCell, coordPhaseMap);
-                                putCellItem(cellpos3, 2, CellType::VerticalCell, coordPhaseMap);
+                                putCellItem(cellpos3, 0, CellType::VerticalCell, positionPhaseMap);
+                                putCellItem(cellpos3, 1, CellType::VerticalCell, positionPhaseMap);
+                                putCellItem(cellpos3, 2, CellType::VerticalCell, positionPhaseMap);
                                 verticalcell.push_back(cellpos3);
 
                                 crosscell.push_back(cellpos2);
@@ -439,9 +456,9 @@ void GateLevelMapping::mappingCellItem(){
                             else//放置交叉线端点三层柱点
                             {
                                 position cellpos = *unit;
-                                putCellItem(cellpos, 0, CellType::VerticalCell, coordPhaseMap);
-                                putCellItem(cellpos, 1, CellType::VerticalCell, coordPhaseMap);
-                                putCellItem(cellpos, 2, CellType::VerticalCell, coordPhaseMap);
+                                putCellItem(cellpos, 0, CellType::VerticalCell, positionPhaseMap);
+                                putCellItem(cellpos, 1, CellType::VerticalCell, positionPhaseMap);
+                                putCellItem(cellpos, 2, CellType::VerticalCell, positionPhaseMap);
                                 verticalcell.push_back(cellpos);
                             }
                         }
@@ -449,7 +466,7 @@ void GateLevelMapping::mappingCellItem(){
                     else
                     {
                         position cellpos = *unit;
-                        putCellItem(cellpos, 2, CellType::CrossoverCell, coordPhaseMap);
+                        putCellItem(cellpos, 2, CellType::CrossoverCell, positionPhaseMap);
                         
                         
                     }
@@ -470,7 +487,7 @@ void GateLevelMapping::mappingCellItem(){
                 {
                     if(std::find(crosscell.begin(), crosscell.end(), pos) == crosscell.end())
                     {
-                        putCellItem(pos, 0, CellType::NormalCell, coordPhaseMap);
+                        putCellItem(pos, 0, CellType::NormalCell, positionPhaseMap);
                         
                     }
                     else
@@ -497,7 +514,7 @@ void GateLevelMapping::mappingCellItem(){
                         {
                             for(auto &pos : tempcross)
                             {
-                                putCellItem(pos, 0, CellType::NormalCell, coordPhaseMap);
+                                putCellItem(pos, 0, CellType::NormalCell, positionPhaseMap);
                             }
                         }
 
@@ -508,46 +525,23 @@ void GateLevelMapping::mappingCellItem(){
         }
     }
 
-    for (auto &vpos : verticalcell) 
-    {
-        int pl = 0;
-        int posx_node = vpos.first / 5;
-        int posy_node = vpos.second / 5;
-        position pos_node = {posx_node, posy_node};
-        std::vector<position> vtemp = {{vpos.first, vpos.second + 1},  
-                                    {vpos.first, vpos.second - 1},  
-                                    {vpos.first - 1, vpos.second},  
-                                    {vpos.first + 1, vpos.second} };
-        for (auto &vcell : vtemp)
-        {
-            if (std::find(crosscell.begin(), crosscell.end(), vcell) != crosscell.end())
-            {
-                pl++;
-            }
-        }
-        if ((pl >= 2) || (std::find(notcell.begin(), notcell.end(), pos_node) != notcell.end()))
-        {
-            QString message = "vertical problem position : ( "+ QString::number(posx_node) + " , "+ QString::number(posy_node) + " )";
-            mainWindow->customStatusBar->addMessage(message);
-        }
-    }
 }
 
-void GateLevelMapping::putCellItem(QPoint _cellpos, int _celllayer, CellType _cellType,  std::map<unsigned int ,int>& _pos_phase, QString _name = ""){
+void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<unsigned int ,int>& _pos_phase, QString _name = ""){
     int x_node = _cellpos.x() / 5;
     int y_node = _cellpos.y() / 5;
     int x_coord = _cellpos.x()*20 + 200;  // 坐标
     int y_coord = _cellpos.y()*20 + 200;
     int cell_layer = _celllayer;
-    QPoint pos = QPoint(x_node, y_node);
-    int phase = _pos_phase[pos];
+    position cellpos = std::make_pair(x_node, y_node);
+    int phase = _pos_phase[cellpos];
 
     QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
     mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);
 }
 
 void GateLevelMapping::putClock(){
-    for(auto &v : coordPhaseMap)
+    for(auto &v : positionPhaseMap)
     {
         auto pos = v.first;
         int x = ((pos.first*5) + 2) * 20 + 200; 

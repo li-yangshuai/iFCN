@@ -107,7 +107,9 @@
         "__node_handle": "cpp",
         "__hash_table": "cpp",
         "__tree": "cpp",
-        "filesystem": "cpp"
+        "filesystem": "cpp",
+        "__split_buffer": "cpp",
+        "ios": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled",
     "svg.preview.background": "dark-transparent"

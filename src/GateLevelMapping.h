@@ -14,6 +14,9 @@
 #include <QFileDialog>
 #include <QDir>
 #include <QMessageBox>
+#include <map>
+#include <vector>
+#include <utility>
 #include <autopr/mapping.h>
 // #include "MainWindow.h"
 // #include "config.h"
@@ -57,7 +60,7 @@ public:
 
     void mappingCellItem();
     void putClock();
-    void putCellItem(QPoint _cellpos, int _celllayer, CellType _cellType,  std::map<unsigned int ,int>& _pos_phase, QString _name = "");
+    void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<unsigned int ,int>& _pos_phase, QString _name = "");
 
 private:
     // 辅助函数

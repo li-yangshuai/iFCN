@@ -314,7 +314,7 @@ void VerilogHandler::handleGraphRender()
                                     " \& " + QString::number(width)+ " $\\times$ " + QString::number(height) + " = " + QString::number(width*height) +
                                     " \& " + QString::number(elapsedSeconds, 'f', 1) ;
     //测试时间
-    graph.printLaTex();
+    // graph.printLaTex();
     if(isSuccess){
         
         QString message =  "Graph layout success! " + elapsedStr + " print LaTeX success!";

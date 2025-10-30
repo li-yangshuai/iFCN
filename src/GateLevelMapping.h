@@ -3,30 +3,23 @@
 
 #include <QObject>
 #include <QString>
-#include <QPoint>
-#include <QHash>
 #include <QMap>
+#include <QPair>
+#include <QPoint>
 #include <QVector>
-#include <QFile>
-#include <QTextStream>
-#include <QDebug>
+#include <QHash>
 #include "QCADCellItem.h"
-#include <QFileDialog>
-#include <QDir>
-#include <QMessageBox>
 #include <map>
 #include <vector>
 #include <utility>
 #include <autopr/mapping.h>
-// #include "MainWindow.h"
-// #include "config.h"
 using namespace fcngraph;
 class MainWindow;  // 前向声明
 
-// ✅ 保守定义 QPoint 的哈希函数，兼容 Qt5/Qt6 所有版本
+
 inline uint qHash(const QPoint &key, uint seed = 0) noexcept
 {
-    return qHash((static_cast<uint>(key.x()) << 16) ^ static_cast<uint>(key.y()), seed);
+    return qHash((static_cast<quint64>(key.x()) << 32) ^ quint64(key.y()), seed);
 }
 
 class GateLevelMapping : public QObject
@@ -34,12 +27,8 @@ class GateLevelMapping : public QObject
     Q_OBJECT
 
 public:
-    explicit GateLevelMapping(QObject *parent = nullptr);
+    explicit GateLevelMapping(MainWindow *parent = nullptr);
 
-    // 打开文件选择对话框并解析 .ifcn 文件
-    void parseGateLevelMappingFile();
-
-    // 节点信息结构
     struct NodeInfo {
         int index;
         QString name;
@@ -47,34 +36,29 @@ public:
         QPoint pos;
     };
 
+    // ======= 数据存储 =======
+    QString circuitName;                              // 电路名
+    QMap<int, NodeInfo> nodes;                        // 节点信息
+    QMap<QPair<int,int>, QVector<QPoint>> routes;     // 节点对 → 路径
+    QHash<QPoint, int> coordPhaseMap;                 // 坐标 → 相位
 
-    // 数据容器
-    QString circuitName;                               // 电路名
-    QMap<int, NodeInfo> nodes;                         // 节点信息
-    QMap<QPair<int,int>, QVector<QPoint>> routes;      // 节点对路径
-    QHash<QPoint, int> coordPhaseMap;                  // 坐标 -> 相位映射
+public slots:
+    void parseGateLevelMappingFile();                 // 打开并解析文件
 
-    // 查询接口
-    int getPhaseAtNode(int nodeIndex) const;           // 根据节点获取相位
-    int getPhaseAtCoord(const QPoint &pt) const;       // 根据坐标获取相位
+        void mappingCellItem();
+        void putClock();
+        void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name = "");
 
-    void mappingCellItem();
-    void putClock();
-    void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<unsigned int ,int>& _pos_phase, QString _name = "");
+signals:
+    void mappingLoaded();                             // 解析完成信号
 
 private:
-    // 辅助函数
     void parseNodeLine(const QString &line);
     void parsePathLine(const QString &line);
-    void parsePhaseMapLine(const QString &line);
-
-    // 状态枚举
-    enum Section { NONE, NODE_INFO, PATH_INFO };
-    Section section = NONE;
-    bool inPhaseMapSection = false;
+    void parsePhaseLine(const QString &line);
     MainWindow *mainWindow;
 };
 
+
+
 #endif // GATELEVELMAPPING_H
-
-

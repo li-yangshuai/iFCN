@@ -1,187 +1,19 @@
-#include "GateLevelMapping.h"
 #include "MappingExecutor.h"
-#include <QFile>
-#include <QTextStream>
 #include <QDebug>
-#include <QRegularExpression>
-#include <QFileDialog>
-#include <QDir>
+#include <algorithm>
 #include <QMessageBox>
-#include "MainWindow.h"
 
-GateLevelMapping::GateLevelMapping(MainWindow *parent)
-    : QObject(parent), mainWindow(parent)
+MappingExecutor::MappingExecutor(GateLevelMapping* m, MainWindow* w)
+    : gatelevelmapping(m), mainWindow(w) {}
+
+void MappingExecutor::executeMapping()
 {
-    qDebug() << "[GateLevelMapping] initialized (Qt containers)";
-}
+    // ✅ 直接访问 GateLevelMapping 的 public 成员
+    QString circuitName = gatelevelmapping->circuitName;
+    auto& nodes = gatelevelmapping->nodes;
+    auto& routes = gatelevelmapping->routes;
+    auto& coordPhaseMap = gatelevelmapping->coordPhaseMap;
 
-void GateLevelMapping::parseGateLevelMappingFile()
-{
-    QString filePath = QFileDialog::getOpenFileName(
-        nullptr,
-        "Open .ifcn File",
-        QDir::currentPath(),
-        "iFCN Mapping Files (*.ifcn)"
-    );
-    if (filePath.isEmpty()) {
-        qWarning() << "[GateLevelMapping] No file selected.";
-        return;
-    }
-
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(nullptr, "File Error", "Cannot open file:\n" + filePath);
-        return;
-    }
-
-    QTextStream in(&file);
-    nodes.clear();
-    routes.clear();
-    coordPhaseMap.clear();
-
-    bool nodeSection = false;
-    bool pathSection = false;
-    bool phaseSection = false;
-
-    while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-        if (line.isEmpty()) continue;
-
-        if (line.startsWith("#circuit name:")) {
-            circuitName = line.section(':', 1).trimmed();
-        }
-        else if (line.startsWith("#nodes info")) {
-            nodeSection = true; pathSection = phaseSection = false;
-            continue;
-        }
-        else if (line.startsWith("#paths info")) {
-            pathSection = true; nodeSection = phaseSection = false;
-            continue;
-        }
-        else if (line.startsWith("#phase map")) {
-            phaseSection = true; nodeSection = pathSection = false;
-            continue;
-        }
-        else if (line.startsWith("#")) {
-            continue;
-        }
-
-        if (nodeSection && line.contains(',')) {
-            parseNodeLine(line);
-        } 
-        else if (pathSection && line.contains(':')) {
-            parsePathLine(line);
-        }
-        else if (phaseSection && line.contains(':')) {
-            parsePhaseLine(line);
-        }
-    }
-
-    file.close();
-
-    QMessageBox::information(nullptr, "Parsing Complete",
-        QString("Circuit: %1\nNodes: %2\nRoutes: %3\nPhases: %4")
-        .arg(circuitName)
-        .arg(nodes.size())
-        .arg(routes.size())
-        .arg(coordPhaseMap.size()));
-
-    QString message = "Mapping loaded: " + circuitName +
-                      ", Nodes: " + QString::number(nodes.size()) +
-                      ", Routes: " + QString::number(routes.size()) +
-                      ", Phases: " + QString::number(coordPhaseMap.size());
-    mainWindow->customStatusBar->addMessage(message);
-    QCoreApplication::processEvents();
-
-    //映射
-    mainWindow->slotAddLayer("second layer");
-    mainWindow->slotAddLayer("third layer");
-
-
-    //遍历routes。打印key和value
-
-
-    for (auto it = routes.begin(); it != routes.end(); ++it)
-    {
-        const QPair<int,int>& key = it.key();
-        const QVector<QPoint>& path = it.value();
-
-        qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
-
-        for (const QPoint& p : path)
-            qDebug() << "   (" << p.x() << "," << p.y() << ")";
-    }
-
-    MappingExecutor executor(this, mainWindow);
-    executor.executeMapping();   // 内部直接读 this->nodes/routes/coordPhaseMap
-    executor.putClock();
-
-
-    emit mappingLoaded();
-}
-
-void GateLevelMapping::parseNodeLine(const QString &line)
-{
-    // 格式: 0, pi00, Input, (0,0);
-    QString clean = line;
-    clean.remove(';');
-    QStringList parts = clean.split(',', QString::SkipEmptyParts);
-    if (parts.size() < 4) return;
-
-    NodeInfo node;
-    node.index = parts[0].trimmed().toInt();
-    node.name  = parts[1].trimmed();
-    node.type  = parts[2].trimmed();
-
-    QRegularExpression posPattern("\\((\\d+),(\\d+)\\)");
-    QRegularExpressionMatch match = posPattern.match(line);
-    if (match.hasMatch()) {
-        node.pos = QPoint(match.captured(1).toInt(), match.captured(2).toInt());
-    }
-
-    nodes.insert(node.index, node);
-}
-
-void GateLevelMapping::parsePathLine(const QString &line)
-{
-    // 格式: (1,2): (10,10),(11,10),(12,10);
-    QRegularExpression header("\\((\\d+),(\\d+)\\):");
-    QRegularExpressionMatch headMatch = header.match(line);
-    if (!headMatch.hasMatch()) return;
-
-    int u = headMatch.captured(1).toInt();
-    int v = headMatch.captured(2).toInt();
-
-    QVector<QPoint> path;
-    QRegularExpression coordPattern("\\((\\d+),(\\d+)\\)");
-    QRegularExpressionMatchIterator it = coordPattern.globalMatch(line);
-
-    bool first = true;  // ✅ 用于跳过第一个坐标
-    while (it.hasNext()) {
-        QRegularExpressionMatch m = it.next();
-        if (first) { first = false; continue; } // 跳过 (u,v)
-        path.append(QPoint(m.captured(1).toInt(), m.captured(2).toInt()));
-    }
-
-    routes.insert({u, v}, path);
-}
-
-
-void GateLevelMapping::parsePhaseLine(const QString &line)
-{
-    // 格式: (x,y):phase
-    QRegularExpression entry("\\((\\d+),(\\d+)\\)\\s*:\\s*(\\d+)");
-    QRegularExpressionMatchIterator it = entry.globalMatch(line);
-
-    while (it.hasNext()) {
-        QRegularExpressionMatch m = it.next();
-        QPoint pt(m.captured(1).toInt(), m.captured(2).toInt());
-        coordPhaseMap.insert(pt, m.captured(3).toInt());
-    }
-}
-
-/*
-void GateLevelMapping::mappingCellItem(){
     Mapping mapping;
 
     //QMap transform to std::map (coordPhaseMap -> positionPhaseMap)
@@ -263,7 +95,7 @@ void GateLevelMapping::mappingCellItem(){
             pair.second.second.erase(unique_end, pair.second.second.end());
         }
     }
-*
+*/
     //确保所有节点（nodes容器中的每个节点）都在 Nodelink 这个映射中占一个位置，即使该节点没有任何连线（没有出线或入线的孤立节点）
     for (auto it = nodes.begin(); it != nodes.end(); ++it)
     {
@@ -574,20 +406,9 @@ void GateLevelMapping::mappingCellItem(){
 
 }
 
-void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name ){
-    int x_node = _cellpos.first / 5;
-    int y_node = _cellpos.second / 5;
-    int x_coord = _cellpos.first*20 + 200;  // 坐标
-    int y_coord = _cellpos.second*20 + 200;
-    int cell_layer = _celllayer;
-    position cellpos = std::make_pair(x_node, y_node);
-    int phase = _pos_phase[cellpos];
+void MappingExecutor::putClock(){
 
-    QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
-    mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);
-}
-
-void GateLevelMapping::putClock(){
+    auto& coordPhaseMap = gatelevelmapping->coordPhaseMap;
     //QMap transform to std::map (coordPhaseMap -> positionPhaseMap)
     std::map<position, int> positionPhaseMap;
     for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
@@ -613,4 +434,17 @@ void GateLevelMapping::putClock(){
         }
     }
 }
-*/
+
+void MappingExecutor::putCellItem(position _cellpos, int _celllayer, CellType _cellType, std::map<position, int>& _pos_phase, QString _name)
+{
+    int x_node = _cellpos.first / 5;
+    int y_node = _cellpos.second / 5;
+    int x_coord = _cellpos.first*20 + 200;  // 坐标
+    int y_coord = _cellpos.second*20 + 200;
+    int cell_layer = _celllayer;
+    position cellpos = std::make_pair(x_node, y_node);
+    int phase = _pos_phase[cellpos];
+
+    QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
+    mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);
+}

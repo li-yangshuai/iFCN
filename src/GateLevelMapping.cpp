@@ -178,17 +178,6 @@ void GateLevelMapping::parsePhaseLine(const QString &line)
 }
 
 
-
-
-
-
-QHash<position, int> positionPhaseMap;
-for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it) {
-    positionPhaseMap[position(it.key())] = it.value();
-}
-
-
-
 void GateLevelMapping::mappingCellItem(){
     Mapping mapping;
 

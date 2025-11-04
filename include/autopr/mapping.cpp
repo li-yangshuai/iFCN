@@ -3330,25 +3330,32 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         else if (node.first.second == "output")
         {
             nodecell_list["output"].emplace_back(temppos1.first+2, temppos1.second+2);
-            if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))//左
+            if ((node.second.first.size() == 1)||(node.second.first.size() == 2))
             {
-                nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))//左
+                {
+                    nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                }
+                else if ((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second))//右
+                {
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                }
+                else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second))//上
+                {
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                }
+                else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second))//下
+                {
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                }
             }
-            else if ((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second))//右
+            else
             {
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-            }
-            else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second))//上
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-            }
-            else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second))//下
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                continue;
             }
         }
         else if (node.first.second == "maj")
@@ -4072,6 +4079,10 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         }
         else if (node.first.second == "wire")
         {
+            if (node.second.first.empty() || node.second.second.empty())
+            {
+                continue;
+            }
             if ((node.second.first.front().first == temppos.first)&&(node.second.second.front().first == temppos.first))//上下
             {
                 nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
@@ -4347,7 +4358,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         }
         else
         {
-            return;
+            continue;
         }
         
     }

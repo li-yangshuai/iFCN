@@ -99,12 +99,11 @@ void GateLevelMapping::parseGateLevelMappingFile()
 
     //遍历routes。打印key和value
 
-
     for (auto it = routes.begin(); it != routes.end(); ++it)
     {
         const QPair<int,int>& key = it.key();
         const QVector<QPoint>& path = it.value();
-
+        qDebug() << "============================";
         qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
 
         for (const QPoint& p : path)
@@ -193,17 +192,16 @@ void GateLevelMapping::mappingCellItem(){
 
     std::vector<std::vector<position>> circle_line;
     circle_line.clear();
-    for (const QVector<QPoint>& qPoints : routes)  // 直接拿 value
+    for (auto it = routes.begin(); it != routes.end(); ++it) 
     {
+        const QVector<QPoint>& qPoints = it.value();
         std::vector<position> convertedRoute;
         convertedRoute.reserve(qPoints.size());
-
         for (const QPoint& point : qPoints)
-            convertedRoute.emplace_back(point.x(), point.y());
-
+            convertedRoute.emplace_back(static_cast<unsigned int>(point.x()),
+                                        static_cast<unsigned int>(point.y()));
         circle_line.push_back(std::move(convertedRoute));
     }
-
 
     std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node,type), (扇入，扇出)>
     Nodelink.clear();
@@ -225,44 +223,81 @@ void GateLevelMapping::mappingCellItem(){
         Nodelink[{startpos, startnodetype.toStdString()}] = {{}, {}};
         Nodelink[{endpos, endnodetype.toStdString()}]   = {{}, {}};
     }
-/*
-    for (auto &pair : Nodelink)
-    {
-        
-        for (auto &line : circle_line)
-        {
 
-            if (pair.first.first == line.front())
-            {
-                std::vector<position> &output = pair.second.second;
-                output.push_back(*std::next(line.begin()));
-            }
-            else if (pair.first.first == line.back())
-            {
-                std::vector<position> &intput = pair.second.first;
-                intput.push_back(*std::prev(std::prev(line.end())));
-            }
-        }
-        //避免重复放置输入输出
-        if(pair.second.first.size() > 1)
-        {
-            std::sort(pair.second.first.begin(), pair.second.first.end());
-            auto unique_end = std::unique(pair.second.first.begin(), pair.second.first.end());
-            pair.second.first.erase(unique_end, pair.second.first.end());
-        }
-        if(pair.second.second.size() > 1)
-        {
-            std::sort(pair.second.second.begin(), pair.second.second.end());
-            auto unique_end = std::unique(pair.second.second.begin(), pair.second.second.end());
-            pair.second.second.erase(unique_end, pair.second.second.end());
-        }
-    }
-*/
+    // for (auto &pair : Nodelink)
+    // {
+        
+    //     for (auto &line : circle_line)
+    //     {
+
+    //         if (pair.first.first == line.front())
+    //         {
+    //             std::vector<position> &output = pair.second.second;
+    //             output.push_back(*std::next(line.begin()));
+    //         }
+    //         else if (pair.first.first == line.back())
+    //         {
+    //             std::vector<position> &intput = pair.second.first;
+    //             intput.push_back(*std::prev(std::prev(line.end())));
+    //         }
+    //     }
+    //     //避免重复放置输入输出
+    //     if(pair.second.first.size() > 1)
+    //     {
+    //         std::sort(pair.second.first.begin(), pair.second.first.end());
+    //         auto unique_end = std::unique(pair.second.first.begin(), pair.second.first.end());
+    //         pair.second.first.erase(unique_end, pair.second.first.end());
+    //     }
+    //     if(pair.second.second.size() > 1)
+    //     {
+    //         std::sort(pair.second.second.begin(), pair.second.second.end());
+    //         auto unique_end = std::unique(pair.second.second.begin(), pair.second.second.end());
+    //         pair.second.second.erase(unique_end, pair.second.second.end());
+    //     }
+    // }
+
     for (auto it = nodes.begin(); it != nodes.end(); ++it)
     {
         position nodepos{it.value().pos.x(), it.value().pos.y()};
-        Nodelink[{nodepos, it.value().type.toStdString()}] = {{}, {}};
+        std::string type = it.value().type.toStdString();
+        Nodelink.try_emplace({nodepos, type}, std::make_pair(std::vector<position>{}, std::vector<position>{}));
     }
+
+
+    // qDebug() << "start print all route:";
+    // int idx = 0;
+    // for (const auto &line : circle_line)
+    // {
+    //     QString lineStr = QString("Path %1: ").arg(idx++);
+    //     for (const auto &p : line)
+    //         lineStr += QString("(%1,%2) ").arg(p.first).arg(p.second);
+    //     qDebug().noquote() << lineStr;
+    // }
+    qDebug() << "start print Nodelink:";
+    int node_idx = 0;
+    for (const auto &entry : Nodelink)
+    {
+        const auto &pos = entry.first.first;
+        const auto &type = entry.first.second;
+        const auto &inputs = entry.second.first;
+        const auto &outputs = entry.second.second;
+
+        QString lineStr = QString("Node %1 (%2,%3) Type:%4 | Fan-in:")
+                            .arg(node_idx++)
+                            .arg(pos.first)
+                            .arg(pos.second)
+                            .arg(QString::fromStdString(type));
+
+        for (const auto &in : inputs)
+            lineStr += QString(" (%1,%2)").arg(in.first).arg(in.second);
+
+        lineStr += " | Fan-out:";
+        for (const auto &out : outputs)
+            lineStr += QString(" (%1,%2)").arg(out.first).arg(out.second);
+
+        qDebug().noquote() << lineStr;
+    }
+
 
     for (auto &entry : Nodelink)
     {
@@ -298,6 +333,7 @@ void GateLevelMapping::mappingCellItem(){
         std::sort(outputs.begin(), outputs.end());
         outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
     }
+
 
     if(Nodelink.empty())
     {

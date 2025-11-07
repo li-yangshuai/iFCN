@@ -3322,6 +3322,10 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
                 }
             }
+            else
+            {
+                continue;
+            }
         }
         else if (node.first.second == "output")
         {
@@ -3361,364 +3365,379 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         }
         else if (node.first.second == "and")
         {
-            if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
-                || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)))//左上
+            if (node.second.first.size() == 2)
             {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                if(node.second.second.empty())
+                if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
+                    || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)))//左上
                 {
-                    nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second+4);
-                    nodecell_list["output"].emplace_back(temppos1.first+4, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first > temppos.first)&&(node.second.second.front().second == temppos.second))
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    if(node.second.second.empty())
                     {
                         nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first+4, temppos1.second+2);
                     }
                     else
                     {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["fix0"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        if ((node.second.second.front().first > temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["fix0"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        }
+                        
                     }
-                    
                 }
-            }
-            else if (((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
-                || ((node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)))//右上
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-                if(node.second.second.empty())
+                else if (((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
+                    || ((node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)))//右上
                 {
-                    nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second+4);
-                    nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                    if(node.second.second.empty())
                     {
                         nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
                     }
                     else
                     {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["fix0"].emplace_back(temppos1.first, temppos1.second+2);
+                        if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["fix0"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
                     }
                 }
-            }
-            else if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
-                || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//左下
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                if(node.second.second.empty())
+                else if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
+                    || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//左下
                 {
-                    nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
-                    nodecell_list["output"].emplace_back(temppos1.first+4, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first > temppos.first)&&(node.second.second.front().second == temppos.second))
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                    nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    if(node.second.second.empty())
                     {
                         nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
-                        nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first+4, temppos1.second+2);
                     }
                     else
                     {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                        if ((node.second.second.front().first > temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
+                            nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                            nodecell_list["fix0"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        }
+                    }
+                }
+                else if (((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
+                    || ((node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//右下
+                {
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                    if(node.second.second.empty())
+                    {
+                        nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
+                        nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
+                    }
+                    else
+                    {
+                        if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
+                            nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                            nodecell_list["fix0"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
+                    }
+                }
+                else if (((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
+                    || ((node.second.first.back().first == temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//上下
+                {
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    if(node.second.second.empty())
+                    {
                         nodecell_list["fix0"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
+                    }
+                    else
+                    {
+                        if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix0"].emplace_back(temppos1.first+4, temppos1.second+2);
+                            nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                            nodecell_list["fix0"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
                     }
                 }
-            }
-            else if (((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
-                || ((node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//右下
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-                if(node.second.second.empty())
+                else if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second))
+                    || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second == temppos.second)))//左右
                 {
-                    nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
-                    nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                    nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    if(node.second.second.empty())
                     {
                         nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
-                        nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first+2, temppos1.second+4);
                     }
                     else
                     {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                        nodecell_list["fix0"].emplace_back(temppos1.first, temppos1.second+2);
+                        if ((node.second.second.front().first == temppos.first)&&(node.second.second.front().second < temppos.second))
+                        {
+                            nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
+                        }
                     }
                 }
             }
-            else if (((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
-                || ((node.second.first.back().first == temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//上下
+            else
             {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                if(node.second.second.empty())
-                {
-                    nodecell_list["fix0"].emplace_back(temppos1.first+4, temppos1.second+2);
-                    nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
-                    {
-                        nodecell_list["fix0"].emplace_back(temppos1.first+4, temppos1.second+2);
-                        nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                    }
-                    else
-                    {
-                        nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-                        nodecell_list["fix0"].emplace_back(temppos1.first, temppos1.second+2);
-                    }
-                }
-            }
-            else if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second))
-                || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second == temppos.second)))//左右
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                if(node.second.second.empty())
-                {
-                    nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
-                    nodecell_list["output"].emplace_back(temppos1.first+2, temppos1.second+4);
-                }
-                else
-                {
-                    if ((node.second.second.front().first == temppos.first)&&(node.second.second.front().second < temppos.second))
-                    {
-                        nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                    }
-                    else
-                    {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["fix0"].emplace_back(temppos1.first+2, temppos1.second);
-                    }
-                }
+                continue;
             }
         }
         else if (node.first.second == "or")
         {
-            if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
-                || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)))//左上
+            if (node.second.first.size() == 2)
             {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                if(node.second.second.empty())
+                if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
+                    || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)))//左上
                 {
-                    nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second+4);
-                    nodecell_list["output"].emplace_back(temppos1.first+4, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first > temppos.first)&&(node.second.second.front().second == temppos.second))
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    if(node.second.second.empty())
                     {
                         nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first+4, temppos1.second+2);
                     }
                     else
                     {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["fix1"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        if ((node.second.second.front().first > temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["fix1"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        }
+                        
                     }
-                    
                 }
-            }
-            else if (((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
-                || ((node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)))//右上
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-                if(node.second.second.empty())
+                else if (((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
+                    || ((node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)))//右上
                 {
-                    nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second+4);
-                    nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                    if(node.second.second.empty())
                     {
                         nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
                     }
                     else
                     {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["fix1"].emplace_back(temppos1.first, temppos1.second+2);
+                        if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["fix1"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
                     }
                 }
-            }
-            else if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
-                || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//左下
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                if(node.second.second.empty())
+                else if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
+                    || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//左下
                 {
-                    nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
-                    nodecell_list["output"].emplace_back(temppos1.first+4, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first > temppos.first)&&(node.second.second.front().second == temppos.second))
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                    nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    if(node.second.second.empty())
                     {
                         nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
-                        nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first+4, temppos1.second+2);
                     }
                     else
                     {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                        if ((node.second.second.front().first > temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
+                            nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                            nodecell_list["fix1"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        }
+                    }
+                }
+                else if (((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
+                    || ((node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//右下
+                {
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                    if(node.second.second.empty())
+                    {
+                        nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
+                        nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
+                    }
+                    else
+                    {
+                        if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
+                            nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                            nodecell_list["fix1"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
+                    }
+                }
+                else if (((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
+                    || ((node.second.first.back().first == temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//上下
+                {
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    if(node.second.second.empty())
+                    {
                         nodecell_list["fix1"].emplace_back(temppos1.first+4, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
+                    }
+                    else
+                    {
+                        if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                        {
+                            nodecell_list["fix1"].emplace_back(temppos1.first+4, temppos1.second+2);
+                            nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                            nodecell_list["fix1"].emplace_back(temppos1.first, temppos1.second+2);
+                        }
                     }
                 }
-            }
-            else if (((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
-                || ((node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//右下
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-                if(node.second.second.empty())
+                else if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second))
+                    || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second == temppos.second)))//左右
                 {
-                    nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
-                    nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
+                    nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
+                    nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
+                    if(node.second.second.empty())
                     {
                         nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
-                        nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
+                        nodecell_list["output"].emplace_back(temppos1.first+2, temppos1.second+4);
                     }
                     else
                     {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                        nodecell_list["fix1"].emplace_back(temppos1.first, temppos1.second+2);
+                        if ((node.second.second.front().first == temppos.first)&&(node.second.second.front().second < temppos.second))
+                        {
+                            nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
+                        }
+                        else
+                        {
+                            nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
+                            nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
+                        }
                     }
                 }
             }
-            else if (((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second > temppos.second))
-                || ((node.second.first.back().first == temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second)))//上下
+            else
             {
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                if(node.second.second.empty())
-                {
-                    nodecell_list["fix1"].emplace_back(temppos1.first+4, temppos1.second+2);
-                    nodecell_list["output"].emplace_back(temppos1.first, temppos1.second+2);
-                }
-                else
-                {
-                    if ((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second))
-                    {
-                        nodecell_list["fix1"].emplace_back(temppos1.first+4, temppos1.second+2);
-                        nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                    }
-                    else
-                    {
-                        nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-                        nodecell_list["fix1"].emplace_back(temppos1.first, temppos1.second+2);
-                    }
-                }
-            }
-            else if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first > temppos.first)&&(node.second.first.back().second == temppos.second))
-                || ((node.second.first.back().first < temppos.first)&&(node.second.first.back().second == temppos.second)&&(node.second.first.front().first == temppos.first)&&(node.second.first.front().second == temppos.second)))//左右
-            {
-                nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
-                nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+3);
-                if(node.second.second.empty())
-                {
-                    nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
-                    nodecell_list["output"].emplace_back(temppos1.first+2, temppos1.second+4);
-                }
-                else
-                {
-                    if ((node.second.second.front().first == temppos.first)&&(node.second.second.front().second < temppos.second))
-                    {
-                        nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
-                    }
-                    else
-                    {
-                        nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+4);
-                        nodecell_list["fix1"].emplace_back(temppos1.first+2, temppos1.second);
-                    }
-                }
+                continue;
             }
         }
         else if (node.first.second == "not")
         {
-            int size = node.second.second.size();
-            if (size == 1)
+            int size_output = node.second.second.size();
+            int size_input = node.second.first.size();
+            if ((size_input == 1) && (size_output == 1))
             {
                 if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))//左
                 {
@@ -3834,7 +3853,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     }
                 }
             }
-            else if (size == 2)
+            else if ((size_input == 1) && (size_output == 2))
             {
                 if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))
                 {
@@ -4001,7 +4020,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     }
                 }
             }
-            else//作为输出
+            else if ((size_input == 1) && (size_output < 1))//作为输出
             {
                 if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))
                 {
@@ -4046,7 +4065,10 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                 }
                 
             }
-            
+            else
+            {
+                continue;
+            }
         }
         else if (node.first.second == "wire")
         {
@@ -4105,10 +4127,11 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         }
         else if (node.first.second == "fanout")
         {
-            auto size = node.second.second.size();
-            if (size == 1)
+            auto size_output = node.second.second.size();
+            auto size_input = node.second.first.size();
+            if (size_input == 1 && size_output == 1)//1个输出
             {
-                if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))
+                if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))//输入在左边
                 {
                     if ((node.second.second.front().first == temppos.first)&&(node.second.second.back().second < temppos.second))
                     {
@@ -4136,7 +4159,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     }
                     
                 }
-                else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second))
+                else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second))//输入在上边
                 {
                     if ((node.second.second.front().first > temppos.first)&&(node.second.second.back().second == temppos.second))
                     {
@@ -4163,7 +4186,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                         nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
                     }
                 }
-                else if ((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second))
+                else if ((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second))//输入在右边
                 {
                     if ((node.second.second.front().first == temppos.first)&&(node.second.second.back().second > temppos.second))
                     {
@@ -4190,7 +4213,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
                     }
                 }
-                else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second))
+                else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second))//输入在下边
                 {
                     if ((node.second.second.front().first < temppos.first)&&(node.second.second.back().second == temppos.second))
                     {
@@ -4219,12 +4242,11 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                 }
                 
             }
-            else
+            else if (size_input == 1 && size_output == 2)//2个输出
             {
-                if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))
+                if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))//输入在左边
                 {
-                    // qDebug() << 
-                    if ((node.second.second.front().second < temppos.second)||(node.second.second.back().second < temppos.second))
+                    if ((node.second.second.front().second < temppos.second)||(node.second.second.back().second < temppos.second))//输出在右上
                     {
                         nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
                         nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
@@ -4234,7 +4256,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
                     }
-                    else if ((node.second.second.front().second > temppos.second)||(node.second.second.back().second > temppos.second))
+                    else if ((node.second.second.front().second > temppos.second)||(node.second.second.back().second > temppos.second))//输出在右下
                     {
                         nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
                         nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
@@ -4246,9 +4268,9 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     }
                     
                 }
-                else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second))
+                else if ((node.second.first.front().first == temppos.first)&&(node.second.first.front().second < temppos.second))//输入在上边
                 {
-                    if ((node.second.second.front().first < temppos.first)||(node.second.second.back().first < temppos.first))
+                    if ((node.second.second.front().first < temppos.first)||(node.second.second.back().first < temppos.first))//输出在左下
                     {
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
@@ -4258,7 +4280,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                         nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
                         nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
                     }
-                    else if ((node.second.second.front().first > temppos.first)||(node.second.second.back().first > temppos.first))
+                    else if ((node.second.second.front().first > temppos.first)||(node.second.second.back().first > temppos.first))//输出在右下
                     {
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
@@ -4269,9 +4291,9 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                         nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
                     }
                 }
-                else if ((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second))
+                else if ((node.second.first.front().first > temppos.first)&&(node.second.first.front().second == temppos.second))//输入在右边
                 {
-                    if ((node.second.second.front().second < temppos.second)||(node.second.second.back().second < temppos.second))
+                    if ((node.second.second.front().second < temppos.second)||(node.second.second.back().second < temppos.second))//输出在左上
                     {
                         nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
                         nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
@@ -4281,7 +4303,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second+1);
                         nodecell_list["normal"].emplace_back(temppos1.first+2, temppos1.second);
                     }
-                    else if ((node.second.second.front().second > temppos.second)||(node.second.second.back().second > temppos.second))
+                    else if ((node.second.second.front().second > temppos.second)||(node.second.second.back().second > temppos.second))//输出在左下
                     {
                         nodecell_list["normal"].emplace_back(temppos1.first, temppos1.second+2);
                         nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
@@ -4293,7 +4315,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     }
                 }
                 // else((node.second.first.front().first == temppos.first)&&(node.second.first.front().second > temppos.second))
-                else
+                else//输出在下边
                 {
                     if ((node.second.second.front().first < temppos.first)||(node.second.second.back().first < temppos.first))
                     {
@@ -4317,6 +4339,10 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     }
                 }
                 
+            }
+            else
+            {
+                continue;
             }
         }
         else

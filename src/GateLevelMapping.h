@@ -48,6 +48,7 @@ public slots:
         void mappingCellItem();
         void putClock();
         void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name = "");
+        // void printCrossline();
 
 signals:
     void mappingLoaded();                             // 解析完成信号

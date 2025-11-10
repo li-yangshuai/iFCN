@@ -112,6 +112,7 @@ void GateLevelMapping::parseGateLevelMappingFile()
 
     mappingCellItem();
     putClock();
+    // printCrossline();
 
     emit mappingLoaded();
 }
@@ -437,6 +438,15 @@ void GateLevelMapping::mappingCellItem(){
     std::vector<position> verticalcell;
     if(!crossexample.empty())
     {
+        size_t total = 0;
+        for (const auto &entry : crossexample) 
+        {
+        total += entry.second.size();
+        }
+        QString message = QStringLiteral("Total crossline segments: %1").arg(static_cast<qulonglong>(total));
+        mainWindow->printToStatusBar(message);
+        
+        
         for(auto &crossline : crossexample)
         {
             for(auto &cross : crossline.second)
@@ -638,3 +648,5 @@ void GateLevelMapping::putClock(){
         }
     }
 }
+
+

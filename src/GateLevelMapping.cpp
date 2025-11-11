@@ -422,6 +422,7 @@ void GateLevelMapping::mappingCellItem(){
 
     auto routeexample = mapping.mapping_line(circle_line);
     auto crossexample = mapping.crossline_list;
+    auto nodeexample2 = mapping.nodecell_list;
 
     std::vector<position> allroutecells;
     for (auto &pair : routeexample)
@@ -432,18 +433,61 @@ void GateLevelMapping::mappingCellItem(){
         }
         
     }
+    std::vector<position> allnodecells;
+    for (auto &pair : nodeexample2)
+    {
+        allnodecells.insert(allnodecells.end(), pair.second.begin(), pair.second.end());
+    }
+
+    std::vector<position> allcrosscells;
+    if(!crossexample.empty())
+    {
+        for (auto &pair : crossexample)
+        {
+            for (auto &v : pair.second)
+            {
+                allcrosscells.insert(allcrosscells.end(), v.begin(), v.end());
+            }
+            
+        }
+    }
+
+    //对于线路元胞，交叉点不去重，非交叉点（线路复用）去重
+    std::vector<position> result;
+    std::vector<position> seen;  // 已出现过的“非交叉”点
+    for (auto &p : allroutecells) {
+        // 检查是否是交叉点
+        bool is_cross = std::find(allcrosscells.begin(), allcrosscells.end(), p) != allcrosscells.end();
+
+        if (is_cross) {
+            // 交叉点 → 不去重，直接保留
+            result.push_back(p);
+        } else {
+            // 非交叉点 → 如果没出现过，则保留
+            if (std::find(seen.begin(), seen.end(), p) == seen.end()) {
+                seen.push_back(p);
+                result.push_back(p);
+            }
+        }
+    }
+    allroutecells = result;
+
+    size_t total_count = allroutecells.size() + allnodecells.size();
+    QString message = QStringLiteral("Total cells: %1").arg(static_cast<qulonglong>(total_count));
+    mainWindow->printToStatusBar(message);
+
 
     //Cross线路元胞放置
     std::vector<position> crosscell;
     std::vector<position> verticalcell;
     if(!crossexample.empty())
     {
-        size_t total = 0;
+        size_t total_cross = 0;
         for (const auto &entry : crossexample) 
         {
-        total += entry.second.size();
+            total_cross += entry.second.size();
         }
-        QString message = QStringLiteral("Total crossline segments: %1").arg(static_cast<qulonglong>(total));
+        QString message = QStringLiteral("Total crossline segments: %1").arg(static_cast<qulonglong>(total_cross));
         mainWindow->printToStatusBar(message);
         
         

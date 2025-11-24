@@ -11,7 +11,7 @@
 GateLevelMapping::GateLevelMapping(MainWindow *parent)
     : QObject(parent), mainWindow(parent)
 {
-    qDebug() << "[GateLevelMapping] initialized (Qt containers)";
+    // qDebug() << "[GateLevelMapping] initialized (Qt containers)";
 }
 
 void GateLevelMapping::parseGateLevelMappingFile()
@@ -99,16 +99,16 @@ void GateLevelMapping::parseGateLevelMappingFile()
 
     //遍历routes。打印key和value
 
-    for (auto it = routes.begin(); it != routes.end(); ++it)
-    {
-        const QPair<int,int>& key = it.key();
-        const QVector<QPoint>& path = it.value();
-        qDebug() << "============================";
-        qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
+    // for (auto it = routes.begin(); it != routes.end(); ++it)
+    // {
+    //     const QPair<int,int>& key = it.key();
+    //     const QVector<QPoint>& path = it.value();
+    //     qDebug() << "============================";
+    //     qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
 
-        for (const QPoint& p : path)
-            qDebug() << "   (" << p.x() << "," << p.y() << ")";
-    }
+    //     for (const QPoint& p : path)
+    //         qDebug() << "   (" << p.x() << "," << p.y() << ")";
+    // }
 
     mappingCellItem();
     putClock();
@@ -274,7 +274,7 @@ void GateLevelMapping::mappingCellItem(){
     //         lineStr += QString("(%1,%2) ").arg(p.first).arg(p.second);
     //     qDebug().noquote() << lineStr;
     // }
-    qDebug() << "start print Nodelink:";
+    // qDebug() << "start print Nodelink:";
     int node_idx = 0;
     for (const auto &entry : Nodelink)
     {
@@ -296,7 +296,7 @@ void GateLevelMapping::mappingCellItem(){
         for (const auto &out : outputs)
             lineStr += QString(" (%1,%2)").arg(out.first).arg(out.second);
 
-        qDebug().noquote() << lineStr;
+        // qDebug().noquote() << lineStr;
     }
 
 

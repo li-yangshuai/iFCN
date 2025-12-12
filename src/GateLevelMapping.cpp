@@ -1,5 +1,4 @@
 #include "GateLevelMapping.h"
-#include "MappingExecutor.h"
 #include <QFile>
 #include <QTextStream>
 #include <QDebug>
@@ -12,7 +11,7 @@
 GateLevelMapping::GateLevelMapping(MainWindow *parent)
     : QObject(parent), mainWindow(parent)
 {
-    // qDebug() << "[GateLevelMapping] initialized (Qt containers)";
+    qDebug() << "[GateLevelMapping] initialized (Qt containers)";
 }
 
 void GateLevelMapping::parseGateLevelMappingFile()
@@ -100,21 +99,20 @@ void GateLevelMapping::parseGateLevelMappingFile()
 
     //遍历routes。打印key和value
 
-    // for (auto it = routes.begin(); it != routes.end(); ++it)
-    // {
-    //     const QPair<int,int>& key = it.key();
-    //     const QVector<QPoint>& path = it.value();
-    //     qDebug() << "============================";
-    //     qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
+    for (auto it = routes.begin(); it != routes.end(); ++it)
+    {
+        const QPair<int,int>& key = it.key();
+        const QVector<QPoint>& path = it.value();
+        qDebug() << "============================";
+        qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
 
-    //     for (const QPoint& p : path)
-    //         qDebug() << "   (" << p.x() << "," << p.y() << ")";
-    // }
+        for (const QPoint& p : path)
+            qDebug() << "   (" << p.x() << "," << p.y() << ")";
+    }
 
-    MappingExecutor executor(this, mainWindow);
-    executor.executeMapping();   // 内部直接读 this->nodes/routes/coordPhaseMap
-    executor.putClock();
-
+    mappingCellItem();
+    putClock();
+    // printCrossline();
 
     emit mappingLoaded();
 }
@@ -179,11 +177,10 @@ void GateLevelMapping::parsePhaseLine(const QString &line)
     }
 }
 
-/*
+
 void GateLevelMapping::mappingCellItem(){
     Mapping mapping;
 
-    //QMap transform to std::map (coordPhaseMap -> positionPhaseMap)
     std::map<position, int> positionPhaseMap;
     for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
     {
@@ -194,7 +191,6 @@ void GateLevelMapping::mappingCellItem(){
                         static_cast<unsigned int>(p.y())}] = phase;
     }
 
-    //get circle_line from routes(containing all paths)
     std::vector<std::vector<position>> circle_line;
     circle_line.clear();
     for (auto it = routes.begin(); it != routes.end(); ++it) 
@@ -211,7 +207,6 @@ void GateLevelMapping::mappingCellItem(){
     std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node,type), (扇入，扇出)>
     Nodelink.clear();
 
-    //初始化Nodelink映射,确保每个节点位置和类型都有一个对应的输入输出位置列表
     for (auto it = routes.begin(); it != routes.end(); ++it)
     {
 
@@ -279,7 +274,7 @@ void GateLevelMapping::mappingCellItem(){
     //         lineStr += QString("(%1,%2) ").arg(p.first).arg(p.second);
     //     qDebug().noquote() << lineStr;
     // }
-    // qDebug() << "start print Nodelink:";
+    qDebug() << "start print Nodelink:";
     int node_idx = 0;
     for (const auto &entry : Nodelink)
     {
@@ -301,7 +296,7 @@ void GateLevelMapping::mappingCellItem(){
         for (const auto &out : outputs)
             lineStr += QString(" (%1,%2)").arg(out.first).arg(out.second);
 
-        // qDebug().noquote() << lineStr;
+        qDebug().noquote() << lineStr;
     }
 
 
@@ -312,29 +307,29 @@ void GateLevelMapping::mappingCellItem(){
         for (const auto &line : circle_line)
         {
             const size_t len = line.size();
-            if (len < 2) continue;  //必须至少两个点，否则非法(起点和终点)
+            if (len < 2) continue;  // ✅ 必须至少两个点，否则非法
 
             const position &start = line.front();
             const position &end   = line.back();
 
-            //如果是输出节点（路径起点）
+            // ✅ 如果是输出节点（路径起点）
             if (nodePos == start)
             {
-                entry.second.second.push_back(line[1]);  //第二个点安全访问（fan-out position）
+                entry.second.second.push_back(line[1]);  // 第二个点安全访问
             }
-            // 如果是输入节点（路径终点）
+            // ✅ 如果是输入节点（路径终点）
             else if (nodePos == end)
             {
-                entry.second.first.push_back(line[len - 2]);  //倒数第二个点安全访问（fan-in position）
+                entry.second.first.push_back(line[len - 2]);  // 倒数第二个点安全访问
             }
         }
 
-        //去重（输入端）
+        // ✅ 去重（输入端）
         auto &inputs = entry.second.first;
         std::sort(inputs.begin(), inputs.end());
         inputs.erase(std::unique(inputs.begin(), inputs.end()), inputs.end());
 
-        //去重（输出端）
+        // ✅ 去重（输出端）
         auto &outputs = entry.second.second;
         std::sort(outputs.begin(), outputs.end());
         outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
@@ -349,7 +344,7 @@ void GateLevelMapping::mappingCellItem(){
     }
 
     mapping.node_mapping(Nodelink);
-    auto nodeexample = mapping.nodecell_list;//按单位元胞类型分类的映射 std::map<std::string, std::vector<position>>
+    auto nodeexample = mapping.nodecell_list;
     if(nodeexample.empty())
     {
         QString message = "nodeexample empty!";
@@ -363,7 +358,6 @@ void GateLevelMapping::mappingCellItem(){
         {
             for(auto &cellpos : cellpos_list)
             {
-                //元胞坐标 transform to 门级节点坐标
                 unsigned int x_node = cellpos.first / 5;
                 unsigned int y_node = cellpos.second / 5;
                 QPoint pos = QPoint(x_node, y_node);
@@ -430,8 +424,7 @@ void GateLevelMapping::mappingCellItem(){
     auto crossexample = mapping.crossline_list;
     auto nodeexample2 = mapping.nodecell_list;
 
-    std::vector<position> allroutecells;//存放所有路线元胞坐标，用于后续交叉线的检查
-    allroutecells.clear();
+    std::vector<position> allroutecells;
     for (auto &pair : routeexample)
     {
         for (auto &v : pair.second)
@@ -675,7 +668,6 @@ void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _
 }
 
 void GateLevelMapping::putClock(){
-    //QMap transform to std::map (coordPhaseMap -> positionPhaseMap)
     std::map<position, int> positionPhaseMap;
     for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
     {
@@ -700,4 +692,4 @@ void GateLevelMapping::putClock(){
         }
     }
 }
-*/
+

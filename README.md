@@ -28,7 +28,7 @@ The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and *
 | **Dr. Fei Peng**   | Lecturer, HBFU              | Initiator of iFCN-EDA; logic synthesis; P&R algorithm; and simulation engine | fpeng1985@126.com           |
 
 **Current Graduate Students**  
-Xiansheng Tong, Rongjie Zhu, Jiachen Gao
+Xiansheng Tong, Rongjie Zhu
 
 
 **Alumni Contributors**  

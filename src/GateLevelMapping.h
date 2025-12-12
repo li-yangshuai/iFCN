@@ -45,9 +45,10 @@ public:
 public slots:
     void parseGateLevelMappingFile();                 // 打开并解析文件
 
-        // void mappingCellItem();
-        // void putClock();
-        // void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name = "");
+        void mappingCellItem();
+        void putClock();
+        void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name = "");
+        // void printCrossline();
 
 signals:
     void mappingLoaded();                             // 解析完成信号

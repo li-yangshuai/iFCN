@@ -1,189 +1,23 @@
-#include "GateLevelMapping.h"
 #include "MappingExecutor.h"
-#include <QFile>
-#include <QTextStream>
 #include <QDebug>
-#include <QRegularExpression>
-#include <QFileDialog>
-#include <QDir>
+#include <algorithm>
 #include <QMessageBox>
-#include "MainWindow.h"
 
-GateLevelMapping::GateLevelMapping(MainWindow *parent)
-    : QObject(parent), mainWindow(parent)
+MappingExecutor::MappingExecutor(GateLevelMapping* m, MainWindow* w)
+    : gatelevelmapping(m), mainWindow(w) {}
+
+void MappingExecutor::executeMapping()
 {
-    // qDebug() << "[GateLevelMapping] initialized (Qt containers)";
-}
+    // 直接访问 GateLevelMapping 的 public 成员
+    QString circuitName = gatelevelmapping->circuitName;
+    auto& nodes = gatelevelmapping->nodes;
+    auto& routes = gatelevelmapping->routes;
+    auto& coordPhaseMap = gatelevelmapping->coordPhaseMap;
 
-void GateLevelMapping::parseGateLevelMappingFile()
-{
-    QString filePath = QFileDialog::getOpenFileName(
-        nullptr,
-        "Open .ifcn File",
-        QDir::currentPath(),
-        "iFCN Mapping Files (*.ifcn)"
-    );
-    if (filePath.isEmpty()) {
-        qWarning() << "[GateLevelMapping] No file selected.";
-        return;
-    }
-
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(nullptr, "File Error", "Cannot open file:\n" + filePath);
-        return;
-    }
-
-    QTextStream in(&file);
-    nodes.clear();
-    routes.clear();
-    coordPhaseMap.clear();
-
-    bool nodeSection = false;
-    bool pathSection = false;
-    bool phaseSection = false;
-
-    while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-        if (line.isEmpty()) continue;
-
-        if (line.startsWith("#circuit name:")) {
-            circuitName = line.section(':', 1).trimmed();
-        }
-        else if (line.startsWith("#nodes info")) {
-            nodeSection = true; pathSection = phaseSection = false;
-            continue;
-        }
-        else if (line.startsWith("#paths info")) {
-            pathSection = true; nodeSection = phaseSection = false;
-            continue;
-        }
-        else if (line.startsWith("#phase map")) {
-            phaseSection = true; nodeSection = pathSection = false;
-            continue;
-        }
-        else if (line.startsWith("#")) {
-            continue;
-        }
-
-        if (nodeSection && line.contains(',')) {
-            parseNodeLine(line);
-        } 
-        else if (pathSection && line.contains(':')) {
-            parsePathLine(line);
-        }
-        else if (phaseSection && line.contains(':')) {
-            parsePhaseLine(line);
-        }
-    }
-
-    file.close();
-
-    QMessageBox::information(nullptr, "Parsing Complete",
-        QString("Circuit: %1\nNodes: %2\nRoutes: %3\nPhases: %4")
-        .arg(circuitName)
-        .arg(nodes.size())
-        .arg(routes.size())
-        .arg(coordPhaseMap.size()));
-
-    QString message = "Mapping loaded: " + circuitName +
-                      ", Nodes: " + QString::number(nodes.size()) +
-                      ", Routes: " + QString::number(routes.size()) +
-                      ", Phases: " + QString::number(coordPhaseMap.size());
-    mainWindow->customStatusBar->addMessage(message);
-    QCoreApplication::processEvents();
-
-    //映射
-    mainWindow->slotAddLayer("second layer");
-    mainWindow->slotAddLayer("third layer");
-
-
-    //遍历routes。打印key和value
-
-    // for (auto it = routes.begin(); it != routes.end(); ++it)
-    // {
-    //     const QPair<int,int>& key = it.key();
-    //     const QVector<QPoint>& path = it.value();
-    //     qDebug() << "============================";
-    //     qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
-
-    //     for (const QPoint& p : path)
-    //         qDebug() << "   (" << p.x() << "," << p.y() << ")";
-    // }
-
-    MappingExecutor executor(this, mainWindow);
-    executor.executeMapping();   // 内部直接读 this->nodes/routes/coordPhaseMap
-    executor.putClock();
-
-
-    emit mappingLoaded();
-}
-
-void GateLevelMapping::parseNodeLine(const QString &line)
-{
-    // 格式: 0, pi00, Input, (0,0);
-    QString clean = line;
-    clean.remove(';');
-    QStringList parts = clean.split(',', QString::SkipEmptyParts);
-    if (parts.size() < 4) return;
-
-    NodeInfo node;
-    node.index = parts[0].trimmed().toInt();
-    node.name  = parts[1].trimmed();
-    node.type  = parts[2].trimmed();
-
-    QRegularExpression posPattern("\\((\\d+),(\\d+)\\)");
-    QRegularExpressionMatch match = posPattern.match(line);
-    if (match.hasMatch()) {
-        node.pos = QPoint(match.captured(1).toInt(), match.captured(2).toInt());
-    }
-
-    nodes.insert(node.index, node);
-}
-
-void GateLevelMapping::parsePathLine(const QString &line)
-{
-    // 格式: (1,2): (10,10),(11,10),(12,10);
-    QRegularExpression header("\\((\\d+),(\\d+)\\):");
-    QRegularExpressionMatch headMatch = header.match(line);
-    if (!headMatch.hasMatch()) return;
-
-    int u = headMatch.captured(1).toInt();
-    int v = headMatch.captured(2).toInt();
-
-    QVector<QPoint> path;
-    QRegularExpression coordPattern("\\((\\d+),(\\d+)\\)");
-    QRegularExpressionMatchIterator it = coordPattern.globalMatch(line);
-
-    bool first = true;  // ✅ 用于跳过第一个坐标
-    while (it.hasNext()) {
-        QRegularExpressionMatch m = it.next();
-        if (first) { first = false; continue; } // 跳过 (u,v)
-        path.append(QPoint(m.captured(1).toInt(), m.captured(2).toInt()));
-    }
-
-    routes.insert({u, v}, path);
-}
-
-
-void GateLevelMapping::parsePhaseLine(const QString &line)
-{
-    // 格式: (x,y):phase
-    QRegularExpression entry("\\((\\d+),(\\d+)\\)\\s*:\\s*(\\d+)");
-    QRegularExpressionMatchIterator it = entry.globalMatch(line);
-
-    while (it.hasNext()) {
-        QRegularExpressionMatch m = it.next();
-        QPoint pt(m.captured(1).toInt(), m.captured(2).toInt());
-        coordPhaseMap.insert(pt, m.captured(3).toInt());
-    }
-}
-
-/*
-void GateLevelMapping::mappingCellItem(){
     Mapping mapping;
 
     //QMap transform to std::map (coordPhaseMap -> positionPhaseMap)
+    /*
     std::map<position, int> positionPhaseMap;
     for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
     {
@@ -193,22 +27,25 @@ void GateLevelMapping::mappingCellItem(){
         positionPhaseMap[{static_cast<unsigned int>(p.x()), 
                         static_cast<unsigned int>(p.y())}] = phase;
     }
+    */
+    auto positionPhaseMap = toPositionPhaseMap(coordPhaseMap);
 
     //get circle_line from routes(containing all paths)
     std::vector<std::vector<position>> circle_line;
     circle_line.clear();
-    for (auto it = routes.begin(); it != routes.end(); ++it) 
+    for (const QVector<QPoint>& qPoints : routes)  // 直接拿 value
     {
-        const QVector<QPoint>& qPoints = it.value();
         std::vector<position> convertedRoute;
         convertedRoute.reserve(qPoints.size());
+
         for (const QPoint& point : qPoints)
-            convertedRoute.emplace_back(static_cast<unsigned int>(point.x()),
-                                        static_cast<unsigned int>(point.y()));
+            convertedRoute.emplace_back(point.x(), point.y());
+
         circle_line.push_back(std::move(convertedRoute));
     }
 
-    std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node,type), (扇入，扇出)>
+
+    std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node_position,type), (fan_in_position，fan_out_position)>
     Nodelink.clear();
 
     //初始化Nodelink映射,确保每个节点位置和类型都有一个对应的输入输出位置列表
@@ -229,82 +66,47 @@ void GateLevelMapping::mappingCellItem(){
         Nodelink[{startpos, startnodetype.toStdString()}] = {{}, {}};
         Nodelink[{endpos, endnodetype.toStdString()}]   = {{}, {}};
     }
-
-    // for (auto &pair : Nodelink)
-    // {
+/*
+    for (auto &pair : Nodelink)
+    {
         
-    //     for (auto &line : circle_line)
-    //     {
+        for (auto &line : circle_line)
+        {
 
-    //         if (pair.first.first == line.front())
-    //         {
-    //             std::vector<position> &output = pair.second.second;
-    //             output.push_back(*std::next(line.begin()));
-    //         }
-    //         else if (pair.first.first == line.back())
-    //         {
-    //             std::vector<position> &intput = pair.second.first;
-    //             intput.push_back(*std::prev(std::prev(line.end())));
-    //         }
-    //     }
-    //     //避免重复放置输入输出
-    //     if(pair.second.first.size() > 1)
-    //     {
-    //         std::sort(pair.second.first.begin(), pair.second.first.end());
-    //         auto unique_end = std::unique(pair.second.first.begin(), pair.second.first.end());
-    //         pair.second.first.erase(unique_end, pair.second.first.end());
-    //     }
-    //     if(pair.second.second.size() > 1)
-    //     {
-    //         std::sort(pair.second.second.begin(), pair.second.second.end());
-    //         auto unique_end = std::unique(pair.second.second.begin(), pair.second.second.end());
-    //         pair.second.second.erase(unique_end, pair.second.second.end());
-    //     }
-    // }
-
+            if (pair.first.first == line.front())
+            {
+                std::vector<position> &output = pair.second.second;
+                output.push_back(*std::next(line.begin()));
+            }
+            else if (pair.first.first == line.back())
+            {
+                std::vector<position> &intput = pair.second.first;
+                intput.push_back(*std::prev(std::prev(line.end())));
+            }
+        }
+        //避免重复放置输入输出
+        if(pair.second.first.size() > 1)
+        {
+            std::sort(pair.second.first.begin(), pair.second.first.end());
+            auto unique_end = std::unique(pair.second.first.begin(), pair.second.first.end());
+            pair.second.first.erase(unique_end, pair.second.first.end());
+        }
+        if(pair.second.second.size() > 1)
+        {
+            std::sort(pair.second.second.begin(), pair.second.second.end());
+            auto unique_end = std::unique(pair.second.second.begin(), pair.second.second.end());
+            pair.second.second.erase(unique_end, pair.second.second.end());
+        }
+    }
+*/
+    //确保所有节点（nodes容器中的每个节点）都在 Nodelink 这个映射中占一个位置，即使该节点没有任何连线（没有出线或入线的孤立节点）
     for (auto it = nodes.begin(); it != nodes.end(); ++it)
     {
         position nodepos{it.value().pos.x(), it.value().pos.y()};
-        std::string type = it.value().type.toStdString();
-        Nodelink.try_emplace({nodepos, type}, std::make_pair(std::vector<position>{}, std::vector<position>{}));
+        Nodelink[{nodepos, it.value().type.toStdString()}] = {{}, {}};
     }
 
-
-    // qDebug() << "start print all route:";
-    // int idx = 0;
-    // for (const auto &line : circle_line)
-    // {
-    //     QString lineStr = QString("Path %1: ").arg(idx++);
-    //     for (const auto &p : line)
-    //         lineStr += QString("(%1,%2) ").arg(p.first).arg(p.second);
-    //     qDebug().noquote() << lineStr;
-    // }
-    // qDebug() << "start print Nodelink:";
-    int node_idx = 0;
-    for (const auto &entry : Nodelink)
-    {
-        const auto &pos = entry.first.first;
-        const auto &type = entry.first.second;
-        const auto &inputs = entry.second.first;
-        const auto &outputs = entry.second.second;
-
-        QString lineStr = QString("Node %1 (%2,%3) Type:%4 | Fan-in:")
-                            .arg(node_idx++)
-                            .arg(pos.first)
-                            .arg(pos.second)
-                            .arg(QString::fromStdString(type));
-
-        for (const auto &in : inputs)
-            lineStr += QString(" (%1,%2)").arg(in.first).arg(in.second);
-
-        lineStr += " | Fan-out:";
-        for (const auto &out : outputs)
-            lineStr += QString(" (%1,%2)").arg(out.first).arg(out.second);
-
-        // qDebug().noquote() << lineStr;
-    }
-
-
+    //遍历所有路径，填充Nodelink的输入输出位置列表，可能多扇入或多扇出
     for (auto &entry : Nodelink)
     {
         const position &nodePos = entry.first.first;
@@ -340,7 +142,6 @@ void GateLevelMapping::mappingCellItem(){
         outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
     }
 
-
     if(Nodelink.empty())
     {
         QString message = "Nodelink empty!";
@@ -356,6 +157,7 @@ void GateLevelMapping::mappingCellItem(){
         mainWindow->customStatusBar->addMessage(message);
         return;
     }
+    /*
     for(auto &cell : nodeexample)
     {
         auto cellpos_list = cell.second;
@@ -425,10 +227,50 @@ void GateLevelMapping::mappingCellItem(){
             }
         }
     }
+    */
+    for (const auto& [type, cellList] : nodeexample)
+    {
+        // 统一映射类型到 CellType 枚举
+        static const std::map<std::string, CellType> typeMap = {
+            {"input", CellType::InputCell},
+            {"output", CellType::OutputCell},
+            {"normal", CellType::NormalCell},
+            {"fix0",  CellType::FixedCell_0},
+            {"fix1",  CellType::FixedCell_1}
+        };
+
+        auto itType = typeMap.find(type);
+        if (itType == typeMap.end()) continue;  // 未知类型，跳过
+
+        CellType cellType = itType->second;
+
+        for (const auto& cellPos : cellList)
+        {
+            QString nodeName = "default";
+
+            // 仅 input/output 需要节点名匹配
+            if (cellType == CellType::InputCell || cellType == CellType::OutputCell)
+            {
+                unsigned int xNode = cellPos.first / 5;
+                unsigned int yNode = cellPos.second / 5;
+                QPoint nodePoint(xNode, yNode);
+
+                for (const auto& node : nodes)
+                {
+                    if (nodePoint == node.pos)
+                    {
+                        nodeName = node.name;
+                        break;
+                    }
+                }
+            }
+
+            putCellItem(cellPos, 0, cellType, positionPhaseMap, nodeName);
+        }
+    }
 
     auto routeexample = mapping.mapping_line(circle_line);
     auto crossexample = mapping.crossline_list;
-    auto nodeexample2 = mapping.nodecell_list;
 
     std::vector<position> allroutecells;//存放所有路线元胞坐标，用于后续交叉线的检查
     allroutecells.clear();
@@ -440,64 +282,12 @@ void GateLevelMapping::mappingCellItem(){
         }
         
     }
-    std::vector<position> allnodecells;
-    for (auto &pair : nodeexample2)
-    {
-        allnodecells.insert(allnodecells.end(), pair.second.begin(), pair.second.end());
-    }
-
-    std::vector<position> allcrosscells;
-    if(!crossexample.empty())
-    {
-        for (auto &pair : crossexample)
-        {
-            for (auto &v : pair.second)
-            {
-                allcrosscells.insert(allcrosscells.end(), v.begin(), v.end());
-            }
-            
-        }
-    }
-
-    //对于线路元胞，交叉点不去重，非交叉点（线路复用）去重
-    std::vector<position> result;
-    std::vector<position> seen;  // 已出现过的“非交叉”点
-    for (auto &p : allroutecells) {
-        // 检查是否是交叉点
-        bool is_cross = std::find(allcrosscells.begin(), allcrosscells.end(), p) != allcrosscells.end();
-
-        if (is_cross) {
-            // 交叉点 → 不去重，直接保留
-            result.push_back(p);
-        } else {
-            // 非交叉点 → 如果没出现过，则保留
-            if (std::find(seen.begin(), seen.end(), p) == seen.end()) {
-                seen.push_back(p);
-                result.push_back(p);
-            }
-        }
-    }
-    allroutecells = result;
-
-    size_t total_count = allroutecells.size() + allnodecells.size();
-    QString message = QStringLiteral("Total cells: %1").arg(static_cast<qulonglong>(total_count));
-    mainWindow->printToStatusBar(message);
-
-
+    /*
     //Cross线路元胞放置
     std::vector<position> crosscell;
     std::vector<position> verticalcell;
     if(!crossexample.empty())
     {
-        size_t total_cross = 0;
-        for (const auto &entry : crossexample) 
-        {
-            total_cross += entry.second.size();
-        }
-        QString message = QStringLiteral("Total crossline segments: %1").arg(static_cast<qulonglong>(total_cross));
-        mainWindow->printToStatusBar(message);
-        
-        
         for(auto &crossline : crossexample)
         {
             for(auto &cross : crossline.second)
@@ -658,23 +448,133 @@ void GateLevelMapping::mappingCellItem(){
             }
         }
     }
+    */
+    // === Cross线路元胞放置 ===
+    std::vector<position> crosscell;
+    std::vector<position> verticalcell;
+
+    auto contains = [](const std::vector<position>& vec, const position& p) {
+        return std::find(vec.begin(), vec.end(), p) != vec.end();
+    };
+
+    if (!crossexample.empty())
+    {
+        // 收集所有交叉线坐标
+        for (const auto& [_, lines] : crossexample)
+            for (const auto& seg : lines)
+                crosscell.insert(crosscell.end(), seg.begin(), seg.end());
+
+        // 遍历交叉线路
+        for (const auto& [_, lines] : crossexample)
+        {
+            for (const auto& seg : lines)
+            {
+                for (auto it = seg.begin(); it != seg.end(); ++it)
+                {
+                    const position p = *it;
+                    const bool isEnd = (it == seg.begin()) || (std::next(it) == seg.end());
+
+                    // --- 中间点：直接放置交叉线 ---
+                    if (!isEnd)
+                    {
+                        putCellItem(p, 2, CellType::CrossoverCell, positionPhaseMap);
+                        continue;
+                    }
+
+                    // --- 端点处理 ---
+                    const position dirs[4] = {
+                        {p.first, p.second + 1},
+                        {p.first, p.second - 1},
+                        {p.first - 1, p.second},
+                        {p.first + 1, p.second}
+                    };
+
+                    int neighborCount = 0;
+                    for (auto& d : dirs)
+                        if (contains(crosscell, d)) ++neighborCount;
+
+                    //情况1：足够连接 → 直接交叉元胞
+                    if (neighborCount >= 2)
+                    {
+                        putCellItem(p, 2, CellType::CrossoverCell, positionPhaseMap);
+                        continue;
+                    }
+
+                    //情况2：连接不足 → 需要柱状延伸
+                    bool extended = false;
+
+                    const auto extendVertical = [&](const position& base, const position& dirCross) {
+                        putCellItem(base, 2, CellType::CrossoverCell, positionPhaseMap);
+                        putCellItem(dirCross, 2, CellType::CrossoverCell, positionPhaseMap);
+
+                        position pillar = {dirCross.first, dirCross.second + 1};
+                        for (int l = 0; l < 3; ++l)
+                            putCellItem(pillar, l, CellType::VerticalCell, positionPhaseMap);
+
+                        verticalcell.push_back(pillar);
+                        crosscell.push_back(dirCross);
+                        crosscell.push_back(pillar);
+                    };
+
+                    // 左右/上下方向延伸条件保持一致
+                    if (contains(crosscell, dirs[1]) &&
+                        contains(allroutecells, dirs[2]) &&
+                        contains(allroutecells, dirs[3]))
+                    {
+                        extendVertical(p, dirs[0]);
+                        extended = true;
+                    }
+                    else if (contains(crosscell, dirs[2]) &&
+                            contains(allroutecells, dirs[0]) &&
+                            contains(allroutecells, dirs[1]))
+                    {
+                        extendVertical(p, dirs[3]);
+                        extended = true;
+                    }
+
+                    // 情况3：无法延伸 → 三层垂直柱点
+                    if (!extended)
+                    {
+                        for (int l = 0; l < 3; ++l)
+                            putCellItem(p, l, CellType::VerticalCell, positionPhaseMap);
+                        verticalcell.push_back(p);
+                    }
+                }
+            }
+        }
+    }
+
+    // === Normal线路元胞放置 ===
+    if (!routeexample.empty())
+    {
+        for (const auto& [_, lines] : routeexample)
+        {
+            for (const auto& seg : lines)
+            {
+                for (const auto& p : seg)
+                {
+                    const bool isCross = contains(crosscell, p);
+                    if (!isCross)
+                    {
+                        putCellItem(p, 0, CellType::NormalCell, positionPhaseMap);
+                        continue;
+                    }
+
+                    // 检查是否为垂直冲突点
+                    bool isVertical = contains(verticalcell, p);
+                    if (!isVertical)
+                        putCellItem(p, 0, CellType::NormalCell, positionPhaseMap);
+                }
+            }
+        }
+    }
 
 }
 
-void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name ){
-    int x_node = _cellpos.first / 5;
-    int y_node = _cellpos.second / 5;
-    int x_coord = _cellpos.first*20 + 200;  // 坐标
-    int y_coord = _cellpos.second*20 + 200;
-    int cell_layer = _celllayer;
-    position cellpos = std::make_pair(x_node, y_node);
-    int phase = _pos_phase[cellpos];
+void MappingExecutor::putClock(){
 
-    QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
-    mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);
-}
-
-void GateLevelMapping::putClock(){
+    /*
+    auto& coordPhaseMap = gatelevelmapping->coordPhaseMap;
     //QMap transform to std::map (coordPhaseMap -> positionPhaseMap)
     std::map<position, int> positionPhaseMap;
     for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
@@ -685,6 +585,9 @@ void GateLevelMapping::putClock(){
         positionPhaseMap[{static_cast<unsigned int>(p.x()), 
                         static_cast<unsigned int>(p.y())}] = phase;
     }
+    */
+    auto positionPhaseMap = toPositionPhaseMap(gatelevelmapping->coordPhaseMap);
+
 
     for(auto &v : positionPhaseMap)
     {
@@ -700,4 +603,29 @@ void GateLevelMapping::putClock(){
         }
     }
 }
-*/
+
+void MappingExecutor::putCellItem(position _cellpos, int _celllayer, CellType _cellType, std::map<position, int>& _pos_phase, QString _name)
+{
+    int x_node = _cellpos.first / 5;
+    int y_node = _cellpos.second / 5;
+    int x_coord = _cellpos.first*20 + 200;  // 坐标
+    int y_coord = _cellpos.second*20 + 200;
+    int cell_layer = _celllayer;
+    position cellpos = std::make_pair(x_node, y_node);
+    int phase = _pos_phase[cellpos];
+
+    QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
+    mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);
+}
+
+std::map<position, int> MappingExecutor::toPositionPhaseMap(const QHash<QPoint, int>& coordPhaseMap)
+{
+    std::map<position, int> result;
+
+    for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
+    {
+        const QPoint& p = it.key();
+        result[{static_cast<unsigned>(p.x()), static_cast<unsigned>(p.y())}] = it.value();
+    }
+    return result;
+}

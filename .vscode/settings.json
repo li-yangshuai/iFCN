@@ -109,7 +109,8 @@
         "__tree": "cpp",
         "filesystem": "cpp",
         "__split_buffer": "cpp",
-        "ios": "cpp"
+        "ios": "cpp",
+        "__bit_reference": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled",
     "svg.preview.background": "dark-transparent"

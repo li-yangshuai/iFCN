@@ -43,7 +43,7 @@ public:
     QHash<QPoint, int> coordPhaseMap;                 // 坐标 → 相位
 
 public slots:
-    void parseGateLevelMappingFile();                 // 打开并解析文件
+        void parseGateLevelMappingFile();                 // 打开并解析文件
 
         void mappingCellItem();
         void putClock();

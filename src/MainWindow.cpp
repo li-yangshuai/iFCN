@@ -291,9 +291,17 @@ void MainWindow::createActions()
     gateLevelMappingButton->setCheckable(true);
     connect(gateLevelMappingButton, &QPushButton::toggled, gateLevelMapping, &GateLevelMapping::parseGateLevelMappingFile);
 
+    // cell-level layout graph generation
     generateCellLevelLayoutGraph = new QAction(QIcon(QDir::toNativeSeparators(":/cameraColor.png")), tr("Save cell-level layout"), this);
     generateCellLevelLayoutGraph->setStatusTip(tr("Save cell-level layout"));
     connect(generateCellLevelLayoutGraph, &QAction::triggered, verilogHandler, &VerilogHandler::generateSVG);
+
+    // force oriented algorithm
+    forceOrientedAlgorithmButton = new QPushButton("Force Oriented Algorithm");
+    forceOrientedAlgorithmButton->setCheckable(true);
+    connect(forceOrientedAlgorithmButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::slotForceOrientedAlgorithm);
+
+
 }
 
 void MainWindow::createMenus()
@@ -385,6 +393,7 @@ void MainWindow::createToolBars()
     verilogTool->addWidget(verParseButton);
     verilogTool->addWidget(graphRenderButton);
     verilogTool->addWidget(gateLevelMappingButton);
+    verilogTool->addWidget(forceOrientedAlgorithmButton);
 }
 
 

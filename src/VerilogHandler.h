@@ -28,6 +28,7 @@ public:
     void handleParseVerilogFile();
     void handleGraphRender();  // 新增的函数
     void generateSVG();
+    void slotForceOrientedAlgorithm();
 
 private:
     MainWindow *mainWindow;

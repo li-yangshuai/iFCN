@@ -103,22 +103,6 @@ void VerilogHandler::handleParseVerilogFile()
     //构建Ga算法
     GeneticAlgorithm ga(parse, grid, astar, generationSize, populationsSize, 0.9, 0.5);
     
-    // //打印每一代的最优解的fitness
-    // ga.setFitnessCallback([this](double fitness){
-    //     QString message = "Fitness: " + QString::number(fitness);
-    //     mainWindow->customStatusBar->addMessage(message);
-    //     QCoreApplication::processEvents();
-    // });
-
-
-    // //打印论文表格信息
-    // QString info1 = "&" + Name +"     &" +QString::number(Gates) +" &" +QString::number(Input) +" / "+ QString::number(Output) +
-    //                 " &" + QString::number(wires);
-
-    // mainWindow-> printToStatusBar(info1);
-    // QString info2 = " &"+ QString::number(RNG) + " &"+ QString::number(REG);
-    // mainWindow-> printToStatusBar(info2);
-
 
     //测试时间
     QElapsedTimer timer;
@@ -127,12 +111,6 @@ void VerilogHandler::handleParseVerilogFile()
     bool isSuccess = ga.gaRun();
 
     double elapsedSeconds = timer.elapsed() / 1000.0;
-    // QString elapsedStr = "running time : " + QString::number(elapsedSeconds, 'f', 2);
-    //测试时间
-
-
-    
-
 
     QString elapsedStr = filePath +
                         " \& " + QString::number(Gates) + 
@@ -142,20 +120,6 @@ void VerilogHandler::handleParseVerilogFile()
                         " \& " + QString::number(REG) +
                         " \& " + QString::number(width)+ " $\\times$ " + QString::number(height) +
                         " \& " + QString::number(elapsedSeconds, 'f', 1) +"& & & & &   $ \\times$  = &  \\\\";
-    //测试时间
-
-    // if(isSuccess){
-    //     graph.printLaTex();
-    //     QString message =  "Graph layout success! " + elapsedStr + " print LaTeX success!";
-    //     mainWindow->customStatusBar->addMessage(message);
-
-    // }else{
-    //     QString message = "phase assign fail! But show the graph!";
-    //     mainWindow->customStatusBar->addMessage(message);
-    //     return;
-    // }
-
-
 
     if(!isSuccess) {
         QString message = "gaRun fail;";
@@ -239,14 +203,13 @@ void VerilogHandler::handleGraphRender()
 
     parse.optimizeAIOG_DRC(2,2,2,2,2,2);
 
-    
     auto gateNum = parse.getm_numVertices();
     auto inputNum = parse.get_input_num();
     auto outputNum = parse.get_output_num();
     auto wireNum = parse.getm_numEdges();
 
-    // parse.optimizeBufferNode();
-    parse.addLayerRedundancyNode();
+    parse.optimizeBufferNode();
+    // parse.addLayerRedundancyNode();
     parse.caculateSameLayerNodeRoutePair();
     MortonChessboard chessboard;
     bool isRegularClockScheme = false;
@@ -864,9 +827,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, unsigned int>& _node
                     }
                 }
             }
-
         }
-        
     }
 
     if(Nodelink.empty())
@@ -904,8 +865,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, unsigned int>& _node
                         break;
                     }
                 }
-                putCellItem(cellpos, 0, CellType::InputCell, _morton_phase, Iname);
-                
+                putCellItem(cellpos, 0, CellType::InputCell, _morton_phase, Iname);          
             }
         }
         else if (cell.first == "output")
@@ -964,8 +924,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, unsigned int>& _node
         for (auto &v : pair.second)
         {
             allroutecells.insert(allroutecells.end(), v.begin(), v.end());
-        }
-        
+        }   
     }
 
     //Cross线路元胞放置
@@ -1227,4 +1186,10 @@ void VerilogHandler::generateSVG()
     QString message = "The cell-level layout file saved as \"cell_level_layout.png\";";
     mainWindow->printToStatusBar(message);
 
+}
+
+
+
+void VerilogHandler::slotForceOrientedAlgorithm(){
+    qDebug() << "Force Oriented Placement and Routing Algorithm triggered.";
 }

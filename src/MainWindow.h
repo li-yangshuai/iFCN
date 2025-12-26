@@ -27,7 +27,6 @@
 #include "widgets/Arrow.h"
 #include "widgets/waveformwindow.h"
 #include "SimulationManager.h"
-// #include <QSvgGenerator>
 #include <QPainter>
 #include "VerilogHandler.h"
 #include"GateLevelMapping.h"
@@ -71,7 +70,6 @@ private:
 
         /********初始化数据********/
         QString curFile;    //文件名存储
-        //QString fileName;
 
         //设置控制模式
         void setEditMode(EditMode mode);
@@ -95,9 +93,10 @@ public:
         QToolButton *insertModeButton;
         QToolButton *dragModeButton;
 
-        //verilog parse
+        //verilog parse and three type P&R algorithm
         QPushButton * verParseButton;
         QPushButton * graphRenderButton;
+        QPushButton * forceOrientedAlgorithmButton; 
 
         //gate level mapping
         QPushButton * gateLevelMappingButton;
@@ -108,7 +107,6 @@ public:
 
 
         QVector<QVector<QGraphicsItem*>> layers;
-        // QGraphicsItemGroup * clockPhaseItemGroup;
 
         LayerComboBox *layerComboBox;   //用于存储layer信息
         QComboBox *clockComboBox;       //用于存储clock信息
@@ -157,7 +155,7 @@ private slots:
         void slotCellItemInserted(QCADCellItem* cellItem, int layerIndex);
 
         void updateUi();
-        //void documentWasModified();
+
 public:
         //状态栏
         CustomStatusBar *customStatusBar;

@@ -7,6 +7,7 @@ endif()
 
 # Include directories
 include_directories(${PROJECT_SOURCE_DIR})
+include_directories(${PROJECT_SOURCE_DIR}/..)
 
 # Add source files
 file(GLOB_RECURSE AUTOPR_SOURCES

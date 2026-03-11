@@ -1,0 +1,53 @@
+#ifndef VERILOGHANDLER_H
+#define VERILOGHANDLER_H
+
+#include <QObject>
+#include <QString>
+#include <map>
+#include <autopr/graph/parse.h>
+#include <autopr/algorithms/genetic.h>
+#include <autopr/grid/grid.h>
+#include <autopr/algorithms/astar.h>
+#include <autopr/algorithms/mapping.h>
+#include <autopr/graph/circuitGraph.h>
+#include <QSvgGenerator>
+#include <QPainter>
+#include "ui/items/QCADCellItem.h"
+
+using namespace fcngraph;
+class MainWindow;  // 前向声明
+
+class VerilogHandler : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit VerilogHandler(MainWindow *parent = nullptr);
+    
+    // 公开接口
+    void handleParseVerilogFile();
+    void handleGraphRender();  // 新增的函数
+    void generateSVG();
+    void slotForceOrientedAlgorithm();
+
+private:
+    MainWindow *mainWindow;
+
+    bool isOptimizeNOTNode = false;
+    int optimizeNOTNode_time = 1;
+
+    void mappingCellItem(std::map<unsigned int, position>& _node_pos, 
+                                    std::map<std::pair<unsigned int, unsigned int>, 
+                                    std::vector<position>>& _nodepair_route, 
+                                    Parse _parse, std::map<position, int>& _pos_phase);
+
+    position coordtrans(const position& pos, unsigned int scale);
+
+    void putClock(std::map<position, int>& pos_phase);
+
+    void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position, int>& _pos_phase, QString _name = "");
+
+
+};
+
+#endif // VERILOGHANDLER_H

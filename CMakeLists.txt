@@ -25,10 +25,11 @@ set(Boost_USE_MULTITHREADED ON)
 find_package(Boost REQUIRED COMPONENTS unit_test_framework system filesystem program_options)
 
 # Set static library output directory
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # Sub directories
 add_subdirectory(include/autopr)  # Add autopr subdirectory
 add_subdirectory(include/simon)
-# add_subdirectory(include/sim)
 add_subdirectory(src)

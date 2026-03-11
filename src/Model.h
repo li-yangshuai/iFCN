@@ -1,4 +1,0 @@
-#if !defined(HFUT_QCADESIGNER_GUI_MODEL_HPP)
-#define      HFUT_QCADESIGNER_GUI_MODEL_HPP
-
-#endif

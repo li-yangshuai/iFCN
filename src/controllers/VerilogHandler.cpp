@@ -2,11 +2,14 @@
 #include "ui/mainwindow/MainWindow.h"
 #include <QFileDialog>
 #include <QDebug>
+#include <QDir>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QImage>
 #include <QPainter>
 #include "ui/widgets/GaChessboardInputDialog.h"
 #include <QElapsedTimer>
+#include <cmath>
 
 
 
@@ -1163,28 +1166,70 @@ void VerilogHandler::putClock(std::map<position, int>& _pos_phase)
 
 void VerilogHandler::generateSVG()
 {
+    constexpr qreal kPreferredExportScale = 4.0;
+    constexpr int kMaxExportDimension = 20000;
+
     // 获取所有Item的联合边界矩形
     QRectF itemsBoundingRect = mainWindow->scene->itemsBoundingRect();
+    if (mainWindow->scene->hasFastRender()) {
+        const QRectF fastRect = mainWindow->scene->fastRenderBounds();
+        itemsBoundingRect = itemsBoundingRect.isValid() ? itemsBoundingRect.united(fastRect) : fastRect;
+    }
+
+    if (!itemsBoundingRect.isValid() || itemsBoundingRect.isEmpty()) {
+        QString message = "No cell-level layout to save.";
+        mainWindow->printToStatusBar(message);
+        return;
+    }
 
     // 定义输出图像的大小，这里根据实际内容调整大小
-    QSize imageSize = itemsBoundingRect.size().toSize();
+    qreal exportScale = kPreferredExportScale;
+    const qreal widthAtPreferredScale = std::ceil(itemsBoundingRect.width() * exportScale);
+    const qreal heightAtPreferredScale = std::ceil(itemsBoundingRect.height() * exportScale);
+    const qreal maxDimension = qMax(widthAtPreferredScale, heightAtPreferredScale);
+    if (maxDimension > kMaxExportDimension) {
+        exportScale *= (static_cast<qreal>(kMaxExportDimension) / maxDimension);
+    }
+
+    const QSize imageSize(
+        qMax(1, static_cast<int>(std::ceil(itemsBoundingRect.width() * exportScale))),
+        qMax(1, static_cast<int>(std::ceil(itemsBoundingRect.height() * exportScale)))
+    );
 
     // 创建一个QImage对象用于保存PNG文件
-    QImage image(imageSize, QImage::Format_ARGB32);
+    QImage image(imageSize, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent); // 透明背景
 
     // 使用QPainter将场景内容绘制到QImage上
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
     // 渲染场景内容（不进行平移）
-    mainWindow->scene->render(&painter, QRectF(), itemsBoundingRect);
+    mainWindow->scene->render(&painter, QRectF(QPointF(0, 0), QSizeF(imageSize)), itemsBoundingRect);
 
-    // 保存为PNG文件
-    image.save("cell_level_layout.png");
+    const QFileInfo currentFileInfo(mainWindow->currentFilePath());
+    const QString circuitName = currentFileInfo.completeBaseName().isEmpty()
+        ? QStringLiteral("cell_level_layout")
+        : currentFileInfo.completeBaseName();
+    const QDir outputDir = currentFileInfo.absoluteDir().exists()
+        ? currentFileInfo.absoluteDir()
+        : QDir::current();
+    const QString outputPath = outputDir.absoluteFilePath(circuitName + "_cell_level_layout.png");
+
+    if (!image.save(outputPath)) {
+        QString message = "Failed to save cell-level layout: " + QDir::toNativeSeparators(outputPath);
+        mainWindow->printToStatusBar(message);
+        return;
+    }
 
     //打印信息
-    QString message = "The cell-level layout file saved as \"cell_level_layout.png\";";
+    QString message = QString("Cell-level layout saved: %1 (%2x, %3x%4)")
+        .arg(QDir::toNativeSeparators(outputPath))
+        .arg(QString::number(exportScale, 'f', 2))
+        .arg(imageSize.width())
+        .arg(imageSize.height());
     mainWindow->printToStatusBar(message);
 
 }

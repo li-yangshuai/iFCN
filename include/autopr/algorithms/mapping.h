@@ -5,12 +5,22 @@
 #include <algorithm>
 #include <cstdlib>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <iterator>
 #include <string>
+#include <cstdint>
 
 namespace fcngraph{
     using position = std::pair<unsigned int , unsigned int>;
+
+    struct MappingPositionHash
+    {
+        std::size_t operator()(const position& pos) const noexcept
+        {
+            return (static_cast<std::size_t>(pos.first) << 32) ^ static_cast<std::size_t>(pos.second);
+        }
+    };
 
     class Mapping
     {
@@ -46,6 +56,18 @@ namespace fcngraph{
     private:
         std::vector<std::vector<position>> routepos_list;//作为mapping的输入
         std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>> deviate_list;
+        struct DeviateLookupEntry
+        {
+            std::pair<position, position> first_route_key{};
+            std::size_t first_index = 0;
+            std::string first_type;
+            std::uint16_t type_mask = 0;
+            bool initialized = false;
+        };
+        std::unordered_map<position, DeviateLookupEntry, MappingPositionHash> deviate_lookup;
+        static std::uint16_t deviateTypeMask(const std::string& type);
+        void updateDeviateLookup(const std::pair<position, position>& route_key,
+                                 const std::vector<std::pair<position, std::string>>& route_entries);
         // std::map<std::pair<position, position>, std::vector<std::vector<position>>> deviatemapping_list;//线映射坐标
         // std::multimap<std::pair<position, position>, std::vector<position>> crossline_list;//交叉线映射坐标
         // std::vector<std::vector<position>> example = {

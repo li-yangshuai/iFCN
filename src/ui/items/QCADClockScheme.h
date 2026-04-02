@@ -34,6 +34,7 @@ public:
                 break;
         }
         setFlags(ItemIsFocusable);
+        setCacheMode(DeviceCoordinateCache);
     }
 
 private:

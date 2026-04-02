@@ -6,6 +6,17 @@ void MainWindow::printToStatusBar(QString &message)
     customStatusBar->addMessage(message);
     QCoreApplication::processEvents();
 }
+void MainWindow::setInputNames(const QVector<QString> &names)
+{
+    inputname = names;
+    emit savedinputname(inputname);
+}
+
+QString MainWindow::currentFilePath() const
+{
+    return curFile;
+}
+
 void MainWindow::setDirty(bool on)
 {
     if (isBatchUpdating) {

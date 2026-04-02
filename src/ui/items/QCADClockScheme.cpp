@@ -2,6 +2,7 @@
 
 QCADClockScheme::QCADClockScheme(ClockPhaseType _clockPhaseType){
     setFlags(ItemIsFocusable);
+    setCacheMode(DeviceCoordinateCache);
     myClockPhaseType = _clockPhaseType;
 }
 
@@ -39,4 +40,3 @@ QRectF QCADClockScheme ::boundingRect() const{
     return QRectF(-CLOCK_SCHEME_SIZE_5/2-penwidth/2, -CLOCK_SCHEME_SIZE_5/2-penwidth/2, 
                  CLOCK_SCHEME_SIZE_5+penwidth, CLOCK_SCHEME_SIZE_5+penwidth);
 }
-

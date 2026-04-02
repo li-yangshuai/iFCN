@@ -1,8 +1,45 @@
 #include"mapping.h"
 
 namespace fcngraph{
+std::uint16_t Mapping::deviateTypeMask(const std::string& type)
+{
+    if (type == "XMIDDLE") return 1u << 0;
+    if (type == "XSIDE")   return 1u << 1;
+    if (type == "YMIDDLE") return 1u << 2;
+    if (type == "YSIDE")   return 1u << 3;
+    if (type == "XMYM")    return 1u << 4;
+    if (type == "XMYS")    return 1u << 5;
+    if (type == "XSYM")    return 1u << 6;
+    if (type == "XSYS")    return 1u << 7;
+    return 0;
+}
+
+void Mapping::updateDeviateLookup(const std::pair<position, position>& route_key,
+                                  const std::vector<std::pair<position, std::string>>& route_entries)
+{
+    for (std::size_t i = 0; i < route_entries.size(); ++i)
+    {
+        const auto& [pos, type] = route_entries[i];
+        auto& entry = deviate_lookup[pos];
+        entry.type_mask |= deviateTypeMask(type);
+        if (!entry.initialized ||
+            route_key < entry.first_route_key ||
+            (route_key == entry.first_route_key && i < entry.first_index))
+        {
+            entry.first_route_key = route_key;
+            entry.first_index = i;
+            entry.first_type = type;
+            entry.initialized = true;
+        }
+    }
+}
+
     //门级->元胞级坐标映射
 std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapping::mapping_line(std::vector<std::vector<position>>& _example){
+    deviate_list.clear();
+    deviatemapping_list.clear();
+    crossline_list.clear();
+    deviate_lookup.clear();
     
     for (auto &oneroute : _example)//此处是头文件中的存放的坐标形式的多条线路，含有起始点std::vector<std::vector<position>> routepos_list;
     {
@@ -538,7 +575,9 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
             
         }
         RouteDeviate_list.pop_back();
-        deviate_list.insert({{startpos, endpos}, RouteDeviate_list});
+        const auto route_key = std::make_pair(startpos, endpos);
+        deviate_list.insert({route_key, RouteDeviate_list});
+        updateDeviateLookup(route_key, RouteDeviate_list);
     }
 }
 
@@ -2332,42 +2371,23 @@ void Mapping::deviate_mapping(std::map<std::pair<position, position>, std::vecto
 
 //在布线时查找deviate_list里是否在该位置已经布线
 std::string Mapping::findInVectorPairFirst(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list, position& target_pair){  
-    if (!_deviate_list.empty())
+    (void)_deviate_list;
+    const auto it = deviate_lookup.find(target_pair);
+    if (it != deviate_lookup.end() && it->second.initialized)
     {
-        for (const auto& list : _deviate_list) 
-        {  
-            for (const auto& vec_it : list.second) 
-            {  
-                if (vec_it.first == target_pair) 
-                {  
-                    return vec_it.second; // 找到了  
-                }  
-            }  
-        } 
-    } 
+        return it->second.first_type;
+    }
     std::string EMPTY("EMPYT");
     return EMPTY; // 没有找到  
 }  
 
 //查找deviate_list里指定坐标位置是否具有指定偏移态
 bool Mapping::isfindpostype(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list, position& target_pair, std::string& _type){
-    if(!_deviate_list.empty())
+    (void)_deviate_list;
+    const auto it = deviate_lookup.find(target_pair);
+    if (it != deviate_lookup.end())
     {
-        for (const auto& list : _deviate_list)
-        {
-            for (const auto& vec_it : list.second)
-            {
-                if (vec_it.first == target_pair) 
-                {  
-                    if (vec_it.second == _type)
-                    {
-                        return true;
-                    }
-                    
-                } 
-            }
-            
-        }
+        return (it->second.type_mask & deviateTypeMask(_type)) != 0;
     }
     return false;
 }
@@ -2376,7 +2396,13 @@ bool Mapping::isfindpostype(std::map<std::pair<position, position>, std::vector<
 void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_list){
     std::vector<std::pair<std::pair<std::pair<position, position>, std::pair<position, position>>, position>> temppos_list;
     std::vector<std::pair<std::pair<position, position>, position>> oneroutepos_list;
-    //std::vector<position> existpos_list;
+    std::unordered_set<position, MappingPositionHash> recordedCrossPositions;
+    std::vector<std::unordered_set<position, MappingPositionHash>> routePositionSets;
+    routePositionSets.reserve(_routepos_list.size());
+    for (const auto& route : _routepos_list)
+    {
+        routePositionSets.emplace_back(route.begin(), route.end());
+    }
 
     // for (auto it = _routepos_list.begin(); it != _routepos_list.end(); it++)
     // {
@@ -2499,16 +2525,7 @@ void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_li
             {  
                 if (oneroute[i1] == oneroute[j1]) 
                 {  
-                    std::vector<position> existpos_list;
-                    if(!temppos_list.empty())
-                    {
-                        for (auto &v: temppos_list)
-                        {
-                            existpos_list.push_back(v.second);
-                        }
-                    }
-                    auto exitpos = std::find(existpos_list.begin(), existpos_list.end(), oneroute[i1]); 
-                    if (exitpos == existpos_list.end())
+                    if (recordedCrossPositions.insert(oneroute[i1]).second)
                     {
                         oneroutepos_list.emplace_back(std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), oneroute[i1]));
                     }
@@ -2527,24 +2544,15 @@ void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_li
                 if ((i1 <= _routepos_list[i].size()) && (i1 <= _routepos_list[j].size()))
                 {
                     std::vector<position> itpart(_routepos_list[i].begin()+i1, _routepos_list[i].end());
+                    const std::unordered_set<position, MappingPositionHash> itpartSet(itpart.begin(), itpart.end());
                     std::vector<position> temppart(_routepos_list[j].begin()+i1, _routepos_list[j].end());
                     if(!temppart.empty())
                     {
                         for (auto &pos1 : temppart)
                         {
-                            auto temppos = std::find(itpart.begin(), itpart.end(), pos1);
-                            
-                            std::vector<position> existpos_list;
-                            if(!temppos_list.empty())
-                            {
-                                for (auto &v: temppos_list)
-                                {
-                                    existpos_list.push_back(v.second);
-                                }
-                            }
-                            auto exitpos = std::find(existpos_list.begin(), existpos_list.end(), pos1); 
-
-                            if (temppos != itpart.end() && (*temppos) != itpart.back() && (*temppos) != temppart.back() && exitpos == existpos_list.end())
+                            const bool existsInSuffix = itpartSet.find(pos1) != itpartSet.end();
+                            if (existsInSuffix && pos1 != itpart.back() && pos1 != temppart.back() &&
+                                recordedCrossPositions.insert(pos1).second)
                             {
                                 temppos_list.emplace_back(std::make_pair((std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), std::make_pair(_routepos_list[j].front(), _routepos_list[j].back()))), pos1));
                             }
@@ -2559,20 +2567,10 @@ void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_li
             {
                 for (auto &pos2 : _routepos_list[j])
                 {
-                    auto temppos = std::find(_routepos_list[i].begin(), _routepos_list[i].end(), pos2);
-
-                    //避免重复检查其他线与扇出前的重合线导致重复输出交叉点
-                    std::vector<position> existpos_list;
-                    if(!temppos_list.empty())
-                    {
-                        for (auto &v: temppos_list)
-                        {
-                            existpos_list.push_back(v.second);
-                        }
-                    }
-                    auto exitpos = std::find(existpos_list.begin(), existpos_list.end(), pos2); 
-
-                    if (temppos != _routepos_list[i].end() && (*temppos) != _routepos_list[i].back() && (*temppos) != _routepos_list[j].back() && exitpos == existpos_list.end())
+                    if (routePositionSets[i].find(pos2) != routePositionSets[i].end() &&
+                        pos2 != _routepos_list[i].back() &&
+                        pos2 != _routepos_list[j].back() &&
+                        recordedCrossPositions.insert(pos2).second)
                     {
                         temppos_list.emplace_back(std::make_pair((std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), std::make_pair(_routepos_list[j].front(), _routepos_list[j].back()))), pos2));
                     }

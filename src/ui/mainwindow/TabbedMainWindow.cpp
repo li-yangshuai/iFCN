@@ -46,12 +46,7 @@ void TabbedMainWindow::openNewTab()
 void TabbedMainWindow::openFileInNewTab(const QString &fileName)
 {
     MainWindow *editor = addEditorTab(tr("Untitled"));
-    const QString suffix = QFileInfo(fileName).suffix().toLower();
-    if (suffix == "ifcn") {
-        editor->mapIfcnFile(fileName);
-    } else {
-        editor->loadFile(fileName);
-    }
+    editor->loadFile(fileName);
     updateTabTitle(editor, fileName);
 }
 

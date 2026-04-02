@@ -52,6 +52,9 @@ public:
         void centerViewOnItems(bool fitToView = true);
         void beginSceneBatchUpdate();
         void endSceneBatchUpdate(bool recenter = true);
+        void setInputNames(const QVector<QString> &names);
+        QString currentFilePath() const;
+        void setHighQualityMode(bool on);
         void setTabHost(TabbedMainWindow *host);
 
 public:
@@ -80,8 +83,6 @@ public:
         QButtonGroup* clockSchemeGroup;
         QSplitter *splitter;
         QWidget* centralWidget;
-        QCheckBox *checkBox;   // show grid
-
         //view select mode
         QLabel *viewLabel;
         QButtonGroup *viewModeButtonGroup;
@@ -148,7 +149,8 @@ private:
         QAction *zoomOutAction;
 
         /********视图菜单项********/
-        QAction *viewShowGridAction;
+        QAction *toggleClockGridAction;
+        QAction *toggleHighQualityViewAction;
         QAction *toggleStatusBarAction;
         QAction *captureFullScreen;
         QAction *generateCellLevelLayoutGraph;
@@ -177,8 +179,10 @@ private:
 
 private:
         void initialDesign();           //初始化layer[0]
+        bool shouldMapIfcnFile(const QString &fileName) const;
         bool saveFile(const QString &fileName);    //保存.qca文件
         void setCurrentFile(const QString &fileName);   //保存文件名并setDirty(false)
+        QString defaultQcaSavePath() const;
         bool maybeSave();   //判断文档是否保存
 
         /********初始化数据********/
@@ -206,7 +210,8 @@ private slots:
         void slotDeleteLayer();
         void slotClockIndexChanged(int idx);
         void slotLayerActiveChanged(int idx);
-        void slotViewShowGrid(bool on);
+        void slotToggleClockGrid(bool on);
+        void slotToggleHighQualityView(bool on);
         void toggleStatusBar(bool checked);
 
         void slotCaptureFullWindow();

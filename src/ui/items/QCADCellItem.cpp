@@ -37,6 +37,7 @@ QDataStream &operator<<(QDataStream &out, const QCADCellItem &cellItem)
 
 QCADCellItem::QCADCellItem(CellType _qcaCellType)
 {
+    nameLabel = nullptr;
     // 初始化 dots
     simon::x(dots[0]) =  4.5; simon::y(dots[0]) = -4.5;
     simon::x(dots[1]) =  4.5; simon::y(dots[1]) =  4.5;
@@ -79,6 +80,8 @@ QCADCellItem::QCADCellItem(CellType _qcaCellType)
 
     setFlags(ItemIsSelectable | ItemIsFocusable);
     setFlag(ItemSendsGeometryChanges);
+    setFlag(ItemUsesExtendedStyleOption);
+    setCacheMode(DeviceCoordinateCache);
     setAcceptHoverEvents(true);
 }
 
@@ -154,6 +157,7 @@ CellType QCADCellItem::getCellType() const {
 QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*/, 
     int clockIdx /*=0*/,CellType _qcaCellType, QString _name)
 {
+    nameLabel = nullptr;
     myCellType = _qcaCellType;
     simon::x(*this) = mousePointX;
     simon::y(*this) = mousePointY;
@@ -258,12 +262,15 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
     //setPos(simon::x(*this), simon::y(*this));     //在scene层添加
     setFlags(ItemIsSelectable | ItemIsFocusable);
     setFlag(ItemSendsGeometryChanges);
+    setFlag(ItemUsesExtendedStyleOption);
+    setCacheMode(DeviceCoordinateCache);
 
     setAcceptHoverEvents(true);
 }
 
 QCADCellItem::QCADCellItem(const QCACell &cell) 
 {
+    nameLabel = nullptr;
     simon::name(*this) = simon::name(cell);
     simon::x(*this) = simon::x(cell);
     simon::y(*this) = simon::y(cell);
@@ -296,6 +303,8 @@ QCADCellItem::QCADCellItem(const QCACell &cell)
 
     setFlags(ItemIsSelectable | ItemIsFocusable);
     setFlag(ItemSendsGeometryChanges);
+    setFlag(ItemUsesExtendedStyleOption);
+    setCacheMode(DeviceCoordinateCache);
     setAcceptHoverEvents(true);
 }
 
@@ -308,9 +317,12 @@ QRectF QCADCellItem::boundingRect() const
 
 void QCADCellItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget)
 {
-    Q_UNUSED(option);
     Q_UNUSED(widget);
-    painter->setRenderHint(QPainter::Antialiasing);
+
+    const qreal lod = QStyleOptionGraphicsItem::levelOfDetailFromTransform(painter->worldTransform());
+    const bool isFixed = simon::function(*this) == FCNCellFunction::FIXED;
+    const bool isCrossover = simon::cellMode(*this) == QCACellMode::CROSSOVER;
+    const bool isVertical = simon::cellMode(*this) == QCACellMode::VERTICAL;
     QColor color;
     switch(simon::function(*this)) {
         case FCNCellFunction::INPUT : {
@@ -320,9 +332,8 @@ void QCADCellItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *opti
         case FCNCellFunction::OUTPUT : 
             color = QColor(OUTPUT_COLOR);
             break;
-        case FCNCellFunction::FIXED : 
-            drawFixedCell(painter, simon::QCACell(*this).name);
-            return;
+        case FCNCellFunction::FIXED :
+            color = QColor(Qt::black);
             break;
         default :
 
@@ -343,24 +354,48 @@ void QCADCellItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *opti
                     color = QColor(PARSE_0);
                     break;
             }
-
-            switch (simon::cellMode(*this)){
-                case QCACellMode::CROSSOVER:
-                    drawCrossoverCell(painter, color);
-                    return;
-                    break;
-                case QCACellMode::VERTICAL:
-                    drawHoleCell(painter, color);
-                    return;
-                    break;
-                default:
-
-                    break;
-                }
             break;
     }
     if (option->state & QStyle::State_Selected){
         color = Qt::red;
+    }
+
+    if (nameLabel != nullptr) {
+        const bool showLabel = lod >= 0.9;
+        if (nameLabel->isVisible() != showLabel) {
+            nameLabel->setVisible(showLabel);
+        }
+    }
+
+    if (lod < 0.45) {
+        painter->setBrush(color);
+        painter->drawRect(-width / 2, -height / 2, width, height);
+        return;
+    }
+
+    if (lod < 0.8) {
+        painter->setBrush(color);
+        painter->drawRect(-width / 2, -height / 2, width, height);
+        if (isCrossover) {
+            painter->drawLine(QPointF(-width / 2, -height / 2), QPointF(width / 2, height / 2));
+            painter->drawLine(QPointF(-width / 2, height / 2), QPointF(width / 2, -height / 2));
+        } else if (isVertical) {
+            painter->drawEllipse(QPointF(0, 0), width / 2, height / 2);
+        }
+        return;
+    }
+
+    if (isFixed) {
+        drawFixedCell(painter, simon::QCACell(*this).name);
+        return;
+    }
+    if (isCrossover) {
+        drawCrossoverCell(painter, color);
+        return;
+    }
+    if (isVertical) {
+        drawHoleCell(painter, color);
+        return;
     }
     drawNormalCell(painter, color);
 }
@@ -435,6 +470,13 @@ void QCADCellItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) {
                 nameLabel->setText(newName);
             }
             simon::name(*this) = newName.toStdString();
+            if (QCADScene *qcadScene = qobject_cast<QCADScene *>(scene())) {
+                const QVariant fastLayer = data(QCADScene::FastLayerRole);
+                const QVariant fastIndex = data(QCADScene::FastIndexRole);
+                if (fastLayer.isValid() && fastIndex.isValid()) {
+                    qcadScene->updateFastCellName(fastLayer.toInt(), fastIndex.toInt(), newName);
+                }
+            }
 
             if (scene()) {
                 const QList<QGraphicsView*> views = scene()->views();

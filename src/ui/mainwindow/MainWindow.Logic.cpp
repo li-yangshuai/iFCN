@@ -32,8 +32,10 @@ void MainWindow::initialDesign()
 
 void MainWindow::loadFile(const QString &fileName)
 {
+    scene->clearFastRender();
+
     const QString suffix = QFileInfo(fileName).suffix().toLower();
-    if (suffix == "ifcn") {
+    if (suffix == "ifcn" && shouldMapIfcnFile(fileName)) {
         mapIfcnFile(fileName);
         return;
     }
@@ -100,10 +102,42 @@ void MainWindow::loadFile(const QString &fileName)
     // simfileName = fileName;//for 仿真文件名
 }
 
+bool MainWindow::shouldMapIfcnFile(const QString &fileName) const
+{
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return true;
+    }
+
+    QTextStream in(&file);
+    for (int i = 0; i < 64 && !in.atEnd(); ++i) {
+        const QString line = in.readLine().trimmed();
+        if (line.isEmpty()) {
+            continue;
+        }
+        if (line.startsWith(QStringLiteral("#circuit name:")) ||
+            line.startsWith(QStringLiteral("#nodes info")) ||
+            line.startsWith(QStringLiteral("#paths info")) ||
+            line.startsWith(QStringLiteral("#phase map"))) {
+            return true;
+        }
+        if (line.startsWith(QStringLiteral("[VERSION]")) ||
+            line.startsWith(QStringLiteral("[TYPE:")) ||
+            line.startsWith(QStringLiteral("qcadesigner_version="))) {
+            return false;
+        }
+        break;
+    }
+
+    return true;
+}
+
 void MainWindow::mapIfcnFile(const QString &fileName)
 {
+    scene->clearFastRender();
     gateLevelMapping->parseGateLevelMappingFile(fileName);
     setCurrentFile(fileName);
+    setDirty(true);
     statusBar()->showMessage(tr("Mapped %1").arg(fileName), 2000);
     emit savedname(fileName);
 }
@@ -158,6 +192,149 @@ bool MainWindow::saveFile(const QString &fileName)
     out << "[#TYPE:QCADSubstrate]\n";
     out << "[#TYPE:QCADLayer]\n";
     //cell layers
+    const bool useFastCells = scene->hasFastRender();
+    const auto &fastCellsByLayer = scene->fastCellsByLayer();
+    auto writeCellColor = [&out](FCNCellFunction function, int phase) {
+        switch(function) {
+            case FCNCellFunction::INPUT :
+                out << "clr.red=0\n";
+                out << "clr.green=0\n";
+                out << "clr.blue=65535\n";
+                break;
+            case FCNCellFunction::OUTPUT :
+                out << "clr.red=65535\n";
+                out << "clr.green=65535\n";
+                out << "clr.blue=0\n";
+                break;
+            case FCNCellFunction::FIXED :
+                out << "clr.red=65535\n";
+                out << "clr.green=32768\n";
+                out << "clr.blue=0\n";
+                break;
+            default:
+                switch (phase) {
+                    case 0:
+                        out << "clr.red=0\n";
+                        out << "clr.green=65535\n";
+                        out << "clr.blue=0\n";
+                        break;
+                    case 1:
+                        out << "clr.red=65535\n";
+                        out << "clr.green=0\n";
+                        out << "clr.blue=65535\n";
+                        break;
+                    case 2:
+                        out << "clr.red=0\n";
+                        out << "clr.green=65535\n";
+                        out << "clr.blue=65535\n";
+                        break;
+                    case 3:
+                        out << "clr.red=65535\n";
+                        out << "clr.green=65535\n";
+                        out << "clr.blue=65535\n";
+                        break;
+                    default:
+                        out << "clr.red=0\n";
+                        out << "clr.green=0\n";
+                        out << "clr.blue=0\n";
+                        break;
+                }
+        }
+    };
+    auto writeCellData = [&](double x, double y, double width, double height, FCNCellFunction function,
+                             QCACellMode mode, int phase, const QString &name) {
+        out << "[TYPE:QCADCell]\n";
+        out << "[TYPE:QCADDesignObject]\n";
+        out << "x=" << x << "\n";
+        out << "y=" << y << "\n";
+        out << "bSelected=FALSE\n";
+        writeCellColor(function, phase);
+        out << "bounding_box.xWorld=" << x - 10 << "\n";
+        out << "bounding_box.yWorld=" << y - 10 << "\n";
+        out << "bounding_box.cxWorld=20\n";
+        out << "bounding_box.cyWorld=20\n";
+        out << "[#TYPE:QCADDesignObject]\n";
+
+        out << "cell_options.cxCell=" << width << "\n";
+        out << "cell_options.cyCell=" << height << "\n";
+        out << "cell_options.dot_diameter=5.000000\n";
+        out << "cell_options.clock=" << phase << "\n";
+        switch (mode)
+        {
+        case QCACellMode::VERTICAL:
+            out << "cell_options.mode=QCAD_CELL_MODE_VERTICAL\n";
+            break;
+        case QCACellMode::CLUSTER:
+            out << "cell_options.mode=QCAD_CELL_MODE_CLUSTER\n";
+            break;
+        case QCACellMode::CROSSOVER:
+            out << "cell_options.mode=QCAD_CELL_MODE_CROSSOVER\n";
+            break;
+        default:
+            out << "cell_options.mode=QCAD_CELL_MODE_NORMAL\n";
+            break;
+        }
+        switch(function) {
+            case FCNCellFunction::NORMAL:
+                out << "cell_function=QCAD_CELL_NORMAL\n";
+                break;
+            case FCNCellFunction::INPUT:
+                out << "cell_function=QCAD_CELL_INPUT\n";
+                break;
+            case FCNCellFunction::OUTPUT:
+                out << "cell_function=QCAD_CELL_OUTPUT\n";
+                break;
+            case FCNCellFunction::FIXED:
+                out << "cell_function=QCAD_CELL_FIXED\n";
+                break;
+            case FCNCellFunction::LAST_FUNCTION:
+                out << "cell_function=QCAD_CELL_LAST_FUNCTION\n";
+                break;
+            default:
+                out << "cell_function=QCAD_CELL_NORMAL\n";
+                break;
+        }
+        out << "number_of_dots=4\n";
+
+        static const QPointF dotOffsets[] = {
+            QPointF(4.5, -4.5),
+            QPointF(4.5, 4.5),
+            QPointF(-4.5, 4.5),
+            QPointF(-4.5, -4.5)
+        };
+        for (const QPointF &offset : dotOffsets)
+        {
+            out << "[TYPE:CELL_DOT]\n";
+            out << "x=" << x + offset.x() << "\n";
+            out << "y=" << y + offset.y() << "\n";
+            out << "diameter=5\n";
+            out << "charge=0\n";
+            out << "spin=0\n";
+            out << "potential=0\n";
+            out << "[#TYPE:CELL_DOT]\n";
+        }
+
+        if (!name.isEmpty())
+        {
+            out << "[TYPE:QCADLabel]\n";
+            out << "[TYPE:QCADStretchyObject]\n";
+            out << "[TYPE:QCADDesignObject]\n";
+            out << "x=" << x << "\n";
+            out << "y=" << y - 20 << "\n";
+            out << "bSelected=FALSE\n";
+            writeCellColor(function, phase);
+            out << "bounding_box.xWorld=" << x - 10 << "\n";
+            out << "bounding_box.yWorld=" << y - 31 << "\n";
+            out << "bounding_box.cxWorld=20\n";
+            out << "bounding_box.cyWorld=22\n";
+            out << "[#TYPE:QCADDesignObject]\n";
+            out << "[#TYPE:QCADStretchyObject]\n";
+            out << "psz=" << name << "\n";
+            out << "[#TYPE:QCADLabel]\n";
+        }
+
+        out << "[#TYPE:QCADCell]\n";
+    };
     int layer_n = layers.size();
     for(int i = 0; i < layer_n; ++i)
     {
@@ -166,189 +343,55 @@ bool MainWindow::saveFile(const QString &fileName)
         out << "status=0\n";
         out << "pszDescription=" << layerComboBox->GetItem(i)->text() << "\n";
 
-        //cells
-        auto itemGroup = layers[i];
-        // QList<QGraphicsItem *> items = itemGroup->childItems();
-        for(QGraphicsItem *item: itemGroup)
+        if (useFastCells && i < fastCellsByLayer.size())
         {
-            const QCADCellItem *cell = static_cast<QCADCellItem *>(item);
-            out << "[TYPE:QCADCell]\n";
-            //designObject
-            out << "[TYPE:QCADDesignObject]\n";
-            out << "x=" << simon::x(*cell) << "\n";
-            out << "y=" << simon::y(*cell) << "\n";
-            out << "bSelected=FALSE\n";
-            switch(simon::function(*cell)) {
-                case FCNCellFunction::INPUT : 
-                    out << "clr.red=0\n"; 
-                    out << "clr.green=0\n"; 
-                    out << "clr.blue=65535\n"; 
-                    break;
-                case FCNCellFunction::OUTPUT : 
-                    out << "clr.red=65535\n"; 
-                    out << "clr.green=65535\n"; 
-                    out << "clr.blue=0\n"; 
-                    break;
-                case FCNCellFunction::FIXED : 
-                    out << "clr.red=65535\n"; 
-                    out << "clr.green=32768\n"; 
-                    out << "clr.blue=0\n"; 
-                    break;
-                default :
-                    switch(simon::timezone(*cell)) {
-                        case 0 :
-                            out << "clr.red=0\n"; 
-                            out << "clr.green=65535\n"; 
-                            out << "clr.blue=0\n"; 
-                            break;
-                        case 1 :
-                            out << "clr.red=65535\n"; 
-                            out << "clr.green=0\n"; 
-                            out << "clr.blue=65535\n"; 
-                            break;
-                        case 2 :
-                            out << "clr.red=0\n"; 
-                            out << "clr.green=65535\n"; 
-                            out << "clr.blue=65535\n"; 
-                            break;
-                        case 3 :
-                            out << "clr.red=65535\n"; 
-                            out << "clr.green=65535\n"; 
-                            out << "clr.blue=65535\n"; 
-                            break;
-                        default:
-                            out << "clr.red=0\n"; 
-                            out << "clr.green=0\n"; 
-                            out << "clr.blue=0\n"; 
-                            break;
-                    }
-            }
-            out << "bounding_box.xWorld=" << simon::x(*cell) - cell->boundingRect().width()/2 << "\n";
-            out << "bounding_box.yWorld=" << simon::y(*cell) - cell->boundingRect().height()/2 << "\n";
-            out << "bounding_box.cxWorld=" << cell->boundingRect().width() << "\n";
-            out << "bounding_box.cyWorld=" << cell->boundingRect().height() << "\n";
-            out << "[#TYPE:QCADDesignObject]\n";
-
-            out << "cell_options.cxCell=" << simon::width(*cell) << "\n";
-            out << "cell_options.cyCell=" << simon::height(*cell) << "\n";
-            out << "cell_options.dot_diameter=5.000000\n";
-            out << "cell_options.clock=" << simon::timezone(*cell) << "\n";
-            switch (simon::cellMode(*cell))
+            for (const auto &cell : fastCellsByLayer[i])
             {
-            case QCACellMode::VERTICAL:
-                out << "cell_options.mode=QCAD_CELL_MODE_VERTICAL\n";  
-                break;
-            case QCACellMode::CLUSTER:
-                out << "cell_options.mode=QCAD_CELL_MODE_CLUSTER\n";  
-                break;
-            case QCACellMode::CROSSOVER:
-                out << "cell_options.mode=QCAD_CELL_MODE_CROSSOVER\n";  
-                break;
-            default:
-                out << "cell_options.mode=QCAD_CELL_MODE_NORMAL\n";  
-                break;
-            }
-            // out << "cell_options.mode=QCAD_CELL_MODE_NORMAL\n";              //warning: cell信息未存储
-            switch(simon::function(*cell)) {
-                case FCNCellFunction::NORMAL :
-                    out << "cell_function=QCAD_CELL_NORMAL\n"; 
-                    break;
-                case FCNCellFunction::INPUT :
-                    out << "cell_function=QCAD_CELL_INPUT\n"; 
-                    break;
-                case FCNCellFunction::OUTPUT :
-                    out << "cell_function=QCAD_CELL_OUTPUT\n"; 
-                    break;
-                case FCNCellFunction::FIXED :
-                    out << "cell_function=QCAD_CELL_FIXED\n"; 
-                    break;
-                case FCNCellFunction::LAST_FUNCTION :
-                    out << "cell_function=QCAD_CELL_LAST_FUNCTION\n"; 
-                    break;
-                default : 
-                    out << "cell_function=QCAD_CELL_NORMAL\n"; 
-            }
-            out << "number_of_dots=4\n"; 
-
-            //cell dot
-            for(int i=0; i<4; ++i)
-            {
-                out << "[TYPE:CELL_DOT]\n";
-                out << "x=" << simon::x(*cell) + simon::x(cell->dots[i]) << "\n";
-                out << "y=" << simon::y(*cell) + simon::y(cell->dots[i]) << "\n";
-                out << "diameter=" << simon::diameter(cell->dots[i]) << "\n";
-                out << "charge=" << simon::charge(cell->dots[i]) << "\n"; //charge值需要初始化
-                out << "spin=" << simon::spin(cell->dots[i]) << "\n";
-                out << "potential=" << simon::potential(cell->dots[i]) << "\n";
-                out << "[#TYPE:CELL_DOT]\n";
-            }
-
-            //cell label
-            if( simon::name(*cell) !="" )
-            {
-                out << "[TYPE:QCADLabel]\n";
-                out << "[TYPE:QCADStretchyObject]\n";
-                out << "[TYPE:QCADDesignObject]\n";
-                out << "x=" << simon::x(*cell) << "\n";
-                out << "y=" << simon::y(*cell)-20 << "\n";
-                out << "bSelected=FALSE\n";
-                switch(simon::function(*cell)) {
-                    case FCNCellFunction::INPUT : 
-                        out << "clr.red=0\n"; 
-                        out << "clr.green=0\n"; 
-                        out << "clr.blue=65535\n"; 
+                FCNCellFunction function = FCNCellFunction::NORMAL;
+                QCACellMode mode = QCACellMode::NORMAL;
+                switch (cell.type) {
+                    case CellType::InputCell:
+                        function = FCNCellFunction::INPUT;
                         break;
-                    case FCNCellFunction::OUTPUT : 
-                        out << "clr.red=65535\n"; 
-                        out << "clr.green=65535\n"; 
-                        out << "clr.blue=0\n"; 
+                    case CellType::OutputCell:
+                        function = FCNCellFunction::OUTPUT;
                         break;
-                    case FCNCellFunction::FIXED : 
-                        out << "clr.red=65535\n"; 
-                        out << "clr.green=32768\n"; 
-                        out << "clr.blue=0\n"; 
+                    case CellType::FixedCell_0:
+                    case CellType::FixedCell_1:
+                        function = FCNCellFunction::FIXED;
                         break;
-                    default :
-                        switch(simon::timezone(*cell)) {
-                            case 0 :
-                                out << "clr.red=0\n"; 
-                                out << "clr.green=65535\n"; 
-                                out << "clr.blue=0\n"; 
-                                break;
-                            case 1 :
-                                out << "clr.red=65535\n"; 
-                                out << "clr.green=0\n"; 
-                                out << "clr.blue=65535\n"; 
-                                break;
-                            case 2 :
-                                out << "clr.red=0\n"; 
-                                out << "clr.green=65535\n"; 
-                                out << "clr.blue=65535\n"; 
-                                break;
-                            case 3 :
-                                out << "clr.red=65535\n"; 
-                                out << "clr.green=65535\n"; 
-                                out << "clr.blue=65535\n"; 
-                                break;
-                            default:
-                                out << "clr.red=0\n"; 
-                                out << "clr.green=0\n"; 
-                                out << "clr.blue=0\n"; 
-                                break;
-                        }
+                    case CellType::VerticalCell:
+                        mode = QCACellMode::VERTICAL;
+                        break;
+                    case CellType::CrossoverCell:
+                        mode = QCACellMode::CROSSOVER;
+                        break;
+                    default:
+                        break;
                 }
-                out << "bounding_box.xWorld=" << simon::x(*cell) - 10 << "\n";
-                out << "bounding_box.yWorld=" << simon::y(*cell) - 20 - 11 << "\n";
-                out << "bounding_box.cxWorld=20\n"; //默认长为20，宽为22
-                out << "bounding_box.cyWorld=22\n";
-                out << "[#TYPE:QCADDesignObject]\n";
-
-                out << "[#TYPE:QCADStretchyObject]\n";
-                out << "psz=" << QString::fromStdString(simon::name(*cell)) << "\n";
-                out << "[#TYPE:QCADLabel]\n";
+                const QString name = (function == FCNCellFunction::FIXED)
+                    ? (cell.type == CellType::FixedCell_0 ? QStringLiteral("-1.00") : QStringLiteral("1.00"))
+                    : cell.name;
+                writeCellData(cell.x, cell.y, 18.0, 18.0, function, mode, cell.phase, name);
             }
-            
-            out << "[#TYPE:QCADCell]\n";
+        }
+        else
+        {
+            auto itemGroup = layers[i];
+            for(QGraphicsItem *item: itemGroup)
+            {
+                const QCADCellItem *cell = static_cast<QCADCellItem *>(item);
+                writeCellData(
+                    simon::x(*cell),
+                    simon::y(*cell),
+                    simon::width(*cell),
+                    simon::height(*cell),
+                    simon::function(*cell),
+                    simon::cellMode(*cell),
+                    simon::timezone(*cell),
+                    QString::fromStdString(simon::name(*cell))
+                );
+            }
         }
 
         out << "[#TYPE:QCADLayer]\n";
@@ -408,6 +451,20 @@ void MainWindow::setCurrentFile(const QString &fileName)
     setWindowTitle(tr("%1[*] - iFCN").arg(shownName));
 }
 
+QString MainWindow::defaultQcaSavePath() const
+{
+    if (curFile.isEmpty() || curFile == tr("Unnamed")) {
+        return ".";
+    }
+
+    const QFileInfo info(curFile);
+    if (info.suffix().compare(QStringLiteral("ifcn"), Qt::CaseInsensitive) == 0) {
+        return info.dir().filePath(info.completeBaseName() + ".qca");
+    }
+
+    return curFile;
+}
+
 void MainWindow::slotNew()
 {
     if (tabHost) {
@@ -435,26 +492,19 @@ void MainWindow::slotOpen()
     }
 
     if ((layers.size() == 0) || (layers.size() == 1 && layers[0].isEmpty())) {
-        if (isIfcn) {
-            mapIfcnFile(fileName);
-        } else {
-            loadFile(fileName);
-        }
+        loadFile(fileName);
         return;
     }
 
     MainWindow *newMainWindow = new MainWindow;
     newMainWindow->show();
-    if (isIfcn) {
-        newMainWindow->mapIfcnFile(fileName);
-    } else {
-        newMainWindow->loadFile(fileName);
-    }
+    newMainWindow->loadFile(fileName);
 }
 
 bool MainWindow::slotSave()
 {
-    if(curFile.isEmpty() || curFile == tr("Unnamed"))
+    const QString suffix = QFileInfo(curFile).suffix().toLower();
+    if(curFile.isEmpty() || curFile == tr("Unnamed") || suffix == "ifcn")
         return slotSaveAs();
     else
         return saveFile(curFile);
@@ -462,7 +512,7 @@ bool MainWindow::slotSave()
 
 bool MainWindow::slotSaveAs()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, tr("文件另存为"), ".", tr("QCA files (*.qca);;All file (*)"));
+    QString fileName = QFileDialog::getSaveFileName(this, tr("文件另存为"), defaultQcaSavePath(), tr("QCA files (*.qca);;All file (*)"));
     if(fileName.isEmpty())
         return false;
     if(!fileName.toLower().endsWith(".qca"))

@@ -1,9 +1,93 @@
 #include <QLineEdit>
 #include <QMouseEvent>
-#include <QDebug> 
+#include <QDebug>
+#include <QPainter>
+#include <QStyledItemDelegate>
+#include <QApplication>
 
 #include "LayerComboBox.h"
 #include "ui/mainwindow/MainWindow.h"
+
+namespace {
+class LayerItemDelegate : public QStyledItemDelegate
+{
+public:
+    explicit LayerItemDelegate(QObject *parent = nullptr) : QStyledItemDelegate(parent) {}
+
+    static QRect activeButtonRect(const QRect &itemRect)
+    {
+        const int height = itemRect.height() - 10;
+        return QRect(itemRect.right() - 72, itemRect.top() + 5, 62, height);
+    }
+
+    static QRect visibleButtonRect(const QRect &itemRect)
+    {
+        const QRect activeRect = activeButtonRect(itemRect);
+        return QRect(activeRect.left() - 72, itemRect.top() + 5, 62, itemRect.height() - 10);
+    }
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        painter->save();
+
+        const QRect outerRect = option.rect.adjusted(4, 2, -4, -2);
+        const bool selected = option.state & QStyle::State_Selected;
+        const bool visible = index.data(Qt::CheckStateRole).toInt() == Qt::Checked;
+        const bool active = index.data(LayerComboBox::ActiveLayerRole).toBool();
+
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(selected ? QColor("#dbeafe") : QColor("#f8fafc"));
+        painter->drawRoundedRect(outerRect, 8, 8);
+
+        const QRect visibleRect = visibleButtonRect(outerRect);
+        const QRect activeRect = activeButtonRect(outerRect);
+        const QRect textRect = QRect(outerRect.left() + 12, outerRect.top(),
+                                     visibleRect.left() - outerRect.left() - 18, outerRect.height());
+
+        painter->setPen(QColor("#111827"));
+        QFont textFont = option.font;
+        textFont.setBold(active);
+        painter->setFont(textFont);
+        painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                          index.data(Qt::DisplayRole).toString());
+
+        auto drawBadge = [painter](const QRect &rect, const QString &text,
+                                   const QColor &fill, const QColor &border, const QColor &textColor) {
+            painter->setPen(QPen(border, 1.2));
+            painter->setBrush(fill);
+            painter->drawRoundedRect(rect, 7, 7);
+            painter->setPen(textColor);
+            QFont badgeFont = painter->font();
+            badgeFont.setBold(true);
+            badgeFont.setPointSize(qMax(8, badgeFont.pointSize() - 1));
+            painter->setFont(badgeFont);
+            painter->drawText(rect, Qt::AlignCenter, text);
+        };
+
+        drawBadge(visibleRect,
+                  visible ? QStringLiteral("SHOW") : QStringLiteral("HIDE"),
+                  visible ? QColor("#16a34a") : QColor("#ffffff"),
+                  visible ? QColor("#166534") : QColor("#6b7280"),
+                  visible ? QColor("#ffffff") : QColor("#374151"));
+
+        drawBadge(activeRect,
+                  active ? QStringLiteral("EDIT") : QStringLiteral("SET"),
+                  active ? QColor("#2563eb") : QColor("#ffffff"),
+                  active ? QColor("#1d4ed8") : QColor("#6b7280"),
+                  active ? QColor("#ffffff") : QColor("#374151"));
+
+        painter->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        Q_UNUSED(option);
+        Q_UNUSED(index);
+        return QSize(220, 34);
+    }
+};
+}
 
 LayerComboBox::LayerComboBox(QWidget *parent) : QComboBox(parent)
 {
@@ -17,14 +101,16 @@ LayerComboBox::LayerComboBox(QWidget *parent) : QComboBox(parent)
 
     KeyPressEater *keyPressEater = new KeyPressEater(this); 
     pListView = new QListView(this); 
-    //pListView->setResizeMode(QListView::Adjust); 
+    pListView->setItemDelegate(new LayerItemDelegate(pListView));
+    pListView->setSpacing(4);
+    pListView->viewport()->installEventFilter(this);
     pListView->installEventFilter(keyPressEater);
     this->setView(pListView);
+    pLineEdit->setStyleSheet("QLineEdit { padding: 4px 8px; }");
 
     parentWindow = parent;
 
     connect(this, SIGNAL(currentIndexChanged(int)), this, SLOT(slotLayerIndexChanged(int))); 
-    connect(this, SIGNAL(activated(int)), this, SLOT(slotActivated(int))); 
     connect(keyPressEater, SIGNAL(signalActivated(int)), this, SLOT(slotActivated(int)));
 }
 
@@ -36,13 +122,18 @@ LayerComboBox::~LayerComboBox()
 void LayerComboBox::AddItem(const QString &layerName /*= QString("New Layer")*/, bool visibleChecked /*= true*/, const QVariant &userData /*= QVariant()*/)
 {
     QStandardItem* layerItem = new QStandardItem(layerName);
-    layerItem->setCheckable(true);  
     layerItem->setCheckState(visibleChecked ? Qt::Checked : Qt::Unchecked);
     layerItem->setData(userData, Qt::UserRole + 1); 
+    layerItem->setData(false, ActiveLayerRole);
  
     //qDebug() << tr("m_model") << m_model->rowCount();
     m_model->appendRow(layerItem); 
     //qDebug() << tr("m_model") << m_model->rowCount();
+
+    if (m_model->rowCount() == 1) {
+        setCurrentIndex(0);
+        setActiveLayer(0);
+    }
 
     UpdateText(); 
 }
@@ -76,6 +167,11 @@ void LayerComboBox::AddItems(const QList<QString> &lstStr)
 void LayerComboBox::RemoveItem(int idx)
 {
     m_model->removeRow(idx);    
+    if (m_model->rowCount() > 0) {
+        const int nextIndex = qBound(0, currentIndex(), m_model->rowCount() - 1);
+        setCurrentIndex(nextIndex);
+        setActiveLayer(nextIndex);
+    }
     UpdateText();
 } 
 
@@ -220,6 +316,40 @@ void LayerComboBox::hidePopup()
     }
 }
 
+bool LayerComboBox::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj == pListView->viewport() && event->type() == QEvent::MouseButtonPress) {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        const QModelIndex index = pListView->indexAt(mouseEvent->pos());
+        if (!index.isValid()) {
+            return QComboBox::eventFilter(obj, event);
+        }
+
+        const QRect itemRect = pListView->visualRect(index);
+        if (LayerItemDelegate::visibleButtonRect(itemRect).contains(mouseEvent->pos())) {
+            QStandardItem *item = m_model->item(index.row());
+            if (item != nullptr) {
+                const Qt::CheckState nextState =
+                    item->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked;
+                item->setCheckState(nextState);
+                slotVisible(index.row());
+                pListView->viewport()->update(itemRect);
+            }
+            return true;
+        }
+
+        if (LayerItemDelegate::activeButtonRect(itemRect).contains(mouseEvent->pos())) {
+            setCurrentIndex(index.row());
+            setActiveLayer(index.row());
+            emit currentActiveIndex(index.row());
+            pListView->viewport()->update();
+            return true;
+        }
+    }
+
+    return QComboBox::eventFilter(obj, event);
+}
+
 void LayerComboBox::mousePressEvent(QMouseEvent * event)
 {
     QComboBox::mousePressEvent(event);
@@ -258,8 +388,9 @@ void LayerComboBox::UpdateText()
 {
     int idx = currentIndex();
 
-    if(idx == -1)
+    if(idx == -1 || idx >= m_model->rowCount())
     {
+        pLineEdit->clear();
         return;
     }
 
@@ -269,6 +400,16 @@ void LayerComboBox::UpdateText()
     //qDebug() << tr("ddd") << item->child(0,1) << item->child(0,1)->row() << item->child(0,1)->column();
 
     pLineEdit->setText(item->text()); 
+}
+
+void LayerComboBox::setActiveLayer(int idx)
+{
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        if (QStandardItem *item = m_model->item(row)) {
+            item->setData(row == idx, ActiveLayerRole);
+        }
+    }
+    pListView->viewport()->update();
 }
 
 /*
@@ -288,6 +429,7 @@ void LayerComboBox::slotLayerIndexChanged(int idx)
     QStandardItem* item = m_model->item(idx);  
     if (nullptr == item) return; 
 
+    setActiveLayer(idx);
     pLineEdit->setText(item->text()); 
 }
 
@@ -296,13 +438,10 @@ void LayerComboBox::slotActivated(int idx)
     QStandardItem* item = m_model->item(idx);  
     if (nullptr == item) return; 
 
-    Qt::CheckState state = (item->checkState() == Qt::Checked) ? Qt::Unchecked : Qt::Checked; 
-    item->setCheckState(state);  
+    setCurrentIndex(idx);
+    setActiveLayer(idx);
     pLineEdit->setText(item->text()); 
-
-    slotVisible(idx);
     emit currentActiveIndex(idx);
-    
 }
 
 void LayerComboBox::slotVisible(int idx)
@@ -311,9 +450,13 @@ void LayerComboBox::slotVisible(int idx)
     if (nullptr == item) return; 
 
     bool state = item->checkState() == Qt::Checked;
-    for(auto item : static_cast<MainWindow *>(parentWindow)->layers[idx]){
-        item->setVisible(state);
+    MainWindow *mainWindow = static_cast<MainWindow *>(parentWindow);
+    if (idx >= 0 && idx < mainWindow->layers.size()) {
+        for (auto layerItem : mainWindow->layers[idx]) {
+            layerItem->setVisible(state);
+        }
     }
+    mainWindow->scene->setFastLayerVisible(idx, state);
 
     // static_cast<MainWindow *>(parentWindow)->layers[idx]->setVisible(state);
     // static_cast<MainWindow *>(parentWindow)->layers[idx]->setActive(state);

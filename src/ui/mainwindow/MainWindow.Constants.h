@@ -3,7 +3,6 @@
 
 #include <QString>
 
-inline const QString kShowGrid("ShowGrid");
 inline const QString kMostRecentFile("MostRecentFile");
 
 #endif

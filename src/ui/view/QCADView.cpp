@@ -1,26 +1,47 @@
-#include"QCADView.h"
+#include "QCADView.h"
 #include "ui/items/QCADCellItem.h"
 
 #include "ui/mainwindow/MainWindow.h"
-#include<QStandardItem>
+#include <QStandardItem>
 
 #include <QDebug>
-
+#include <algorithm>
+#include <cmath>
 QCADView::QCADView(QWidget *parent) : QGraphicsView(parent)
 {
     setDragMode(RubberBandDrag);
-    setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
-    // setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
     setStyleSheet("padding: 0px; border: 20px;");
     setMouseTracking(true);
-    // setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
-    // setResizeAnchor(QGraphicsView::AnchorUnderMouse);
+    setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+    setResizeAnchor(QGraphicsView::AnchorViewCenter);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
-    
-    
+    setCacheMode(QGraphicsView::CacheNone);
+    setOptimizationFlag(QGraphicsView::DontSavePainterState, true);
+    setOptimizationFlag(QGraphicsView::DontAdjustForAntialiasing, true);
+    setBackgroundBrush(QColor("#FFFFFF"));
+    setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
+
     parentWindow = parent;
+    setHighQualityMode(false);
+}
+
+void QCADView::setHighQualityMode(bool enabled)
+{
+    highQualityMode = enabled;
+    setRenderHint(QPainter::Antialiasing, enabled);
+    setRenderHint(QPainter::TextAntialiasing, true);
+    setRenderHint(QPainter::SmoothPixmapTransform, enabled);
+    setOptimizationFlag(QGraphicsView::DontSavePainterState, !enabled);
+    setOptimizationFlag(QGraphicsView::DontAdjustForAntialiasing, !enabled);
+    setViewportUpdateMode(enabled ? QGraphicsView::BoundingRectViewportUpdate
+                                  : QGraphicsView::SmartViewportUpdate);
+    viewport()->update();
+}
+
+bool QCADView::isHighQualityMode() const
+{
+    return highQualityMode;
 }
 
 void QCADView::mousePressEvent(QMouseEvent *event)
@@ -68,29 +89,35 @@ void QCADView::mouseMoveEvent(QMouseEvent *event)
 
 void QCADView::wheelEvent(QWheelEvent *event)
 {
-    // 获取当前鼠标相对于view的位置;
-    QPointF cursorPoint = event->pos();
-    // 获取当前鼠标相对于scene的位置;
-    QPointF scenePos = this->mapToScene(QPoint(cursorPoint.x(), cursorPoint.y()));
-    // 获取view的宽高;
-    qreal viewWidth = this->viewport()->width();
-    qreal viewHeight = this->viewport()->height();
-    // 获取当前鼠标位置相当于view大小的横纵比例;
-    qreal hScale = cursorPoint.x() / viewWidth;
-    qreal vScale = cursorPoint.y() / viewHeight;
-    int wheelDeltaValue = event->delta();
-    // 向上滚动，放大;
-    if (wheelDeltaValue > 0){
-        this->scale(1.2, 1.2);
-    }else{
-        this->scale(1.0 / 1.2, 1.0 / 1.2);
-    }
-    // 将scene坐标转换为放大缩小后的坐标;
-    QPointF viewPoint = this->matrix().map(scenePos);
-    // 通过滚动条控制view放大缩小后的展示scene的位置;
-    horizontalScrollBar()->setValue(int(viewPoint.x() - viewWidth * hScale));
-    verticalScrollBar()->setValue(int(viewPoint.y() - viewHeight * vScale));
+    const QPoint angleDelta = event->angleDelta();
+    const QPoint pixelDelta = event->pixelDelta();
 
+    qreal zoomSteps = 0.0;
+    if (!angleDelta.isNull()) {
+        zoomSteps = angleDelta.y() / 120.0;
+    } else if (!pixelDelta.isNull()) {
+        zoomSteps = pixelDelta.y() / 90.0;
+    }
+
+    if (qFuzzyIsNull(zoomSteps)) {
+        event->ignore();
+        return;
+    }
+
+    constexpr qreal kZoomBase = 1.12;
+    constexpr qreal kMinScale = 0.05;
+    constexpr qreal kMaxScale = 48.0;
+
+    const qreal currentScale = transform().m11();
+    const qreal requestedScale = currentScale * std::pow(kZoomBase, zoomSteps);
+    const qreal clampedScale = std::clamp(requestedScale, kMinScale, kMaxScale);
+
+    if (!qFuzzyCompare(currentScale, clampedScale)) {
+        const qreal factor = clampedScale / currentScale;
+        scale(factor, factor);
+    }
+
+    event->accept();
 }
 
 

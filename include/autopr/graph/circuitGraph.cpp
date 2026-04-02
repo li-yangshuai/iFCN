@@ -175,8 +175,8 @@ namespace fcngraph
             int node = v.first;
             double x = v.second.first;
             double y = v.second.second;
-            int grid_x = static_cast<int>(x / 40) + 20; // grid_size会导致大规模电路节点间距过大，太大会导致节点位置重复
-            int grid_y = static_cast<int>(y / 40) + 20;
+            int grid_x = static_cast<int>(x / 30) + 20; // grid_size会导致大规模电路节点间距过大，太大会导致节点位置重复
+            int grid_y = static_cast<int>(y / 30) + 20;
             grid_positions[node] = std::make_pair(grid_x, grid_y);
             nodeIndex_pos[node] = std::make_pair(grid_x, grid_y);
         }

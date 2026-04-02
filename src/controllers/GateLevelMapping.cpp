@@ -6,6 +6,8 @@
 #include <QFileDialog>
 #include <QDir>
 #include <QMessageBox>
+#include <unordered_map>
+#include <unordered_set>
 #include "ui/mainwindow/MainWindow.h"
 
 GateLevelMapping::GateLevelMapping(MainWindow *parent)
@@ -102,10 +104,12 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
     QCoreApplication::processEvents();
 
     mainWindow->beginSceneBatchUpdate();
+    mainWindow->scene->clearFastRender();
 
     //映射
     mainWindow->slotAddLayer("second layer");
     mainWindow->slotAddLayer("third layer");
+    mainWindow->scene->beginFastRenderBuild(mainWindow->layers.size());
 
 
     //遍历routes。打印key和value
@@ -123,6 +127,16 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
 
     mappingCellItem();
     putClock();
+    mainWindow->scene->finalizeFastRenderBuild();
+    QVector<QString> inputNames;
+    for (const auto &layerCells : mainWindow->scene->fastCellsByLayer()) {
+        for (const auto &cell : layerCells) {
+            if (cell.type == CellType::InputCell && !cell.name.isEmpty()) {
+                inputNames.push_back(cell.name);
+            }
+        }
+    }
+    mainWindow->setInputNames(inputNames);
     mainWindow->endSceneBatchUpdate(true);
     // printCrossline();
 
@@ -194,6 +208,7 @@ void GateLevelMapping::mappingCellItem(){
     Mapping mapping;
 
     std::map<position, int> positionPhaseMap;
+    std::unordered_map<position, QString, MappingPositionHash> nodeNameByPos;
     for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
     {
         const QPoint &p = it.key();
@@ -202,9 +217,15 @@ void GateLevelMapping::mappingCellItem(){
         positionPhaseMap[{static_cast<unsigned int>(p.x()), 
                         static_cast<unsigned int>(p.y())}] = phase;
     }
+    for (auto it = nodes.begin(); it != nodes.end(); ++it)
+    {
+        nodeNameByPos[{static_cast<unsigned int>(it.value().pos.x()),
+                       static_cast<unsigned int>(it.value().pos.y())}] = it.value().name;
+    }
 
     std::vector<std::vector<position>> circle_line;
     circle_line.clear();
+    circle_line.reserve(routes.size());
     for (auto it = routes.begin(); it != routes.end(); ++it) 
     {
         const QVector<QPoint>& qPoints = it.value();
@@ -218,56 +239,6 @@ void GateLevelMapping::mappingCellItem(){
 
     std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node,type), (扇入，扇出)>
     Nodelink.clear();
-
-    for (auto it = routes.begin(); it != routes.end(); ++it)
-    {
-
-        const QPair<int,int>& key = it.key();
-        const QVector<QPoint>& templine = it.value();
-        if (!nodes.contains(key.first) || !nodes.contains(key.second)) continue;
-        if (templine.isEmpty()) continue;
-
-        position startpos{templine.front().x(), templine.front().y()};
-        position endpos{templine.back().x(), templine.back().y()};
-
-        QString startnodetype = nodes[key.first].type;
-        QString endnodetype   = nodes[key.second].type;
-
-        Nodelink[{startpos, startnodetype.toStdString()}] = {{}, {}};
-        Nodelink[{endpos, endnodetype.toStdString()}]   = {{}, {}};
-    }
-
-    // for (auto &pair : Nodelink)
-    // {
-        
-    //     for (auto &line : circle_line)
-    //     {
-
-    //         if (pair.first.first == line.front())
-    //         {
-    //             std::vector<position> &output = pair.second.second;
-    //             output.push_back(*std::next(line.begin()));
-    //         }
-    //         else if (pair.first.first == line.back())
-    //         {
-    //             std::vector<position> &intput = pair.second.first;
-    //             intput.push_back(*std::prev(std::prev(line.end())));
-    //         }
-    //     }
-    //     //避免重复放置输入输出
-    //     if(pair.second.first.size() > 1)
-    //     {
-    //         std::sort(pair.second.first.begin(), pair.second.first.end());
-    //         auto unique_end = std::unique(pair.second.first.begin(), pair.second.first.end());
-    //         pair.second.first.erase(unique_end, pair.second.first.end());
-    //     }
-    //     if(pair.second.second.size() > 1)
-    //     {
-    //         std::sort(pair.second.second.begin(), pair.second.second.end());
-    //         auto unique_end = std::unique(pair.second.second.begin(), pair.second.second.end());
-    //         pair.second.second.erase(unique_end, pair.second.second.end());
-    //     }
-    // }
 
     for (auto it = nodes.begin(); it != nodes.end(); ++it)
     {
@@ -312,36 +283,36 @@ void GateLevelMapping::mappingCellItem(){
     }
 
 
-    for (auto &entry : Nodelink)
+    for (auto it = routes.begin(); it != routes.end(); ++it)
     {
-        const position &nodePos = entry.first.first;
-
-        for (const auto &line : circle_line)
-        {
-            const size_t len = line.size();
-            if (len < 2) continue;  // ✅ 必须至少两个点，否则非法
-
-            const position &start = line.front();
-            const position &end   = line.back();
-
-            // ✅ 如果是输出节点（路径起点）
-            if (nodePos == start)
-            {
-                entry.second.second.push_back(line[1]);  // 第二个点安全访问
-            }
-            // ✅ 如果是输入节点（路径终点）
-            else if (nodePos == end)
-            {
-                entry.second.first.push_back(line[len - 2]);  // 倒数第二个点安全访问
-            }
+        const QPair<int,int>& key = it.key();
+        const QVector<QPoint>& path = it.value();
+        const size_t len = static_cast<size_t>(path.size());
+        if (len < 2 || !nodes.contains(key.first) || !nodes.contains(key.second)) {
+            continue;
         }
 
-        // ✅ 去重（输入端）
+        const NodeInfo& source = nodes[key.first];
+        const NodeInfo& sink = nodes[key.second];
+        const auto sourceKey = std::make_pair(position{static_cast<unsigned int>(source.pos.x()),
+                                                       static_cast<unsigned int>(source.pos.y())},
+                                              source.type.toStdString());
+        const auto sinkKey = std::make_pair(position{static_cast<unsigned int>(sink.pos.x()),
+                                                     static_cast<unsigned int>(sink.pos.y())},
+                                            sink.type.toStdString());
+
+        Nodelink[sourceKey].second.push_back(position{static_cast<unsigned int>(path[1].x()),
+                                                      static_cast<unsigned int>(path[1].y())});
+        Nodelink[sinkKey].first.push_back(position{static_cast<unsigned int>(path[len - 2].x()),
+                                                   static_cast<unsigned int>(path[len - 2].y())});
+    }
+
+    for (auto &entry : Nodelink)
+    {
         auto &inputs = entry.second.first;
         std::sort(inputs.begin(), inputs.end());
         inputs.erase(std::unique(inputs.begin(), inputs.end()), inputs.end());
 
-        // ✅ 去重（输出端）
         auto &outputs = entry.second.second;
         std::sort(outputs.begin(), outputs.end());
         outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
@@ -372,16 +343,8 @@ void GateLevelMapping::mappingCellItem(){
             {
                 unsigned int x_node = cellpos.first / 5;
                 unsigned int y_node = cellpos.second / 5;
-                QPoint pos = QPoint(x_node, y_node);
-                QString Iname = "default";
-                for (auto &v : nodes)
-                {
-                    if (pos == v.pos)
-                    {
-                        Iname = v.name;
-                        break;
-                    }
-                }
+                const auto nameIt = nodeNameByPos.find({x_node, y_node});
+                const QString Iname = (nameIt != nodeNameByPos.end()) ? nameIt->second : QStringLiteral("default");
                 putCellItem(cellpos, 0, CellType::InputCell, positionPhaseMap, Iname);
                 
             }
@@ -392,16 +355,8 @@ void GateLevelMapping::mappingCellItem(){
             {
                 unsigned int x_node = cellpos.first / 5;
                 unsigned int y_node = cellpos.second / 5;
-                QPoint pos = QPoint(x_node, y_node);
-                QString Oname = "default";
-                for (auto &v : nodes)
-                {
-                    if (pos == v.pos)
-                    {
-                        Oname = v.name;
-                        break;
-                    }
-                }
+                const auto nameIt = nodeNameByPos.find({x_node, y_node});
+                const QString Oname = (nameIt != nodeNameByPos.end()) ? nameIt->second : QStringLiteral("default");
                 putCellItem(cellpos, 0, CellType::OutputCell, positionPhaseMap, Oname);
 
             }
@@ -451,14 +406,14 @@ void GateLevelMapping::mappingCellItem(){
         allnodecells.insert(allnodecells.end(), pair.second.begin(), pair.second.end());
     }
 
-    std::vector<position> allcrosscells;
+    std::unordered_set<position, MappingPositionHash> allcrosscellsSet;
     if(!crossexample.empty())
     {
         for (auto &pair : crossexample)
         {
             for (auto &v : pair.second)
             {
-                allcrosscells.insert(allcrosscells.end(), v.begin(), v.end());
+                allcrosscellsSet.insert(v.begin(), v.end());
             }
             
         }
@@ -466,23 +421,21 @@ void GateLevelMapping::mappingCellItem(){
 
     //对于线路元胞，交叉点不去重，非交叉点（线路复用）去重
     std::vector<position> result;
-    std::vector<position> seen;  // 已出现过的“非交叉”点
+    result.reserve(allroutecells.size());
+    std::unordered_set<position, MappingPositionHash> seen;  // 已出现过的“非交叉”点
     for (auto &p : allroutecells) {
-        // 检查是否是交叉点
-        bool is_cross = std::find(allcrosscells.begin(), allcrosscells.end(), p) != allcrosscells.end();
+        const bool is_cross = allcrosscellsSet.find(p) != allcrosscellsSet.end();
 
         if (is_cross) {
-            // 交叉点 → 不去重，直接保留
             result.push_back(p);
         } else {
-            // 非交叉点 → 如果没出现过，则保留
-            if (std::find(seen.begin(), seen.end(), p) == seen.end()) {
-                seen.push_back(p);
+            if (seen.insert(p).second) {
                 result.push_back(p);
             }
         }
     }
     allroutecells = result;
+    std::unordered_set<position, MappingPositionHash> allroutecellsSet(allroutecells.begin(), allroutecells.end());
 
     size_t total_count = allroutecells.size() + allnodecells.size();
     QString message = QStringLiteral("Total cells: %1").arg(static_cast<qulonglong>(total_count));
@@ -490,8 +443,8 @@ void GateLevelMapping::mappingCellItem(){
 
 
     //Cross线路元胞放置
-    std::vector<position> crosscell;
-    std::vector<position> verticalcell;
+    std::unordered_set<position, MappingPositionHash> crosscellSet;
+    std::unordered_set<position, MappingPositionHash> verticalcellSet;
     if(!crossexample.empty())
     {
         size_t total_cross = 0;
@@ -507,7 +460,7 @@ void GateLevelMapping::mappingCellItem(){
         {
             for(auto &cross : crossline.second)
             {
-                crosscell.insert(crosscell.end(), cross.begin(), cross.end());
+                crosscellSet.insert(cross.begin(), cross.end());
             }
         }
         for(auto &crossline : crossexample)
@@ -523,19 +476,19 @@ void GateLevelMapping::mappingCellItem(){
                         position dir2 = {(*unit).first, (*unit).second - 1}; 
                         position dir3 = {(*unit).first - 1, (*unit).second}; 
                         position dir4 = {(*unit).first + 1, (*unit).second}; 
-                        if(std::find(crosscell.begin(), crosscell.end(), dir1) != crosscell.end())
+                        if(crosscellSet.find(dir1) != crosscellSet.end())
                         {
                             ++count;  
                         }
-                        if(std::find(crosscell.begin(), crosscell.end(), dir2) != crosscell.end())
+                        if(crosscellSet.find(dir2) != crosscellSet.end())
                         {
                             ++count;  
                         }
-                        if(std::find(crosscell.begin(), crosscell.end(), dir3) != crosscell.end())
+                        if(crosscellSet.find(dir3) != crosscellSet.end())
                         {
                             ++count;  
                         }
-                        if(std::find(crosscell.begin(), crosscell.end(), dir4) != crosscell.end())
+                        if(crosscellSet.find(dir4) != crosscellSet.end())
                         {
                             ++count;  
                         }
@@ -549,9 +502,9 @@ void GateLevelMapping::mappingCellItem(){
                         if(count < 2) 
                         {
                             //若端点无法直接放置柱点，则跨时钟延伸两个单位元胞
-                            if((std::find(crosscell.begin(), crosscell.end(), dir2) != crosscell.end())
-                            &&(std::find(allroutecells.begin(), allroutecells.end(), dir3) != allroutecells.end())
-                            &&(std::find(allroutecells.begin(), allroutecells.end(), dir4) != allroutecells.end()))
+                            if((crosscellSet.find(dir2) != crosscellSet.end())
+                            &&(allroutecellsSet.find(dir3) != allroutecellsSet.end())
+                            &&(allroutecellsSet.find(dir4) != allroutecellsSet.end()))
                             {
                                 position cellpos1 = *unit;
                                 putCellItem(cellpos1, 2, CellType::CrossoverCell, positionPhaseMap);
@@ -565,15 +518,15 @@ void GateLevelMapping::mappingCellItem(){
                                 putCellItem(cellpos3, 0, CellType::VerticalCell, positionPhaseMap);
                                 putCellItem(cellpos3, 1, CellType::VerticalCell, positionPhaseMap);
                                 putCellItem(cellpos3, 2, CellType::VerticalCell, positionPhaseMap);
-                                verticalcell.push_back(cellpos3);
+                                verticalcellSet.insert(cellpos3);
 
 
-                                crosscell.push_back(cellpos2);
-                                crosscell.push_back(cellpos3);
+                                crosscellSet.insert(cellpos2);
+                                crosscellSet.insert(cellpos3);
                             }
-                            else if ((std::find(crosscell.begin(), crosscell.end(), dir3) != crosscell.end())
-                            &&(std::find(allroutecells.begin(), allroutecells.end(), dir1) != allroutecells.end())
-                            &&(std::find(allroutecells.begin(), allroutecells.end(), dir2) != allroutecells.end()))
+                            else if ((crosscellSet.find(dir3) != crosscellSet.end())
+                            &&(allroutecellsSet.find(dir1) != allroutecellsSet.end())
+                            &&(allroutecellsSet.find(dir2) != allroutecellsSet.end()))
                             {
                                 position cellpos1 = *unit;
                                 putCellItem(cellpos1, 2, CellType::CrossoverCell, positionPhaseMap);
@@ -587,10 +540,10 @@ void GateLevelMapping::mappingCellItem(){
                                 putCellItem(cellpos3, 0, CellType::VerticalCell, positionPhaseMap);
                                 putCellItem(cellpos3, 1, CellType::VerticalCell, positionPhaseMap);
                                 putCellItem(cellpos3, 2, CellType::VerticalCell, positionPhaseMap);
-                                verticalcell.push_back(cellpos3);
+                                verticalcellSet.insert(cellpos3);
 
-                                crosscell.push_back(cellpos2);
-                                crosscell.push_back(cellpos3);
+                                crosscellSet.insert(cellpos2);
+                                crosscellSet.insert(cellpos3);
                             }
                             else//放置交叉线端点三层柱点
                             {
@@ -598,7 +551,7 @@ void GateLevelMapping::mappingCellItem(){
                                 putCellItem(cellpos, 0, CellType::VerticalCell, positionPhaseMap);
                                 putCellItem(cellpos, 1, CellType::VerticalCell, positionPhaseMap);
                                 putCellItem(cellpos, 2, CellType::VerticalCell, positionPhaseMap);
-                                verticalcell.push_back(cellpos);
+                                verticalcellSet.insert(cellpos);
                             }
                         }
                     }
@@ -624,18 +577,18 @@ void GateLevelMapping::mappingCellItem(){
             {
                 for(auto &pos : unit)
                 {
-                    if(std::find(crosscell.begin(), crosscell.end(), pos) == crosscell.end())
+                    if(crosscellSet.find(pos) == crosscellSet.end())
                     {
                         putCellItem(pos, 0, CellType::NormalCell, positionPhaseMap);
                         
                     }
                     else
                     {
-                        std::vector<position> unitroute = unit;
                         std::vector<position> tempcross;
-                        for(auto &v : unitroute)
+                        tempcross.reserve(unit.size());
+                        for(const auto &v : unit)
                         {
-                            if(std::find(crosscell.begin(), crosscell.end(), v) != crosscell.end())
+                            if(crosscellSet.find(v) != crosscellSet.end())
                             {
                                 tempcross.push_back(v);
                             }
@@ -643,7 +596,7 @@ void GateLevelMapping::mappingCellItem(){
                         bool isvertical = false;
                         for (auto &cell : tempcross)
                         {
-                            if (std::find(verticalcell.begin(), verticalcell.end(), cell) != verticalcell.end())
+                            if (verticalcellSet.find(cell) != verticalcellSet.end())
                             {
                                 isvertical = true;
                                 break;
@@ -674,9 +627,7 @@ void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _
     int cell_layer = _celllayer;
     position cellpos = std::make_pair(x_node, y_node);
     int phase = _pos_phase[cellpos];
-
-    QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
-    mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);
+    mainWindow->scene->addFastCell(x_coord, y_coord, cell_layer, phase, _cellType, _name);
 }
 
 void GateLevelMapping::putClock(){
@@ -697,10 +648,7 @@ void GateLevelMapping::putClock(){
         int y = ((pos.second*5) + 2) * 20 + 200;
         if((v.second >= 0) && (v.second <= 3))
         {
-            QCADClockScheme *item = new QCADClockScheme(v.second);
-            item->setPos(x, y);
-            item->setZValue(-1);
-            mainWindow->scene->addItem(item);
+            mainWindow->scene->addFastClock(x, y, v.second);
         }
     }
 }

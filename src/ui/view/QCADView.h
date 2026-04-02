@@ -13,6 +13,8 @@ class QCADView : public QGraphicsView
 
     public:
         explicit QCADView(QWidget *parent = 0);
+        void setHighQualityMode(bool enabled);
+        bool isHighQualityMode() const;
 
     public slots:
         //void slotZoom(int);
@@ -26,6 +28,7 @@ class QCADView : public QGraphicsView
 
     private:
         QWidget *parentWindow;
+        bool highQualityMode = false;
         //qreal zoom;
 
 };

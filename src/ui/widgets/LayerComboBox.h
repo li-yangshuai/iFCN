@@ -7,6 +7,7 @@
 //#include <QAbstractItemView>
 #include <QKeyEvent>
 #include <QVariant> 
+#include <QEvent>
 
 class QLineEdit;
 class QListView; 
@@ -77,6 +78,8 @@ class LayerComboBox : public QComboBox
     Q_OBJECT
 
     public:
+        static constexpr int ActiveLayerRole = Qt::UserRole + 2;
+
         LayerComboBox(QWidget *parent = Q_NULLPTR);
         ~LayerComboBox(); 
 
@@ -129,12 +132,14 @@ signals:
         // 重写QComboBox的hidePopup函数	
         // 目的选择过程中，不要隐藏listview	
         void hidePopup();
+        bool eventFilter(QObject *obj, QEvent *event) override;
         virtual void mousePressEvent(QMouseEvent * event);
         virtual void mouseReleaseEvent(QMouseEvent * event);	
         virtual void mouseMoveEvent(QMouseEvent * event);
 
     private:
         void UpdateText();
+        void setActiveLayer(int idx);
 
     private slots:
         void slotLayerIndexChanged(int idx);

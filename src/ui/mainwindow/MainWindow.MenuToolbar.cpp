@@ -67,11 +67,19 @@ void MainWindow::createActions()
     zoomOutAction->setShortcuts(QKeySequence::ZoomOut);
     zoomOutAction->setStatusTip(tr("zoomOut file"));
 
-    /******** "网格线视图"动作 *********/
-    viewShowGridAction = new QAction(tr("Show&Grid"), this);
-    viewShowGridAction->setCheckable(true);
-    viewShowGridAction->setChecked(false);
-    connect(viewShowGridAction, SIGNAL(toggled(bool)), this, SLOT( slotViewShowGrid(bool) ));
+    /******** "时钟网格视图"动作 *********/
+    toggleClockGridAction = new QAction(tr("Clock Grid"), this);
+    toggleClockGridAction->setCheckable(true);
+    toggleClockGridAction->setChecked(true);
+    toggleClockGridAction->setStatusTip(tr("Show or hide clock grid"));
+    connect(toggleClockGridAction, &QAction::toggled, this, &MainWindow::slotToggleClockGrid);
+
+    /******** "高清视图"动作 *********/
+    toggleHighQualityViewAction = new QAction(tr("HD"), this);
+    toggleHighQualityViewAction->setCheckable(true);
+    toggleHighQualityViewAction->setChecked(false);
+    toggleHighQualityViewAction->setStatusTip(tr("Toggle high-quality rendering for the view"));
+    connect(toggleHighQualityViewAction, &QAction::toggled, this, &MainWindow::slotToggleHighQualityView);
 
     /******** "状态栏视图"动作 *********/
     toggleStatusBarAction = new QAction(tr("Show Status Bar"), this);
@@ -134,6 +142,7 @@ void MainWindow::createActions()
     /******** "layer comboBox" *********/
     layerComboBox = new LayerComboBox(this); 
     connect(layerComboBox, SIGNAL(currentActiveIndex(int)), this, SLOT(slotLayerActiveChanged(int)));
+    connect(layerComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(slotLayerActiveChanged(int)));
     
     /******** "clock comboBox" *********/
     clockComboBox = new QComboBox(this); 
@@ -142,13 +151,6 @@ void MainWindow::createActions()
     clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock2.png")), tr("Clock2"));
     clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock3.png")), tr("Clock3"));
     connect(clockComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT( slotClockIndexChanged(int) ));
-
-    //show Grid
-    checkBox = new QCheckBox("show grid");
-    checkBox->setCheckable(true);
-    checkBox->setChecked(false);
-
-    connect(checkBox, &QCheckBox::stateChanged,[=](int state){ scene->setGridVisible(state != Qt::Unchecked);});
 
     //view mode
     viewLabel =  new QLabel(tr("view mode : "));
@@ -236,7 +238,8 @@ void MainWindow::createMenus()
 
     /******** "视图"菜单 *********/
     viewMenu = menuBar()->addMenu("&View");
-    viewMenu->addAction(viewShowGridAction);
+    viewMenu->addAction(toggleClockGridAction);
+    viewMenu->addAction(toggleHighQualityViewAction);
     viewMenu->addAction(toggleStatusBarAction);
     viewMenu->addAction(captureFullScreen);
     viewMenu->addAction(generateCellLevelLayoutGraph);
@@ -291,11 +294,12 @@ void MainWindow::createToolBars()
 
     /* viewTool*/
     viewTool = addToolBar("view");
-    viewTool->addWidget(checkBox);
     viewTool->addWidget(viewLabel);
     viewTool->addWidget(selectModeButton);
     viewTool->addWidget(insertModeButton);
     viewTool->addWidget(dragModeButton);
+    viewTool->addAction(toggleClockGridAction);
+    viewTool->addAction(toggleHighQualityViewAction);
 
 
     /* verilog parse tool*/

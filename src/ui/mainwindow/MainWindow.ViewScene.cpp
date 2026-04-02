@@ -1,6 +1,7 @@
 #include "ui/mainwindow/MainWindow.h"
 #include <QGridLayout>
 #include <QtGlobal>
+#include <algorithm>
 
 void MainWindow::createViewAndScene()
 {
@@ -40,6 +41,10 @@ void MainWindow::centerViewOnItems(bool fitToView)
     }
 
     QRectF contentRect = scene->itemsBoundingRect();
+    if (scene->hasFastRender()) {
+        const QRectF fastRect = scene->fastRenderBounds();
+        contentRect = contentRect.isValid() ? contentRect.united(fastRect) : fastRect;
+    }
     if (!contentRect.isValid() || contentRect.isEmpty()) {
         view->centerOn(scene->sceneRect().center());
         return;
@@ -259,11 +264,35 @@ void MainWindow::slotLayerActiveChanged(int idx){
     scene->setCurrentLayerIndex(idx);
 }
 
-void MainWindow::slotViewShowGrid(bool on)
+void MainWindow::slotToggleClockGrid(bool on)
 {
-    checkBox->setChecked(on);
-    scene->setGridVisible(on);
+    if (scene != nullptr) {
+        scene->setClockGridVisible(on);
+    }
+    if (customStatusBar != nullptr) {
+        QString message = on ? QStringLiteral("Clock grid enabled")
+                             : QStringLiteral("Clock grid disabled");
+        customStatusBar->addMessage(message);
+    }
 }
+
+void MainWindow::setHighQualityMode(bool on)
+{
+    if (view != nullptr) {
+        view->setHighQualityMode(on);
+    }
+    if (scene != nullptr) {
+        scene->setHighQualityMode(on);
+    }
+}
+
+void MainWindow::slotToggleHighQualityView(bool on)
+{
+    setHighQualityMode(on);
+    QString message = on ? QStringLiteral("HD view enabled") : QStringLiteral("HD view disabled");
+    customStatusBar->addMessage(message);
+}
+
 void MainWindow::viewModeChange() {
     if (selectModeButton->isChecked()) {
         setEditMode(EditMode::Select);
@@ -337,8 +366,21 @@ void MainWindow::slotCellItemInserted(QCADCellItem* cellItem, int layerIndex){
 void MainWindow::slotDeleteItem()
 {
     QList<QGraphicsItem *> selectedItems = scene->selectedItems();
+    QHash<int, QVector<int>> fastSelectionsByLayer;
+    QList<QGraphicsItem *> regularSelections;
 
     for (QGraphicsItem *item : selectedItems)
+    {
+        const QVariant fastLayer = item->data(QCADScene::FastLayerRole);
+        const QVariant fastIndex = item->data(QCADScene::FastIndexRole);
+        if (fastLayer.isValid() && fastIndex.isValid()) {
+            fastSelectionsByLayer[fastLayer.toInt()].push_back(fastIndex.toInt());
+            continue;
+        }
+        regularSelections.push_back(item);
+    }
+
+    for (QGraphicsItem *item : regularSelections)
     {
         // 从 scene 中移除
         scene->removeItem(item);
@@ -356,6 +398,16 @@ void MainWindow::slotDeleteItem()
 
         // 删除对象
         delete item;
+    }
+
+    for (auto it = fastSelectionsByLayer.begin(); it != fastSelectionsByLayer.end(); ++it)
+    {
+        auto &indices = it.value();
+        std::sort(indices.begin(), indices.end(), std::greater<int>());
+        indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+        for (int index : indices) {
+            scene->removeFastCell(it.key(), index);
+        }
     }
     setDirty(true);
 }

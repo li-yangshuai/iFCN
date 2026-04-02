@@ -20,13 +20,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     // connect(scene, SIGNAL(clockPhaseInserted(QCADClockScheme *)), this, SLOT(slotQCADClockScheme(QCADClockScheme *)));
 
     QSettings settings;
-    viewShowGridAction->setChecked(settings.value(kShowGrid, false).toBool());
     QString fileName = settings.value(kMostRecentFile).toString();
     if(fileName.isEmpty() || fileName == tr("Unnamed"))
         setCurrentFile(QString());
     else {
         setCurrentFile(fileName);
-        QTimer::singleShot(0, this, SLOT(loadFile(fileName)));
+        QTimer::singleShot(0, this, [this, fileName]() {
+            loadFile(fileName);
+        });
     }
 
 }

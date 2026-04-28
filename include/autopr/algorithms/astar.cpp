@@ -44,7 +44,7 @@ std::vector<position> Astar::findPath(const position& startPosInput, const posit
 
         //说明这个路径找了很多格子都没有找到，没有必要遍历整个格子
         double current_f = openSet.begin()->first;
-        if(current_f > 40.0) break;
+        if(current_f > maxSearchCost) break;
 
         //开启列表中f值最小的位置作为当前节点
         position current = openSet.begin()->second; 

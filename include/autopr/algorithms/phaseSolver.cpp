@@ -1,16 +1,41 @@
 #include "phaseSolver.h"
+#include <numeric>
 
 namespace fcngraph
 {
+    namespace
+    {
+        struct PhaseAnchor
+        {
+            int path_pos = 0;
+            int variable_index = -1;
+            int fixed_phase = -1;
+        };
 
-    PhaseSolver::PhaseSolver(const std::vector<Path> &p, const std::vector<int> &sp)
-        : paths(p), start_phases(sp), gen(rd())
+        struct PhaseConstraint
+        {
+            PhaseAnchor from;
+            PhaseAnchor to;
+            int steps = 0;
+        };
+
+        bool has_fixed_phase(const std::vector<int> &start_phases, size_t path_idx)
+        {
+            return path_idx < start_phases.size() && start_phases[path_idx] >= 1;
+        }
+    }
+
+    PhaseSolver::PhaseSolver(const std::vector<Path> &p, const std::vector<int> &sp, int phaseCount)
+        : paths(p),
+          start_phases(sp),
+          phase_count(std::max(2, phaseCount))
     {
         find_cross_nodes();
     }
 
-    PhaseSolver::PhaseSolver(const std::vector<Path> &p)
-        : paths(p)
+    PhaseSolver::PhaseSolver(const std::vector<Path> &p, int phaseCount)
+        : paths(p),
+          phase_count(std::max(2, phaseCount))
     {
         find_cross_nodes();
     }
@@ -20,21 +45,150 @@ namespace fcngraph
     // 主求解函数
     std::vector<std::vector<int>> PhaseSolver::solve()
     {
-        int attempts = 0;
-        const int max_attempts = 1000000;
-
-        while (attempts++ < max_attempts)
+        std::unordered_map<Grid, int> cross_index;
+        for (size_t i = 0; i < cross_nodes.size(); ++i)
         {
-            // 1. 随机分配交叉点相位
-            assign_cross_phases();
+            cross_index[cross_nodes[i]] = static_cast<int>(i);
+        }
 
-            // 2. 检查所有路径可行性
-            if (validate_all_paths())
+        std::vector<PhaseConstraint> constraints;
+        std::vector<int> occurrence(cross_nodes.size(), 0);
+        std::vector<std::vector<int>> phase_votes(cross_nodes.size(), std::vector<int>(phase_count + 1, 0));
+
+        for (size_t path_idx = 0; path_idx < paths.size(); ++path_idx)
+        {
+            const auto &path = paths[path_idx];
+            std::vector<PhaseAnchor> anchors;
+            const int path_start_phase = has_fixed_phase(start_phases, path_idx) ? start_phases[path_idx] : 1;
+
+            if (has_fixed_phase(start_phases, path_idx))
             {
-                // 3. 生成最终相位分配
-                return generate_all_phases();
+                anchors.push_back({0, -1, start_phases[path_idx]});
+            }
+
+            for (size_t grid_idx = 0; grid_idx < path.grids.size(); ++grid_idx)
+            {
+                auto iter = cross_index.find(path.grids[grid_idx]);
+                if (iter == cross_index.end())
+                {
+                    continue;
+                }
+                anchors.push_back({static_cast<int>(grid_idx), iter->second, -1});
+                occurrence[iter->second]++;
+                phase_votes[iter->second][phase_after_steps(path_start_phase, static_cast<int>(grid_idx))]++;
+            }
+
+            std::sort(anchors.begin(), anchors.end(), [](const PhaseAnchor &lhs, const PhaseAnchor &rhs) {
+                if (lhs.path_pos != rhs.path_pos)
+                {
+                    return lhs.path_pos < rhs.path_pos;
+                }
+                return lhs.variable_index < rhs.variable_index;
+            });
+            anchors.erase(std::unique(anchors.begin(), anchors.end(), [](const PhaseAnchor &lhs, const PhaseAnchor &rhs) {
+                              return lhs.path_pos == rhs.path_pos && lhs.variable_index == rhs.variable_index && lhs.fixed_phase == rhs.fixed_phase;
+                          }),
+                          anchors.end());
+
+            for (size_t i = 1; i < anchors.size(); ++i)
+            {
+                constraints.push_back({anchors[i - 1], anchors[i], anchors[i].path_pos - anchors[i - 1].path_pos});
             }
         }
+
+        std::vector<int> assignment(cross_nodes.size(), 0);
+        std::vector<int> order(cross_nodes.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(), [&occurrence](int lhs, int rhs) {
+            if (occurrence[lhs] != occurrence[rhs])
+            {
+                return occurrence[lhs] > occurrence[rhs];
+            }
+            return lhs < rhs;
+        });
+        std::vector<std::vector<int>> phase_order(cross_nodes.size());
+        for (size_t variable_index = 0; variable_index < cross_nodes.size(); ++variable_index)
+        {
+            auto &candidates = phase_order[variable_index];
+            for (int phase = 1; phase <= phase_count; ++phase)
+            {
+                candidates.push_back(phase);
+            }
+            std::sort(candidates.begin(), candidates.end(), [&](int lhs, int rhs) {
+                if (phase_votes[variable_index][lhs] != phase_votes[variable_index][rhs])
+                {
+                    return phase_votes[variable_index][lhs] > phase_votes[variable_index][rhs];
+                }
+                return lhs < rhs;
+            });
+        }
+
+        const auto phase_of = [&assignment](const PhaseAnchor &anchor) -> int {
+            if (anchor.fixed_phase >= 1)
+            {
+                return anchor.fixed_phase;
+            }
+            if (anchor.variable_index < 0)
+            {
+                return -1;
+            }
+            return assignment[anchor.variable_index];
+        };
+
+        const auto has_feasible_completion = [this](int from_phase, int to_phase, int steps) {
+            if (from_phase >= 1 && to_phase >= 1)
+            {
+                return phase_distance(from_phase, to_phase) <= steps;
+            }
+            return true;
+        };
+
+        const auto constraints_ok = [&constraints, &phase_of, &has_feasible_completion]() {
+            for (const auto &constraint : constraints)
+            {
+                const int from_phase = phase_of(constraint.from);
+                const int to_phase = phase_of(constraint.to);
+                if (!has_feasible_completion(from_phase, to_phase, constraint.steps))
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        std::size_t visited = 0;
+        const std::size_t max_visited = 8192;
+        std::function<bool(size_t)> search = [&](size_t order_index) {
+            if (++visited > max_visited)
+            {
+                return false;
+            }
+            if (order_index >= order.size())
+            {
+                return constraints_ok();
+            }
+
+            const int variable_index = order[order_index];
+            for (int phase : phase_order[variable_index])
+            {
+                assignment[variable_index] = phase;
+                global_phases[cross_nodes[variable_index]] = phase;
+                if (constraints_ok() && search(order_index + 1))
+                {
+                    return true;
+                }
+                global_phases.erase(cross_nodes[variable_index]);
+                assignment[variable_index] = 0;
+            }
+            return false;
+        };
+
+        global_phases.clear();
+        if (search(0) && validate_all_paths())
+        {
+            return generate_all_phases();
+        }
+
         throw std::runtime_error("No valid solution found");
     }
 
@@ -113,14 +267,6 @@ namespace fcngraph
         }
     }
 
-    // 随机分配交叉点相位
-    void PhaseSolver::assign_cross_phases()
-    {
-        global_phases.clear();
-        for (const auto &g : cross_nodes)
-            global_phases[g] = phase_dist(gen);
-    }
-
     // 验证单条路径可行性
     bool PhaseSolver::validate_path(size_t path_idx)
     {
@@ -128,7 +274,7 @@ namespace fcngraph
         std::vector<std::pair<int, int>> check_points;
 
         // 收集所有相位确定点
-        if (path_idx < start_phases.size())
+        if (has_fixed_phase(start_phases, path_idx))
         {
             check_points.emplace_back(0, start_phases[path_idx]);
 
@@ -155,9 +301,8 @@ namespace fcngraph
             auto [pos1, phase1] = check_points[i - 1];
             auto [pos2, phase2] = check_points[i];
             int steps = pos2 - pos1;
-            int required = phase_distance(phase1, phase2);
 
-            if (required > steps)
+            if (phase_distance(phase1, phase2) > steps)
                 return false;
         }
         return true;
@@ -170,7 +315,21 @@ namespace fcngraph
             return 0;
         if (to > from)
             return to - from;
-        return (4 - from) + to;
+        return (phase_count - from) + to;
+    }
+
+    int PhaseSolver::phase_after_steps(int from, int steps) const
+    {
+        if (phase_count <= 0)
+        {
+            return from;
+        }
+        int normalized = (from - 1 + steps) % phase_count;
+        if (normalized < 0)
+        {
+            normalized += phase_count;
+        }
+        return normalized + 1;
     }
 
     // 验证所有路径
@@ -189,7 +348,7 @@ namespace fcngraph
         std::vector<std::pair<int, int>> key_points;
 
         // 收集并排序关键点
-        if (path_idx < start_phases.size()) // 对第一层不能包括起始节点
+        if (has_fixed_phase(start_phases, path_idx)) // 对已知起始相位的路径包含起始节点
         {
             key_points.emplace_back(0, start_phases[path_idx]);
             for (size_t i = 1; i < path.grids.size(); ++i)
@@ -212,6 +371,16 @@ namespace fcngraph
         }
         std::sort(key_points.begin(), key_points.end());
 
+        if (key_points.empty() && !phases.empty())
+        {
+            key_points.emplace_back(0, 1);
+        }
+        else if (!key_points.empty() && key_points.front().first > 0)
+        {
+            key_points.insert(key_points.begin(),
+                              {0, phase_after_steps(key_points.front().second, -key_points.front().first)});
+        }
+
         // 生成相位序列
         for (size_t seg = 0; seg < key_points.size(); ++seg)
         {
@@ -222,45 +391,29 @@ namespace fcngraph
             {
                 auto [prev_pos, prev_phase] = key_points[seg - 1];
                 const int steps = current_pos - prev_pos;
-                const int phase_steps = phase_distance(prev_phase, current_phase);
-
-                // 分情况处理相位填充
-                if (phase_steps == steps)
+                const int min_advances = phase_distance(prev_phase, current_phase);
+                if (min_advances > steps)
                 {
-                    // 精确递增
-                    for (int i = 1; i <= steps; ++i)
-                    {
-                        int phase = (prev_phase + i) % 4;
-                        phases[prev_pos + i] = phase == 0 ? 4 : phase;
-                    }
+                    throw std::runtime_error("Phase continuity violation");
                 }
-                else if (phase_steps < steps)
+
+                const int advances = min_advances + ((steps - min_advances) / phase_count) * phase_count;
+                const int waits = steps - advances;
+                int used_advances = 0;
+                int used_waits = 0;
+
+                for (int i = 1; i <= steps; ++i)
                 {
-                    if ((steps - phase_steps) >= 4)
+                    const int expected_waits = (i * waits) / steps;
+                    if (expected_waits > used_waits)
                     {
-                        // 递增后超过4个位置
-                        for (int i = 1; i <= (phase_steps + 4); ++i)
-                        {
-                            int phase = (prev_phase + i) % 4;
-                            phases[prev_pos + i] = phase == 0 ? 4 : phase;
-                        }
-                        // 剩余位置保持最终相位
-                        std::fill(phases.begin() + prev_pos + phase_steps + 4,
-                                  phases.begin() + current_pos + 1,
-                                  current_phase);
+                        phases[prev_pos + i] = phases[prev_pos + i - 1];
+                        ++used_waits;
                     }
                     else
                     {
-                        // 部分递增后保持
-                        for (int i = 1; i <= phase_steps; ++i)
-                        {
-                            int phase = (prev_phase + i) % 4;
-                            phases[prev_pos + i] = phase == 0 ? 4 : phase;
-                        }
-                        // 剩余位置保持最终相位
-                        std::fill(phases.begin() + prev_pos + phase_steps + 1,
-                                  phases.begin() + current_pos + 1,
-                                  current_phase);
+                        ++used_advances;
+                        phases[prev_pos + i] = phase_after_steps(prev_phase, used_advances);
                     }
                 }
             }
@@ -273,9 +426,7 @@ namespace fcngraph
             size_t last_pos = key_points.back().first;
             for (size_t i = last_pos + 1; i < phases.size(); ++i)
             {
-                phases[i] = (last_phase + (i - last_pos)) % 4;
-                if (phases[i] == 0)
-                    phases[i] = 4;
+                phases[i] = phase_after_steps(last_phase, static_cast<int>(i - last_pos));
             }
         }
 
@@ -283,7 +434,7 @@ namespace fcngraph
         for (size_t i = 1; i < phases.size(); ++i)
         {
             int diff = phases[i] - phases[i - 1];
-            if (diff != 1 && diff != -3 && diff != 0)
+            if (diff != 1 && diff != -(phase_count - 1) && diff != 0)
             {
                 throw std::runtime_error("Phase continuity violation");
             }

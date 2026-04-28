@@ -146,7 +146,8 @@ void CrossGraphLink<T>::insertEdge(const std::string &_nodeName1, const std::str
     auto index2 = getVertexIndex(_nodeName2);
 
     if (index1 == -1 || index2 == -1) {
-        throw std::runtime_error("Invalid vertex name provided for edge creation.");
+        throw std::runtime_error("Invalid vertex name provided for edge creation: "
+                                 + _nodeName1 + " -> " + _nodeName2);
     }
 
     // 插入正向边

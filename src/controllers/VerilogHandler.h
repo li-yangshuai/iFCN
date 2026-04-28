@@ -30,6 +30,12 @@ public:
     void generateSVG();
     void slotForceOrientedAlgorithm();
 
+signals:
+    void operationStarted(const QString &title, const QString &detail);
+    void operationProgress(const QString &detail, int value, int maximum);
+    void operationFinished(const QString &message);
+    void operationFailed(const QString &message);
+
 private:
     MainWindow *mainWindow;
 

@@ -58,7 +58,7 @@ public:
         void setTabHost(TabbedMainWindow *host);
 
 public:
-        void printToStatusBar(QString &message);
+        void printToStatusBar(const QString &message);
         CustomStatusBar *customStatusBar;
 
 private:
@@ -180,7 +180,7 @@ private:
 private:
         void initialDesign();           //初始化layer[0]
         bool shouldMapIfcnFile(const QString &fileName) const;
-        bool saveFile(const QString &fileName);    //保存.qca文件
+        bool saveFile(const QString &fileName, bool updateCurrentFile = true, bool showStatus = true);    //保存.qca文件
         void setCurrentFile(const QString &fileName);   //保存文件名并setDirty(false)
         QString defaultQcaSavePath() const;
         bool maybeSave();   //判断文档是否保存
@@ -218,6 +218,13 @@ private slots:
 
         //四种仿真模式
         void onSimulationFinished(const QString &resultFile);
+        void onSimulationFailed(const QString &message);
+        void slotEnergyAnalysis();
+        void onEnergyAnalysisFinished(const QString &message,
+                                      const QString &waveformFile,
+                                      const QString &reportFile,
+                                      const QString &distributionImage);
+        void onEnergyAnalysisFailed(const QString &message);
 
         void viewModeChange();
 

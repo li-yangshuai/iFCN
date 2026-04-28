@@ -48,6 +48,10 @@ public:
 
     //图->网格坐标处理
     void sortNodesByYThenXCoordinate(double grid_size = 400); 
+    void sortNodesByLayeredGrid(unsigned int xSpacing = 4,
+                                unsigned int ySpacing = 4,
+                                unsigned int xPadding = 4,
+                                unsigned int yPadding = 4);
 
     //布局布线
     bool placeAndRoute();
@@ -57,9 +61,10 @@ public:
     void printClassifiedRoutes(
         const std::map<unsigned int, std::map<std::pair<unsigned int, unsigned int>, std::vector<position>>>& classifiedRoutes);
     // 调用SA分配相位
-    bool assignPhases();
+    bool assignPhases(int phaseCount = 4);
 
-    bool phaseOptimize(int current_layer, std::vector<fcngraph::Path>& paths, std::vector<int>& start_phases, int recursion_count = 0); 
+    bool phaseOptimize(int current_layer, std::vector<fcngraph::Path>& paths, std::vector<int>& start_phases, int phaseCount = 4, int recursion_count = 0); 
+    bool assignPhasesFallback(int phaseCount = 4);
 
     // 打印latex结果
     void printLaTex();

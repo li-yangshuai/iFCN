@@ -1,5 +1,6 @@
 #include "circuitGraph.h"
 #include "autopr/algorithms/phaseSolver.h"
+#include <set>
 
 namespace fcngraph
 {
@@ -169,16 +170,32 @@ namespace fcngraph
 
     void CircuitGraph::sortNodesByYThenXCoordinate(double grid_size)
     {
+        grid_positions.clear();
+        nodeIndex_pos.clear();
+        sorted_grid_positions.clear();
+
+        if (grid_size <= 0.0)
+        {
+            grid_size = 30.0;
+        }
+
         // 预处理，将节点坐标映射到网格坐标
         for (const auto &v : node_positions)
         {
             int node = v.first;
             double x = v.second.first;
             double y = v.second.second;
-            int grid_x = static_cast<int>(x / 30) + 20; // grid_size会导致大规模电路节点间距过大，太大会导致节点位置重复
-            int grid_y = static_cast<int>(y / 30) + 20;
-            grid_positions[node] = std::make_pair(grid_x, grid_y);
-            nodeIndex_pos[node] = std::make_pair(grid_x, grid_y);
+            int grid_x = static_cast<int>(std::round(x / grid_size)) + 20;
+            int grid_y = static_cast<int>(std::round(y / grid_size)) + 20;
+            position candidate{static_cast<unsigned int>(std::max(0, grid_x)),
+                               static_cast<unsigned int>(std::max(0, grid_y))};
+            while (std::find_if(grid_positions.begin(), grid_positions.end(),
+                                [&candidate](const auto &entry) { return entry.second == candidate; }) != grid_positions.end())
+            {
+                ++candidate.first;
+            }
+            grid_positions[node] = candidate;
+            nodeIndex_pos[node] = candidate;
         }
 
 
@@ -198,14 +215,110 @@ namespace fcngraph
                   });
     }
 
+    void CircuitGraph::sortNodesByLayeredGrid(unsigned int xSpacing,
+                                              unsigned int ySpacing,
+                                              unsigned int xPadding,
+                                              unsigned int yPadding)
+    {
+        grid_positions.clear();
+        nodeIndex_pos.clear();
+        sorted_grid_positions.clear();
+
+        xSpacing = std::max(1u, xSpacing);
+        ySpacing = std::max(1u, ySpacing);
+
+        std::map<int, double> graphvizXByNode;
+        for (const auto &nodePos : node_positions)
+        {
+            graphvizXByNode[nodePos.first] = nodePos.second.first;
+        }
+
+        const auto &layerNodes = parse.getlayerNodeDivVec();
+        std::size_t maxLayerWidth = 0;
+        for (const auto &layer : layerNodes)
+        {
+            maxLayerWidth = std::max(maxLayerWidth, layer.size());
+        }
+
+        std::set<position> occupied;
+        for (std::size_t layerIndex = 0; layerIndex < layerNodes.size(); ++layerIndex)
+        {
+            std::vector<int> nodes(layerNodes[layerIndex].begin(), layerNodes[layerIndex].end());
+            std::sort(nodes.begin(), nodes.end(), [&graphvizXByNode](int lhs, int rhs) {
+                const double lx = graphvizXByNode.count(lhs) ? graphvizXByNode[lhs] : static_cast<double>(lhs);
+                const double rx = graphvizXByNode.count(rhs) ? graphvizXByNode[rhs] : static_cast<double>(rhs);
+                if (lx == rx)
+                {
+                    return lhs < rhs;
+                }
+                return lx < rx;
+            });
+
+            const unsigned int layerOffset = static_cast<unsigned int>(
+                ((maxLayerWidth > nodes.size()) ? (maxLayerWidth - nodes.size()) : 0) * xSpacing / 2);
+            for (std::size_t nodeOffset = 0; nodeOffset < nodes.size(); ++nodeOffset)
+            {
+                position candidate{
+                    xPadding + layerOffset + static_cast<unsigned int>(nodeOffset) * xSpacing,
+                    yPadding + static_cast<unsigned int>(layerIndex) * ySpacing
+                };
+                while (occupied.find(candidate) != occupied.end())
+                {
+                    ++candidate.first;
+                }
+                occupied.insert(candidate);
+                grid_positions[nodes[nodeOffset]] = candidate;
+                nodeIndex_pos[nodes[nodeOffset]] = candidate;
+            }
+        }
+
+        sorted_grid_positions.assign(grid_positions.begin(), grid_positions.end());
+        std::sort(sorted_grid_positions.begin(), sorted_grid_positions.end(),
+                  [](const std::pair<int, position> &a,
+                     const std::pair<int, position> &b)
+                  {
+                      if (a.second.second == b.second.second)
+                      {
+                          return a.second.first < b.second.first;
+                      }
+                      return a.second.second < b.second.second;
+                  });
+    }
+
     bool CircuitGraph::placeAndRoute()
     {
+        routes.clear();
+        astar.reset();
+
         for (auto &node_pos : nodeIndex_pos)
         {
+            if (!chessboard.is_placeNode(node_pos.second))
+            {
+                return false;
+            }
             chessboard.placeNode(node_pos.second);
         }
 
         auto edges = parse.getEffectiveEdges();
+        std::stable_sort(edges.begin(), edges.end(), [this](const auto &lhs, const auto &rhs) {
+            const auto lhsStart = nodeIndex_pos[lhs.first];
+            const auto lhsEnd = nodeIndex_pos[lhs.second];
+            const auto rhsStart = nodeIndex_pos[rhs.first];
+            const auto rhsEnd = nodeIndex_pos[rhs.second];
+            const int lhsDistance = std::abs(static_cast<int>(lhsEnd.first) - static_cast<int>(lhsStart.first))
+                                  + std::abs(static_cast<int>(lhsEnd.second) - static_cast<int>(lhsStart.second));
+            const int rhsDistance = std::abs(static_cast<int>(rhsEnd.first) - static_cast<int>(rhsStart.first))
+                                  + std::abs(static_cast<int>(rhsEnd.second) - static_cast<int>(rhsStart.second));
+            if (lhs.first == rhs.first)
+            {
+                return lhsDistance > rhsDistance;
+            }
+            if (parse.getVertexLayer(lhs.first) == parse.getVertexLayer(rhs.first))
+            {
+                return lhsDistance > rhsDistance;
+            }
+            return parse.getVertexLayer(lhs.first) < parse.getVertexLayer(rhs.first);
+        });
         for (auto &edge : edges)
         {
             auto start = nodeIndex_pos[edge.first];
@@ -365,7 +478,7 @@ namespace fcngraph
         }
     }
 
-    bool CircuitGraph::assignPhases()
+    bool CircuitGraph::assignPhases(int phaseCount)
     {
         // 使用 map 来存储分类的路径，按层级分类
         std::map<unsigned int, std::map<std::pair<unsigned int, unsigned int>, std::vector<position>>> classifiedRoutes;
@@ -388,7 +501,6 @@ namespace fcngraph
             std::vector<Path> paths;
             std::vector<int> start_phases; // 存储当前层每条路径的起始相位
 
-            auto a1 = classifiedRoutes[groupMapping[layer_id][0]].size();
             // 遍历当前层的所有路径
             for (auto &path_positions : routes)
             {
@@ -402,29 +514,31 @@ namespace fcngraph
 
                 paths.push_back(Path{decodedPath});
 
-                // 如果是第一层，初始化起始相位为1
+                int start_phase = -1;
                 if (is_first_layer)
                 {
-                    if (start_phases.size() < a1)
-                    {
-                        start_phases.push_back(1);
-                        chessboard.gridMap[path_positions[0]].setPhase(1); // 初始化输入节点相位为1
-                    }
+                    start_phase = -1;
                 }
                 else
                 {
-                    if (start_phases.size() < a1)
-                    {
-                        auto start_pos = path_positions[0];
-                        start_phases.push_back(chessboard.gridMap[start_pos].getPhase());
-                    }
+                    auto start_pos = path_positions[0];
+                    start_phase = chessboard.gridMap[start_pos].getPhase();
                 }
+                start_phases.push_back(start_phase);
             }
             // 调用相位优化函数
-            bool success = phaseOptimize(layer_id, paths, start_phases);
+            bool success = false;
+            try
+            {
+                success = phaseOptimize(layer_id, paths, start_phases, phaseCount);
+            }
+            catch (const std::exception &)
+            {
+                success = false;
+            }
             if (!success)
             {
-                return false;
+                return assignPhasesFallback(phaseCount);
             }
 
             is_first_layer = false;
@@ -433,12 +547,9 @@ namespace fcngraph
         return true; // 所有层都成功分配相位
     }
 
-    bool CircuitGraph::phaseOptimize(int current_layer, std::vector<fcngraph::Path> &paths, std::vector<int> &start_phases, int recursion_count)
+    bool CircuitGraph::phaseOptimize(int current_layer, std::vector<fcngraph::Path> &paths, std::vector<int> &start_phases, int phaseCount, int recursion_count)
     {
-        // 递归次数限制
-        const int max_recursion_count = 100;
-
-        PhaseSolver solver(paths, start_phases);
+        PhaseSolver solver(paths, start_phases, phaseCount);
         std::vector<std::vector<int>> optimized_phases = solver.solve();
         std::string message = "Layer " + std::to_string(current_layer) + " optimized at recursion level " + std::to_string(recursion_count);
         if (fitnessCallback)
@@ -483,7 +594,7 @@ namespace fcngraph
                 continue;
             }
 
-            for (size_t j = 1; j < path.grids.size(); ++j)
+            for (size_t j = 0; j < path.grids.size(); ++j)
             {
                 const std::pair<int, int> &grid = path.grids[j];
                 position pos{static_cast<unsigned int>(grid.first), static_cast<unsigned int>(grid.second)};
@@ -508,25 +619,11 @@ namespace fcngraph
                         {
                             fitnessCallback(message);
                         }
-                        if (recursion_count >= max_recursion_count)
+                        for (auto &recorded_pos : recordSetedPhasePos)
                         {
-                            std::string message = " reached maximum recursion limit of " + std::to_string(max_recursion_count) + ". Exiting with failure.";
-                            if (fitnessCallback)
-                            {
-                                fitnessCallback(message);
-                            }
-                            continue;
+                            chessboard.gridMap[recorded_pos].setPhase(-1);
                         }
-                        else
-                        {
-                            for (auto &pos : recordSetedPhasePos)
-                            {
-                                chessboard.gridMap[pos].setPhase(-1);
-                            }
-
-                            // 递归调用，但递归次数递增
-                            return phaseOptimize(current_layer, paths, start_phases, recursion_count + 1);
-                        }
+                        return false;
                     }
                 }
                 else
@@ -542,6 +639,73 @@ namespace fcngraph
         }
 
         return true; // 如果所有路径都成功优化，返回 true
+    }
+
+    bool CircuitGraph::assignPhasesFallback(int phaseCount)
+    {
+        phaseCount = std::max(2, phaseCount);
+
+        for (auto &cell : chessboard.gridMap)
+        {
+            if (cell.second.getPhase() >= 1)
+            {
+                cell.second.setPhase(-1);
+            }
+        }
+
+        auto phaseAfter = [phaseCount](int startPhase, int steps) {
+            int phase = (startPhase - 1 + steps) % phaseCount;
+            if (phase < 0)
+            {
+                phase += phaseCount;
+            }
+            return phase + 1;
+        };
+
+        std::vector<std::pair<std::pair<unsigned int, unsigned int>, std::vector<position>>> orderedRoutes(routes.begin(), routes.end());
+        std::stable_sort(orderedRoutes.begin(), orderedRoutes.end(), [this](const auto &lhs, const auto &rhs) {
+            const int lhsLayer = parse.getVertexLayer(lhs.first.first);
+            const int rhsLayer = parse.getVertexLayer(rhs.first.first);
+            if (lhsLayer != rhsLayer)
+            {
+                return lhsLayer < rhsLayer;
+            }
+            return lhs.second.size() > rhs.second.size();
+        });
+
+        for (const auto &route : orderedRoutes)
+        {
+            if (route.second.empty())
+            {
+                continue;
+            }
+
+            int anchorPhase = chessboard.gridMap[route.second.front()].getPhase();
+            if (anchorPhase < 1)
+            {
+                anchorPhase = phaseAfter(1, parse.getVertexLayer(route.first.first));
+                chessboard.gridMap[route.second.front()].setPhase(anchorPhase);
+            }
+            std::size_t anchorIndex = 0;
+
+            for (std::size_t i = 1; i < route.second.size(); ++i)
+            {
+                const auto &pos = route.second[i];
+                const int existingPhase = chessboard.gridMap[pos].getPhase();
+                const int idealPhase = phaseAfter(anchorPhase, static_cast<int>(i - anchorIndex));
+                if (existingPhase < 1)
+                {
+                    chessboard.gridMap[pos].setPhase(idealPhase);
+                }
+                else if (existingPhase != idealPhase)
+                {
+                    anchorPhase = existingPhase;
+                    anchorIndex = i;
+                }
+            }
+        }
+
+        return true;
     }
 
     void CircuitGraph::printLaTex()

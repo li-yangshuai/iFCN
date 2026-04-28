@@ -3,15 +3,20 @@
 #include "ui/mainwindow/TabbedMainWindow.h"
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QPixmap>
+#include <QScrollArea>
 #include <QSettings>
 #include <QStatusBar>
 #include <QTextStream>
+#include <QVBoxLayout>
+
+#include <algorithm>
 
 void MainWindow::initialDesign()
 {
@@ -141,7 +146,7 @@ void MainWindow::mapIfcnFile(const QString &fileName)
     statusBar()->showMessage(tr("Mapped %1").arg(fileName), 2000);
     emit savedname(fileName);
 }
-bool MainWindow::saveFile(const QString &fileName)
+bool MainWindow::saveFile(const QString &fileName, bool updateCurrentFile, bool showStatus)
 {
     QFile file(fileName);
     if(!file.open(QFile::WriteOnly))
@@ -404,8 +409,12 @@ bool MainWindow::saveFile(const QString &fileName)
     /*********文本保存结束********/
 
     file.close();
-    setCurrentFile(fileName);
-    statusBar()->showMessage(tr("文本保存成功"), 2000);
+    if (updateCurrentFile) {
+        setCurrentFile(fileName);
+    }
+    if (showStatus) {
+        statusBar()->showMessage(tr("文本保存成功"), 2000);
+    }
     return true;
 }
 
@@ -606,4 +615,98 @@ void MainWindow::onSimulationFinished(const QString &outputFileName) {
     WaveformWindow* waveWindow = new WaveformWindow(nullptr, outputFileName);
     waveWindow->show();
     // QMessageBox::information(this, tr("Simulation Complete"), tr("The simulation result has been saved to %1").arg(resultFile));
+}
+
+void MainWindow::onSimulationFailed(const QString &message)
+{
+    printToStatusBar(message);
+    QMessageBox::warning(this, tr("Simulation"), message);
+}
+
+void MainWindow::slotEnergyAnalysis()
+{
+    QString sourceFileName = curFile;
+    if (sourceFileName.isEmpty() || sourceFileName == tr("Unnamed")) {
+        sourceFileName = QFileDialog::getOpenFileName(
+            this,
+            tr("Open File"),
+            ".",
+            tr("QCA/iFCN files (*.qca *.ifcn);;All file (*)"));
+        if (sourceFileName.isEmpty()) {
+            return;
+        }
+        loadFile(sourceFileName);
+    }
+
+    QFileInfo sourceInfo(sourceFileName);
+    QString analysisFileName = sourceFileName;
+    const QString suffix = sourceInfo.suffix().toLower();
+
+    if (suffix == QStringLiteral("ifcn")) {
+        const QString qcaFileName = sourceInfo.absolutePath() + "/" +
+                                    sourceInfo.completeBaseName() + "_energy_input.qca";
+        if (!saveFile(qcaFileName, false, false)) {
+            QString message = tr("Energy analysis failed: cannot write %1").arg(qcaFileName);
+            printToStatusBar(message);
+            return;
+        }
+        analysisFileName = qcaFileName;
+        QString message = tr("Energy analysis input generated: %1").arg(qcaFileName);
+        printToStatusBar(message);
+    } else if (suffix != QStringLiteral("qca")) {
+        QString message = tr("Energy analysis supports .qca and mapped .ifcn files only: %1").arg(sourceFileName);
+        printToStatusBar(message);
+        QMessageBox::warning(this, tr("Energy Analysis"), message);
+        return;
+    }
+
+    QString message = tr("Energy analysis running: %1").arg(QFileInfo(sourceFileName).fileName());
+    printToStatusBar(message);
+    simulationManager->runEnergyAnalysisForFile(analysisFileName, sourceFileName);
+}
+
+void MainWindow::onEnergyAnalysisFinished(const QString &message,
+                                          const QString &waveformFile,
+                                          const QString &reportFile,
+                                          const QString &distributionImage)
+{
+    Q_UNUSED(waveformFile);
+    Q_UNUSED(reportFile);
+
+    QString statusMessage = message;
+    printToStatusBar(statusMessage);
+
+    if (distributionImage.isEmpty()) {
+        return;
+    }
+
+    QPixmap pixmap(distributionImage);
+    if (pixmap.isNull()) {
+        return;
+    }
+
+    QDialog *dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Energy Distribution"));
+
+    QLabel *imageLabel = new QLabel(dialog);
+    imageLabel->setPixmap(pixmap);
+    imageLabel->setAlignment(Qt::AlignCenter);
+
+    QScrollArea *scrollArea = new QScrollArea(dialog);
+    scrollArea->setWidget(imageLabel);
+    scrollArea->setWidgetResizable(false);
+
+    QVBoxLayout *layout = new QVBoxLayout(dialog);
+    layout->addWidget(scrollArea);
+    dialog->setLayout(layout);
+    dialog->resize(std::min(pixmap.width() + 48, 1100), std::min(pixmap.height() + 64, 820));
+    dialog->show();
+}
+
+void MainWindow::onEnergyAnalysisFailed(const QString &message)
+{
+    QString statusMessage = message;
+    printToStatusBar(statusMessage);
+    QMessageBox::warning(this, tr("Energy Analysis"), message);
 }

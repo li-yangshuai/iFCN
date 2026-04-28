@@ -7,9 +7,245 @@
 #include <QMessageBox>
 #include <QImage>
 #include <QPainter>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QSpinBox>
 #include "ui/widgets/GaChessboardInputDialog.h"
 #include <QElapsedTimer>
 #include <cmath>
+#include <limits>
+#include <optional>
+#include <tuple>
+
+namespace {
+struct GraphRenderSettings {
+    int phaseCount = 4;
+    int maxAttempts = 220;
+};
+
+struct LayoutAttempt {
+    unsigned int xSpacing = 4;
+    unsigned int ySpacing = 4;
+    double searchCost = 90.0;
+};
+
+struct LayoutBounds {
+    int minX = 0;
+    int maxX = 0;
+    int minY = 0;
+    int maxY = 0;
+    int width = 0;
+    int height = 0;
+    int area = 0;
+};
+
+struct PhaseRepeatStats {
+    int repeatedAdjacent = 0;
+    int maxRun = 1;
+};
+
+struct LayoutSearchResult {
+    LayoutBounds bounds;
+    int routeLength = 0;
+    PhaseRepeatStats phaseRepeats;
+    unsigned int xSpacing = 0;
+    unsigned int ySpacing = 0;
+    double searchCost = 0.0;
+    std::map<int, fcngraph::position> nodePositions;
+    std::map<std::pair<unsigned int, unsigned int>, std::vector<fcngraph::position>> routes;
+    std::unordered_map<fcngraph::position, fcngraph::GridCell, fcngraph::PositionHash> gridCells;
+};
+
+bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
+{
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QObject::tr("Graph Render Options"));
+
+    auto *phaseCombo = new QComboBox(&dialog);
+    phaseCombo->addItem(QObject::tr("4-phase"), 4);
+    phaseCombo->addItem(QObject::tr("3-phase"), 3);
+    phaseCombo->setCurrentIndex(0);
+
+    auto *attemptSpin = new QSpinBox(&dialog);
+    attemptSpin->setRange(8, 300);
+    attemptSpin->setValue(settings.maxAttempts);
+    attemptSpin->setSingleStep(8);
+
+    auto *form = new QFormLayout(&dialog);
+    form->addRow(QObject::tr("Phase assignment:"), phaseCombo);
+    form->addRow(QObject::tr("Search attempts:"), attemptSpin);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    form->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    settings.phaseCount = phaseCombo->currentData().toInt();
+    settings.maxAttempts = attemptSpin->value();
+    return true;
+}
+
+std::vector<LayoutAttempt> buildLayoutAttempts()
+{
+    std::vector<LayoutAttempt> attempts;
+    for (unsigned int ySpacing = 2; ySpacing <= 12; ++ySpacing) {
+        for (unsigned int xSpacing = 2; xSpacing <= 12; ++xSpacing) {
+            attempts.push_back({xSpacing, ySpacing, 90.0});
+            if (xSpacing <= 8 && ySpacing <= 8) {
+                attempts.push_back({xSpacing, ySpacing, 150.0});
+            }
+            if (xSpacing >= 7 || ySpacing >= 7) {
+                attempts.push_back({xSpacing, ySpacing, 240.0});
+            }
+        }
+    }
+
+    std::sort(attempts.begin(), attempts.end(), [](const LayoutAttempt &lhs, const LayoutAttempt &rhs) {
+        const auto lhsArea = lhs.xSpacing * lhs.ySpacing;
+        const auto rhsArea = rhs.xSpacing * rhs.ySpacing;
+        if (lhsArea != rhsArea) {
+            return lhsArea < rhsArea;
+        }
+        if (lhs.searchCost != rhs.searchCost) {
+            return lhs.searchCost < rhs.searchCost;
+        }
+        if (lhs.ySpacing != rhs.ySpacing) {
+            return lhs.ySpacing < rhs.ySpacing;
+        }
+        return lhs.xSpacing < rhs.xSpacing;
+    });
+    return attempts;
+}
+
+std::optional<LayoutBounds> calculateGridBounds(
+    const std::unordered_map<fcngraph::position, fcngraph::GridCell, fcngraph::PositionHash> &gridCells)
+{
+    bool hasCell = false;
+    unsigned int minX = std::numeric_limits<unsigned int>::max();
+    unsigned int minY = std::numeric_limits<unsigned int>::max();
+    unsigned int maxX = 0;
+    unsigned int maxY = 0;
+
+    for (const auto &entry : gridCells) {
+        const auto &cell = entry.second;
+        if (cell.get_current_weight() == 0 && cell.getPhase() == -1) {
+            continue;
+        }
+        hasCell = true;
+        minX = std::min(minX, entry.first.first);
+        minY = std::min(minY, entry.first.second);
+        maxX = std::max(maxX, entry.first.first);
+        maxY = std::max(maxY, entry.first.second);
+    }
+
+    if (!hasCell) {
+        return std::nullopt;
+    }
+
+    LayoutBounds bounds;
+    bounds.minX = static_cast<int>(minX);
+    bounds.maxX = static_cast<int>(maxX);
+    bounds.minY = static_cast<int>(minY);
+    bounds.maxY = static_cast<int>(maxY);
+    bounds.width = bounds.maxX - bounds.minX + 1;
+    bounds.height = bounds.maxY - bounds.minY + 1;
+    bounds.area = bounds.width * bounds.height;
+    return bounds;
+}
+
+int totalRouteLength(const std::map<std::pair<unsigned int, unsigned int>, std::vector<fcngraph::position>> &routes)
+{
+    int length = 0;
+    for (const auto &route : routes) {
+        length += static_cast<int>(route.second.size());
+    }
+    return length;
+}
+
+PhaseRepeatStats calculatePhaseRepeatStats(
+    const std::map<std::pair<unsigned int, unsigned int>, std::vector<fcngraph::position>> &routes,
+    const std::unordered_map<fcngraph::position, fcngraph::GridCell, fcngraph::PositionHash> &gridCells)
+{
+    PhaseRepeatStats stats;
+    for (const auto &route : routes) {
+        int previousPhase = -1;
+        int currentRun = 1;
+        for (const auto &pos : route.second) {
+            auto cell = gridCells.find(pos);
+            const int phase = (cell != gridCells.end()) ? cell->second.getPhase() : -1;
+            if (phase >= 1 && phase == previousPhase) {
+                ++stats.repeatedAdjacent;
+                ++currentRun;
+                stats.maxRun = std::max(stats.maxRun, currentRun);
+            } else {
+                currentRun = 1;
+            }
+            previousPhase = phase;
+        }
+    }
+    return stats;
+}
+
+bool isBetterLayout(const LayoutSearchResult &candidate,
+                    const LayoutSearchResult &currentBest,
+                    int phaseCount)
+{
+    const int allowedRun = std::max(4, phaseCount * 2);
+    const bool candidateAllowed = candidate.phaseRepeats.maxRun <= allowedRun;
+    const bool currentAllowed = currentBest.phaseRepeats.maxRun <= allowedRun;
+
+    if (candidateAllowed != currentAllowed) {
+        return candidateAllowed;
+    }
+
+    if (candidateAllowed) {
+        return std::tie(candidate.bounds.area,
+                        candidate.routeLength,
+                        candidate.phaseRepeats.maxRun,
+                        candidate.phaseRepeats.repeatedAdjacent,
+                        candidate.bounds.width,
+                        candidate.bounds.height)
+             < std::tie(currentBest.bounds.area,
+                        currentBest.routeLength,
+                        currentBest.phaseRepeats.maxRun,
+                        currentBest.phaseRepeats.repeatedAdjacent,
+                        currentBest.bounds.width,
+                        currentBest.bounds.height);
+    }
+
+    const auto score = [allowedRun](const LayoutSearchResult &layout) {
+        const int excessiveRun = std::max(0, layout.phaseRepeats.maxRun - allowedRun);
+        return static_cast<long long>(layout.bounds.area)
+             + static_cast<long long>(excessiveRun) * 800
+             + static_cast<long long>(layout.phaseRepeats.repeatedAdjacent) * 2
+             + static_cast<long long>(layout.routeLength) / 4;
+    };
+
+    const auto candidateScore = score(candidate);
+    const auto currentScore = score(currentBest);
+    if (candidateScore != currentScore) {
+        return candidateScore < currentScore;
+    }
+
+    return std::tie(candidate.bounds.area,
+                    candidate.phaseRepeats.maxRun,
+                    candidate.phaseRepeats.repeatedAdjacent,
+                    candidate.routeLength,
+                    candidate.bounds.width,
+                    candidate.bounds.height)
+         < std::tie(currentBest.bounds.area,
+                    currentBest.phaseRepeats.maxRun,
+                    currentBest.phaseRepeats.repeatedAdjacent,
+                    currentBest.routeLength,
+                    currentBest.bounds.width,
+                    currentBest.bounds.height);
+}
+}
 
 
 
@@ -197,6 +433,14 @@ void VerilogHandler::handleGraphRender()
         QCoreApplication::processEvents();
     }
 
+    GraphRenderSettings settings;
+    if (!readGraphRenderSettings(mainWindow, settings)) {
+        QString message = "Graph render was cancelled.";
+        mainWindow->customStatusBar->addMessage(message);
+        QCoreApplication::processEvents();
+        return;
+    }
+
     std::string file = filePath.toStdString();
 
     fcngraph::Parse parse;
@@ -213,76 +457,131 @@ void VerilogHandler::handleGraphRender()
         parse.optimizeBufferNode();
         // parse.addLayerRedundancyNode();
         parse.caculateSameLayerNodeRoutePair();
-        GridChessboard chessboard;
-        bool isRegularClockScheme = false;
-        Astar astar(chessboard, isRegularClockScheme);
-        
-        // 创建 CircuitGraph 对象并生成图形
-        CircuitGraph graph(parse, file, chessboard, astar);
 
-        graph.setFitnessCallback([this](std::string origin_message){
-            QString message  = QString::fromStdString(origin_message);
-            mainWindow->customStatusBar->addMessage(message);
-            QCoreApplication::processEvents();
-        });
-
-        graph.processAndGenerateGraph(true, true, true, true);
-        graph.sortNodesByYThenXCoordinate();
-
-        if(graph.placeAndRoute()){
-            QString message = "Place and route success!";
-            mainWindow->customStatusBar->addMessage(message);
-
-        } else {
-            QString message = "Place and route failed!";
-            mainWindow->customStatusBar->addMessage(message);
-            return;
-        }
+        emit operationStarted(tr("Graph placement and routing"),
+                              tr("Preparing compact layout search for %1-phase assignment")
+                                  .arg(settings.phaseCount));
+        QCoreApplication::processEvents();
 
         //测试时间
         QElapsedTimer timer; 
         timer.start();  // 开始计时
-        bool isSuccess = graph.assignPhases();
-        double elapsedSeconds = timer.elapsed() / 1000.0;
-        auto layer = parse.getmax_layer();
 
-        // 计算布局面积你
-        int minX = std::numeric_limits<int>::max();
-        int maxX = 0;
-        int minY = std::numeric_limits<int>::max();
-        int maxY = 0;
+        std::optional<LayoutSearchResult> bestLayout;
+        std::string lastFailure;
+        const auto attempts = buildLayoutAttempts();
+        const int attemptLimit = std::min(settings.maxAttempts, static_cast<int>(attempts.size()));
 
-        for (auto it = chessboard.getGridMap().begin(); it != chessboard.getGridMap().end(); ++it) {
-            auto pos = it->first;
-            auto x = pos.first;
-            auto y = pos.second;
+        for (int attemptIndex = 0; attemptIndex < attemptLimit; ++attemptIndex) {
+            const auto &attempt = attempts[attemptIndex];
+            GridChessboard chessboard;
+            Astar astar(chessboard, false, attempt.searchCost);
+            CircuitGraph graph(parse, file, chessboard, astar);
 
-            // 更新最小和最大坐标值
-            if (x <= minX) minX = x;
-            if (x >= maxX) maxX = x;
-            if (y <= minY) minY = y;
-            if (y >= maxY) maxY = y;
+            {
+                QString progress = QString("Candidate %1/%2: spacing=(%3,%4), search cost=%5, phase=%6")
+                    .arg(attemptIndex + 1)
+                    .arg(attemptLimit)
+                    .arg(attempt.xSpacing)
+                    .arg(attempt.ySpacing)
+                    .arg(attempt.searchCost)
+                    .arg(settings.phaseCount);
+                if (bestLayout.has_value()) {
+                    progress += QString("; best=%1x%2 area=%3 route=%4 max repeat=%5")
+                                    .arg(bestLayout->bounds.width)
+                                    .arg(bestLayout->bounds.height)
+                                    .arg(bestLayout->bounds.area)
+                                    .arg(bestLayout->routeLength)
+                                    .arg(bestLayout->phaseRepeats.maxRun);
+                }
+                emit operationProgress(progress, attemptIndex + 1, attemptLimit);
+                QCoreApplication::processEvents();
+            }
+
+            try {
+                graph.processAndGenerateGraph(attemptIndex == 0, true, true, true);
+                graph.sortNodesByLayeredGrid(attempt.xSpacing, attempt.ySpacing);
+
+                if (!graph.placeAndRoute()) {
+                    lastFailure = "route failed";
+                    continue;
+                }
+
+                if (!graph.assignPhases(settings.phaseCount)) {
+                    lastFailure = "phase assignment failed";
+                    continue;
+                }
+
+                const auto bounds = calculateGridBounds(chessboard.getGridMap());
+                if (!bounds.has_value()) {
+                    lastFailure = "empty layout";
+                    continue;
+                }
+
+                LayoutSearchResult result;
+                result.bounds = bounds.value();
+                result.routeLength = totalRouteLength(graph.routes);
+                result.phaseRepeats = calculatePhaseRepeatStats(graph.routes, chessboard.getGridMap());
+                result.xSpacing = attempt.xSpacing;
+                result.ySpacing = attempt.ySpacing;
+                result.searchCost = attempt.searchCost;
+                result.nodePositions = graph.nodeIndex_pos;
+                result.routes = graph.routes;
+                result.gridCells = chessboard.getGridMap();
+
+                const bool isBetter = !bestLayout.has_value()
+                    || isBetterLayout(result, bestLayout.value(), settings.phaseCount);
+                if (isBetter) {
+                    bestLayout = std::move(result);
+                    QString message = QString("Candidate %1/%2 success: %3x%4=%5, phase=%6, spacing=(%7,%8), max repeat=%9")
+                        .arg(attemptIndex + 1)
+                        .arg(attemptLimit)
+                        .arg(bestLayout->bounds.width)
+                        .arg(bestLayout->bounds.height)
+                        .arg(bestLayout->bounds.area)
+                        .arg(settings.phaseCount)
+                        .arg(bestLayout->xSpacing)
+                        .arg(bestLayout->ySpacing)
+                        .arg(bestLayout->phaseRepeats.maxRun);
+                    emit operationProgress(message, attemptIndex + 1, attemptLimit);
+                    QCoreApplication::processEvents();
+                }
+            } catch (const std::exception &ex) {
+                lastFailure = ex.what();
+                continue;
+            }
         }
-        int width = maxX - minX - 1; 
-        int height = maxY - minY ;
+
+        if (!bestLayout.has_value()) {
+            QString message = QString("Place, route, and phase assignment failed after %1 attempts. Last failure: %2")
+                .arg(attemptLimit)
+                .arg(QString::fromStdString(lastFailure));
+            emit operationFailed(message);
+            QCoreApplication::processEvents();
+            return;
+        }
+
+        double elapsedSeconds = timer.elapsed() / 1000.0;
+        int width = bestLayout->bounds.width;
+        int height = bestLayout->bounds.height;
 
         QString elapsedStr = filePath + " \& " + QString::number(gateNum) +
                                         " \& " + QString::number(inputNum) + " / " + QString::number(outputNum) +
                                         " \& " + QString::number(wireNum) + 
                                         " \& " + QString::number(width)+ " $\\times$ " + QString::number(height) + " = " + QString::number(width*height) +
+                                        " \& phase " + QString::number(settings.phaseCount) +
                                         " \& " + QString::number(elapsedSeconds, 'f', 1) ;
         //测试时间
-        // graph.printLaTex();
-        const bool phasesOk = isSuccess;
-        if(phasesOk){
-            
-            QString message =  "Graph layout success! " + elapsedStr + " print LaTeX success!";
-            mainWindow->customStatusBar->addMessage(message);
 
-        }else{
-            QString message = "相位分配失败";
-            mainWindow->customStatusBar->addMessage(message);
-        }
+        QString message =  "Graph layout success! " + elapsedStr +
+                           QString(" ; best spacing=(%1,%2), route length=%3")
+                               .arg(bestLayout->xSpacing)
+                               .arg(bestLayout->ySpacing)
+                               .arg(bestLayout->routeLength) +
+                           QString(" ; max phase repeat=%1")
+                               .arg(bestLayout->phaseRepeats.maxRun);
+        emit operationFinished(message);
+        QCoreApplication::processEvents();
 
         //映射
         mainWindow->beginSceneBatchUpdate();
@@ -290,14 +589,14 @@ void VerilogHandler::handleGraphRender()
         mainWindow->slotAddLayer("third layer");
 
         std::map<unsigned int, position> node_pos;
-        for (auto& pair : graph.nodeIndex_pos) {  
+        for (auto& pair : bestLayout->nodePositions) {
             node_pos[static_cast<unsigned int>(pair.first)] = pair.second;  
         } 
         
-        std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> routes = graph.routes;
-        std::unordered_map<position, GridCell, PositionHash> gridCells = chessboard.gridMap;
+        std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> routes = bestLayout->routes;
+        std::unordered_map<position, GridCell, PositionHash> gridCells = bestLayout->gridCells;
 
-        unsigned int scale;
+        unsigned int scale = 0;
         if(!node_pos.empty()) {
             position max = node_pos.begin()->second;
             for(auto &v : node_pos) {
@@ -308,6 +607,8 @@ void VerilogHandler::handleGraphRender()
                 }
             }
             scale = max.second + 1;
+        } else {
+            throw std::runtime_error("No node positions generated");
         }
 
         std::map<unsigned int, position> node_pos_trans;
@@ -316,6 +617,7 @@ void VerilogHandler::handleGraphRender()
         
         for(auto &v : node_pos) {
             node_pos_trans[v.first] = coordtrans(v.second, scale);
+            pos_trans.push_back(std::make_pair(v.second, node_pos_trans[v.first]));
         }
         
         for(auto &v : routes) {
@@ -329,28 +631,25 @@ void VerilogHandler::handleGraphRender()
         }
 
         std::map<position, int> pos_phase;
-        if (phasesOk) {
-            for(auto &v : gridCells) {
-                position trans_pos;
-                for(auto &pair : pos_trans) {
-                    if(v.first == pair.first) {
-                        trans_pos = pair.second;
-                        pos_phase[trans_pos] = v.second.getPhase()-1;
-                        break;
-                    }
+        for(auto &v : gridCells) {
+            if (v.second.getPhase() < 1) {
+                continue;
+            }
+            for(auto &pair : pos_trans) {
+                if(v.first == pair.first) {
+                    pos_phase[pair.second] = v.second.getPhase()-1;
+                    break;
                 }
             }
         }
 
         mappingCellItem(node_pos_trans, routes_trans, parse, pos_phase);
-        if (phasesOk) {
-            putClock(pos_phase);
-        }
+        putClock(pos_phase);
         mainWindow->endSceneBatchUpdate(true);
     } catch (const std::exception &ex) {
         mainWindow->endSceneBatchUpdate(false);
         QString message = QString("布局布线失败: %1").arg(ex.what());
-        mainWindow->customStatusBar->addMessage(message);
+        emit operationFailed(message);
         QCoreApplication::processEvents();
         return;
     }
@@ -1126,10 +1425,10 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
 
 position VerilogHandler::coordtrans(const position& pos, unsigned int scale)
 {
+    (void)scale;
     unsigned int x = pos.first;
     unsigned int y = pos.second;
-    unsigned int ytrans = scale - y;
-    return {x, ytrans};
+    return {x, y};
 }
 
 void VerilogHandler::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position, int>& _pos_phase, QString _name)

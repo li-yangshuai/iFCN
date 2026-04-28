@@ -1,7 +1,7 @@
 #include "ui/mainwindow/MainWindow.h"
 #include <QCoreApplication>
 
-void MainWindow::printToStatusBar(QString &message)
+void MainWindow::printToStatusBar(const QString &message)
 {
     customStatusBar->addMessage(message);
     QCoreApplication::processEvents();

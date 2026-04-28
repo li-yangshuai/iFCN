@@ -1,201 +1,168 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326123426428.png" width="150"/>
-</p>
+# iFCN
 
-<h1 align="center">iFCN: Automated Design Platform for Molecular FCN Circuits</h1>
+iFCN is a Qt-based design and analysis tool for field-coupled nanocomputing circuits. It supports manual cell-level editing, Verilog-to-layout placement and routing, QCA file import/export, simulation, and energy analysis.
 
-<p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/C++-17-blue.svg" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Framework-Qt-green.svg" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Python-3.8+-blue.svg" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Developed%20By-HFUT%20iFCN%20Lab-orange" /></a>
-</p>
+This project is under active development. The current documentation focuses on building and using the software from source.
 
----
+## Main Features
 
-*iFCN* is an automated design platform for **Molecular Field-Coupled Nanocomputing (MolFCN)** circuits, developed by the **iFCN** Lab at the School of Microelectronics, Hefei University of Technology (HFUT), China.
+- Manual cell-level layout editing with clock phase visualization
+- Verilog parsing and automated placement/routing
+- Compact graph-based placement/routing with selectable 3-phase or 4-phase assignment
+- Gate-level layout mapping from `.ifcn` examples
+- Bistable and coherence simulation
+- Energy analysis reports and energy distribution images
+- Export to `.qca`, `.rst`, layout image, and related analysis files
 
-The platform adopts a hybrid architecture that integrates **C++**, **Qt**, and **Python**, supporting both **manual** and **automatic** design flows. It enables researchers and engineers to construct, visualize, and analyze MolFCN circuits through a **clock-aware and layout-driven workflow**.
+## Requirements
 
----
+Recommended environment:
 
-# 👨‍💻 Author Info(Since 2018)
+- Ubuntu 20.04 or newer
+- CMake
+- C++17 compiler
+- Qt 5
+- Boost
+- Graphviz development libraries
+- Python 3
+- LaTeX tools, if you need LaTeX/TikZ export
 
-| Name               | Title / Affiliation                            | Contribution                                                                 | Email                        |
-|--------------------|--------------------------------------------------|------------------------------------------------------------------------------|------------------------------|
-|**Yangshuai Li**    |PhD, HFUT| Designed automated P&R algorithms; Built the UI framework and toolkits|2023010123@mail.hfut.edu.cn
-| **Prof. Guangjun Xie** | Professor, HFUT     | Founder of iFCN Lab, academic advisor; guidance on FCN design methodology | gjxie8005@hfut.edu.cn       |
-| **Dr. Fei Peng**   | Lecturer, HBFU              | Initiator of iFCN-EDA; logic synthesis; P&R algorithm; and simulation engine | fpeng1985@126.com           |
-
-**Current Graduate Students**  
-Xiansheng Tong, Rongjie Zhu
-
-
-**Alumni Contributors**  
-Zhengjie Xiao, Dong Xu, Rui Kuang, Gaisheng Li, Bing Zhang, Qian Han
-
-
-
----
-
-
-# 🌱 MolQCA Fundamentals
-
-Molecular Field-Coupled Nanocomputing (MolFCN) is a promising post-CMOS computing paradigm with ultra-low power consumption and high integration density. Molecular QCA (MolQCA) forms its physical foundation.
-
-| ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141423048.png) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326141607113.png) |
-|:-------------------------------------------------------------------------------------------:|:-------------------------------------------------------------------------------------------:|
-| 🧱 MolQCA cell types and clocking schemes                                                   | 📐 Standard cell library and corresponding layouts                                          |
-
-<!-- <p align="center"><b>Figure 1:</b> Left: MolQCA cell types and clocking schemes. Right: Standard cell library and corresponding layouts.</p> -->
-
-
----
-
-
-#  🎮 iFCN GUI Showcase
-| ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(a).png) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/Fig.12(b).png) |
-|:-----------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------:|
-| 🔹 Manual Layout Mode                                                              | 🔸Automatic Layout Mode                                                           |
-
-### Manual Circuit Design
-| ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate1.gif) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate2.gif) |
-|:-----------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------:|
-| 🔹 Basic circuit design and simulation | 🔸Support Clocking schemes                                         |
-
-
-
-
-
-### 🔥 Automated Placement & Routing in Two Scenarios
-
-To meet different design needs, iFCN-EDA supports two distinct placement and routing strategies:
-
-| Scenario                    | Clock Scheme   | Area         | Routing Speed | Suitable For                               |
-|-----------------------------|----------------|--------------|---------------|--------------------------------------------|
-| 🔹 **Regular Clocking**     | Structured     |  Smaller    |  Moderate    | Small-scale circuits with simple topology  |
-| 🔸 **Random Clocking**      | Irregular      |  Larger     |  Faster       | Medium-to-large and complex circuit designs |
-
-
-| ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr1.gif) | ![](https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/pr2.gif) |
-|:-----------------------------------------------------------------------------:|:-----------------------------------------------------------------------------:|
-| 🔹 Regular Clocking: Small Area, Slower Routing                               | 🔸 Random Clocking: Larger Area, Faster Routing                              |
-
-<!-- <p align="center"><b>Figure 3:</b> Two scenarios of placement & routing algorithms.</p> -->
-
-
-### Compatible with QCADesigner 
-iFCN-EDA is developed to support **parallel usage with QCADesigner**, enabling seamless comparison, co-validation, and integration of layout and simulation results.
-<div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/operate5.gif" width="700"/>
-  <p><b>Figure 4:</b> It is also compatible with QCADesigner.</p>
-</div>
-
-
-
----
-
-# 🛠️ Workflow 
-
-### 🕹️Design Flow
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/framework.png" width="400"/>
-</p>
-<p align="center"><b>Figure 5:</b> <i>iFCN</i> framework.</p>
-
-
-
-- **Manual Flow**: Integrated with *QCADesigner* for `.qca` file import and editing  
-- **Automatic Flow**: Converts RTL-level circuits to physical layouts  
-- **Simulation & Energy Analysis**: Supports bistable/coherence vector models and real-time energy visualization  
-- **Output Support**: `.qca`, `.rst`, `.tex` formats for downstream use
-
-
-
-### 🔥 Core Technologies
-
-*iFCN* integrates several advanced techniques:
-
-- RTL optimization: Node layering, inverter hiding, redundant node insertion
-- Space management: Morton-code based **quadtree**
-- Routing: Enhanced **multi-path A\*** algorithm
-- P&R framework: Two-level hybrid using **Genetic Algorithm + A\***
-- Placement: **Graph-drawing-based**, adaptive to topology and clock
-- Adaptive mapping: Converts logical layout to **cell-level design**
-
-<div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135020426.png" width="800"/>
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/20250326135035291.png" width="800"/>
-  <p><b>Figure 7:</b> End-to-end design flow of *iFCN* from Verilog to simulation analysis.</p>
-</div>
-
-
-### 📊 Simulation and Energy Analysis
-
-*iFCN* includes a modular C++ simulation engine supporting both **bistable** and **coherence vector** models. Read more in our [published paper](https://ietresearch.onlinelibrary.wiley.com/doi/full/10.1049/el.2019.1861).
-
-<div align="center">
-  <img src="https://raw.githubusercontent.com/li-yangshuai/iFCN/master/image/simulation.png" width="500"/>
-  <p><b>Figure 8:</b> Simulation GUI with waveform view, logic trace, and clock visualization.</p>
-</div>
-
----
-
-# 📦 Installation Guide
-
-### Environment
-
-> ⚠️ This project is under active development and does not yet have a release version.
-
-- OS: Ubuntu 20.04 (recommended under WSL2 on Windows)
-- Requires: Qt (5 or 6), LaTeX, C++17, and basic Linux dependencies
-
-### Required Packages
+Install common dependencies:
 
 ```bash
-sudo apt update && sudo apt upgrade -y
-
-# Essential tools
-sudo apt install -y build-essential cmake git wget curl unzip
-
-# Qt environment
-sudo apt install -y qt5-default qtcreator
-
-# LaTeX
-sudo apt install -y texlive-full
-
-# C++, boost, graph, Python
-sudo apt install -y git g++ cmake pkg-config libboost-all-dev graphviz python3 python3-dev libreadline-dev 
+sudo apt update
+sudo apt install -y build-essential cmake git pkg-config \
+    qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools \
+    libboost-all-dev graphviz libgraphviz-dev \
+    python3 python3-dev libreadline-dev
 ```
 
-### Compile and Run
+Optional LaTeX support:
+
+```bash
+sudo apt install -y texlive-full
+```
+
+## Build
 
 ```bash
 git clone --recursive https://github.com/li-yangshuai/iFCN.git
 cd iFCN
-mkdir build && cd build
-cmake ..
-make
-./fcnx_gui
+mkdir -p build
+cmake -S . -B build
+cmake --build build -j
 ```
 
+Run the GUI:
 
-# 📖 Citation
-**If you think our work is useful, please kindly ⭐️ star this repository or cite our work in your research.
-📬 For any software-related questions or issues, we invite to contact us.**
+```bash
+./build/fcnx_gui
+```
 
-📌 Layout and Routing Algorithms & Framework:
+## Basic Usage
 
-- F. Peng, Y. Zhang, R. Kuang and G. Xie,"Spars: A Full Flow Quantum-Dot Cellular Automata Circuit Design Tool,"IEEE Transactions on Circuits and Systems II: Express Briefs, vol. 68, no. 4, pp. 1233–1237, 2021. [DOI:10.1109/TCSII.2020.3039532](10.1109/TCSII.2020.3039532)
+### Open or Create a Layout
 
+1. Start `fcnx_gui`.
+2. Use `File -> Open` to load an existing `.qca` or supported project file.
+3. Use the left cell toolbox to insert input, output, normal, fixed, crossover, and via cells.
+4. Use the clock selector to assign clock phases.
+5. Use the layer controls to add, delete, and switch active cell layers.
 
-- Y. Li, G. Xie, Q. Han, X. Li, G. Li, B. Zhang, and F. Peng, "Field-coupled nanocomputing placement and routing with genetic and A* algorithms,"IEEE Transactions on Circuits and Systems I: Regular Papers, vol. 69, no. 11, pp. 4619–4631, 2022. [DOI:10.1109/TCSI.2022.3197450](10.1109/TCSI.2022.3197450)
+### Run Graph-Based Placement and Routing
 
-- Y. Li, F. Peng, X. Tong, R. Zhu, Q. Han and G. Xie, "iFCN: An Automated RTL-to-Device Framework for Molecular Field-Coupled Nanocomputing Circuits," in IEEE Transactions on Circuits and Systems I: Regular Papers, 2025. [DOI: 10.1109/TCSI.2025.3599115](https://ieeexplore.ieee.org/document/11130445)
+1. Click `Graph P&R` in the `Algorithms` toolbar.
+2. Select a Verilog file, for example:
 
-- 李杨帅 , 彭斐 , 韩倩 , 李小帅 , 解光军. 一种针对QCA电路自动布局布线的混合策略研究[J]. 电子学报, 2023, 51(3): 666-674. https://doi.org/10.12263/DZXB.20211212
+```text
+tests/benchmarks_f/IWLS93/parity.v
+```
 
-📌 Simulation Engine:
+3. In the options dialog, choose:
+   - `4-phase` for the default clocking flow
+   - `3-phase` for 3-phase phase assignment
+   - Search attempts for compact layout exploration
+4. The progress area shows the current layout candidate, spacing, routing search cost, and best area found so far.
+5. When the run succeeds, the generated layout is inserted into the main scene.
 
-- F. Peng, Z. Xiao, D. Xu, J. Huang, and G. Xie, "Automatic object model generation for nanoelectronics using C++ meta programming,"Electronics Letters, vol. 55, pp. 1286–1288, 2019. [DOI:https://doi.org/10.1049/el.2019.1861](https://doi.org/10.1049/el.2019.1861).
+### Run Gate-Level Mapping
+
+1. Click `Gate Mapping`.
+2. Select a gate-level `.ifcn` file, for example:
+
+```text
+tests/cell_level_examples/GoodiFCN/xor2_gate_level_pr.ifcn
+```
+
+3. The circuit is mapped into cell-level layout form in the scene.
+
+### Run Simulation
+
+Use the `Simulation` menu:
+
+- `Start Bistable Simulation`
+- `Start Coherence Simulation`
+- selective simulation options when vector-table input is needed
+
+Simulation progress is shown in the dynamic progress area. The UI remains usable while simulation tasks run.
+
+### Run Energy Analysis
+
+1. Open or map a circuit layout.
+2. Use `Simulation -> Energy Analysis`.
+3. The software writes an energy report and, when data is available, an energy distribution image.
+4. Progress and summary information are shown in the dynamic progress area instead of only printing to the terminal.
+
+Typical generated files are placed next to the source circuit:
+
+```text
+*_energy.txt
+*_energy.rst
+*_energy_distribution.png
+```
+
+## Example Test Circuits
+
+Useful files for quick checks:
+
+```text
+tests/benchmarks_f/IWLS93/parity.v
+tests/cell_level_examples/GoodiFCN/xor2_gate_level_pr.ifcn
+tests/cell_level_examples/GoodiFCN/parity_gate_level_pr.ifcn
+```
+
+## Output Files
+
+iFCN may generate:
+
+- `.qca`: QCADesigner-compatible layout
+- `.rst`: simulation or analysis result
+- `.txt`: text analysis report
+- `.png`: layout or energy distribution image
+- `.svg`: graph/layout visualization
+- `.tex`: optional TikZ/LaTeX output
+
+Generated files may appear in the same directory as the input circuit or under the build/output location, depending on the workflow.
+
+## Troubleshooting
+
+If CMake cannot find Qt, install Qt development packages and rerun CMake from a clean build directory.
+
+If Graphviz headers or libraries are missing, install:
+
+```bash
+sudo apt install -y graphviz libgraphviz-dev pkg-config
+```
+
+If a placement/routing run fails, increase the search attempts in the `Graph P&R` options dialog. Large or dense circuits may need more candidate layouts.
+
+If phase assignment fails, try the other phase mode or increase layout search attempts. More spacing may give routing and phase assignment more freedom.
+
+## Citation
+
+If you use iFCN in academic work, please cite the related publications:
+
+- F. Peng, Y. Zhang, R. Kuang and G. Xie, "Spars: A Full Flow Quantum-Dot Cellular Automata Circuit Design Tool," IEEE TCAS-II, 2021.
+- Y. Li, G. Xie, Q. Han, X. Li, G. Li, B. Zhang, and F. Peng, "Field-coupled nanocomputing placement and routing with genetic and A* algorithms," IEEE TCAS-I, 2022.
+- Y. Li, F. Peng, X. Tong, R. Zhu, Q. Han and G. Xie, "iFCN: An Automated RTL-to-Device Framework for Molecular Field-Coupled Nanocomputing Circuits," IEEE TCAS-I, 2025.
+

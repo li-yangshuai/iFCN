@@ -87,11 +87,52 @@ namespace simon {
         std::vector<double> data;
     };
 
+    struct EnergyCycleDissipation {
+        int cycle_index = 0;
+        double bath_eV = 0.0;
+        double clock_eV = 0.0;
+        double io_eV = 0.0;
+        double error_eV = 0.0;
+        double bath_clock_eV = 0.0;
+    };
+
+    struct EnergyCellDissipation {
+        std::string name;
+        double x = 0.0;
+        double y = 0.0;
+        int layer_index = 0;
+        int clock = 0;
+        FCNCellFunction function = FCNCellFunction::NORMAL;
+        double bath_eV = 0.0;
+        double clock_eV = 0.0;
+        double io_eV = 0.0;
+        double error_eV = 0.0;
+        double bath_clock_eV = 0.0;
+    };
+
+    struct EnergyAnalysisSummary {
+        bool available = false;
+        int cycle_count = 0;
+        double total_bath_eV = 0.0;
+        double total_clock_eV = 0.0;
+        double total_io_eV = 0.0;
+        double total_error_eV = 0.0;
+        double total_bath_clock_eV = 0.0;
+        double average_bath_eV = 0.0;
+        double average_clock_eV = 0.0;
+        double average_io_eV = 0.0;
+        double average_error_eV = 0.0;
+        double average_bath_clock_eV = 0.0;
+        std::vector<EnergyCycleDissipation> cycles;
+        std::vector<EnergyCellDissipation> cells;
+    };
+
     class Result {
     public:
         std::vector<Trace> inputs;
         std::vector<Trace> outputs;
         std::vector<Trace> clocks;
+        EnergyAnalysisSummary energy_analysis;
 
         bool empty() const {
             return inputs.empty() && outputs.empty() && clocks.empty();
@@ -176,6 +217,73 @@ namespace simon {
             ofs << "[TYPE:BUS_LAYOUT]\n";
             ofs << "[#TYPE:BUS_LAYOUT]\n";
             ofs << "[#SIMULATION_OUTPUT]" << std::endl;
+        }
+
+        void write_energy_analysis_file(const std::string &ofname) const {
+            std::ofstream ofs(ofname);
+            if (!ofs) {
+                return;
+            }
+
+            auto function_name = [](FCNCellFunction function) -> const char* {
+                switch (function) {
+                    case FCNCellFunction::INPUT:
+                        return "INPUT";
+                    case FCNCellFunction::OUTPUT:
+                        return "OUTPUT";
+                    case FCNCellFunction::FIXED:
+                        return "FIXED";
+                    case FCNCellFunction::LAST_FUNCTION:
+                        return "LAST_FUNCTION";
+                    case FCNCellFunction::NORMAL:
+                    default:
+                        return "NORMAL";
+                }
+            };
+
+            ofs << "[ENERGY_ANALYSIS]\n";
+            ofs << "available=" << (energy_analysis.available ? "TRUE" : "FALSE") << "\n";
+            ofs << "cycle_count=" << energy_analysis.cycle_count << "\n";
+            ofs << "total_bath_eV=" << energy_analysis.total_bath_eV << "\n";
+            ofs << "total_clock_eV=" << energy_analysis.total_clock_eV << "\n";
+            ofs << "total_io_eV=" << energy_analysis.total_io_eV << "\n";
+            ofs << "total_error_eV=" << energy_analysis.total_error_eV << "\n";
+            ofs << "total_bath_clock_eV=" << energy_analysis.total_bath_clock_eV << "\n";
+            ofs << "average_bath_eV=" << energy_analysis.average_bath_eV << "\n";
+            ofs << "average_clock_eV=" << energy_analysis.average_clock_eV << "\n";
+            ofs << "average_io_eV=" << energy_analysis.average_io_eV << "\n";
+            ofs << "average_error_eV=" << energy_analysis.average_error_eV << "\n";
+            ofs << "average_bath_clock_eV=" << energy_analysis.average_bath_clock_eV << "\n";
+
+            ofs << "[PER_CYCLE]\n";
+            ofs << "cycle,E_bath_eV,E_clk_eV,E_io_eV,E_error_eV,E_bath_clk_eV\n";
+            for (const auto &cycle : energy_analysis.cycles) {
+                ofs << cycle.cycle_index << ","
+                    << cycle.bath_eV << ","
+                    << cycle.clock_eV << ","
+                    << cycle.io_eV << ","
+                    << cycle.error_eV << ","
+                    << cycle.bath_clock_eV << "\n";
+            }
+            ofs << "[#PER_CYCLE]\n";
+
+            ofs << "[PER_CELL]\n";
+            ofs << "name,layer,clock,x,y,function,E_bath_eV,E_clk_eV,E_io_eV,E_error_eV,E_bath_clk_eV\n";
+            for (const auto &cell : energy_analysis.cells) {
+                ofs << cell.name << ","
+                    << cell.layer_index << ","
+                    << cell.clock << ","
+                    << cell.x << ","
+                    << cell.y << ","
+                    << function_name(cell.function) << ","
+                    << cell.bath_eV << ","
+                    << cell.clock_eV << ","
+                    << cell.io_eV << ","
+                    << cell.error_eV << ","
+                    << cell.bath_clock_eV << "\n";
+            }
+            ofs << "[#PER_CELL]\n";
+            ofs << "[#ENERGY_ANALYSIS]" << std::endl;
         }
     };
 

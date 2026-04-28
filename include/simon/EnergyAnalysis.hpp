@@ -358,9 +358,7 @@ namespace simon
                 }
             }
 
-            void after_iterations(const QCADesign &design, const Result &result) const {
-                (void) result;
-                
+            void after_iterations(const QCADesign &design, Result &result) const {
                 //print energy
                 int clock_cycles = static_cast<int>(std::ceil(eoption.duration/eoption.clock_period));
 
@@ -372,13 +370,15 @@ namespace simon
                 std::vector<double> E_io_total(idx, 0.0);
                 //std::vector<double> E_error(idx, 0.0);    //sum of E_bath, E_clk, E_io = Error
                 
-                for(auto &layer : const_cast<QCADesign&>(design)) {
+                result.energy_analysis = EnergyAnalysisSummary{};
+                result.energy_analysis.available = true;
+
+                for(auto &layer : design) {
                     for(auto &cell : layer) {
 
                         int k_diss_idx = diss_idx(cell);
                         if(simon::timezone(cell) == 0){
                             --k_diss_idx;
-                            diss_idx(cell) = k_diss_idx;
                         }
 
                         if(max_idx < k_diss_idx)
@@ -407,10 +407,23 @@ namespace simon
                 double E_io_all    = 0;
                 double E_error_all = 0;
                 for (idx = 2; idx < max_idx; ++idx) {
-                    E_bath_all  += E_bath_total[idx] / QCHARGE;
-                    E_clk_all   += E_clk_total[idx] / QCHARGE;
-                    E_io_all    += E_io_total[idx] / QCHARGE;
-                    E_error_all += E_error_total[idx] / QCHARGE;
+                    const double E_bath_eV = E_bath_total[idx] / QCHARGE;
+                    const double E_clk_eV = E_clk_total[idx] / QCHARGE;
+                    const double E_io_eV = E_io_total[idx] / QCHARGE;
+                    const double E_error_eV = E_error_total[idx] / QCHARGE;
+
+                    E_bath_all  += E_bath_eV;
+                    E_clk_all   += E_clk_eV;
+                    E_io_all    += E_io_eV;
+                    E_error_all += E_error_eV;
+                    EnergyCycleDissipation cycle;
+                    cycle.cycle_index = idx;
+                    cycle.bath_eV = E_bath_eV;
+                    cycle.clock_eV = E_clk_eV;
+                    cycle.io_eV = E_io_eV;
+                    cycle.error_eV = E_error_eV;
+                    cycle.bath_clock_eV = E_bath_eV + E_clk_eV;
+                    result.energy_analysis.cycles.push_back(cycle);
                     //std::cout << "idx " << idx << "\tE_error : " << E_error[idx]/QCHARGE << "eV" << std::endl;
                     //std::cout << "idx " << idx << std::endl;
                     //std::cout << "E_bath_total[idx] / QCHARGE " << E_bath_total[idx] << "/" << QCHARGE << std::endl;
@@ -418,19 +431,47 @@ namespace simon
                     //std::cout << "E_error_total[idx] / QCHARGE " << E_error_total[idx] << "/" << QCHARGE << std::endl;
                 } 
 
-                std::cout << "\nTotal energy dissipation " << std::endl;
-                std::cout << "E_bath_all : "               << E_bath_all             << "eV" << std::endl;
-                std::cout << "E_clk_all : "                << E_clk_all              << "eV" << std::endl;
-                std::cout << "E_io_all : "                 << E_io_all               << "eV" << std::endl;
-                std::cout << "E_error_all : "              << E_error_all            << "eV" << std::endl;
-                std::cout << "E_bath_all+E_clk_all : "     << E_bath_all + E_clk_all << "eV" << std::endl;
+                result.energy_analysis.cycle_count = std::max(0, max_idx - 2);
+                result.energy_analysis.total_bath_eV = E_bath_all;
+                result.energy_analysis.total_clock_eV = E_clk_all;
+                result.energy_analysis.total_io_eV = E_io_all;
+                result.energy_analysis.total_error_eV = E_error_all;
+                result.energy_analysis.total_bath_clock_eV = E_bath_all + E_clk_all;
 
-                std::cout << "\nAverage energy dissipation per cycle " << std::endl;
-                std::cout << "E_bath_all/n : "                         << E_bath_all / (max_idx - 2.0)                << "eV" << std::endl;
-                std::cout << "E_clk_all/n : "                          << E_clk_all / (max_idx - 2.0)                 << "eV" << std::endl;
-                std::cout << "E_io_all/n : "                           << E_io_all / (max_idx - 2.0)                  << "eV" << std::endl;
-                std::cout << "E_error_all/n : "                        << E_error_all / (max_idx - 2.0)               << "eV" << std::endl;
-                std::cout << "E_bath_all+E_clk_all/n : "               << (E_bath_all + E_clk_all) / (max_idx - 2.0)  << "eV" << std::endl;
+                const double cycle_count = static_cast<double>(result.energy_analysis.cycle_count);
+                if (cycle_count > 0.0) {
+                    result.energy_analysis.average_bath_eV = E_bath_all / cycle_count;
+                    result.energy_analysis.average_clock_eV = E_clk_all / cycle_count;
+                    result.energy_analysis.average_io_eV = E_io_all / cycle_count;
+                    result.energy_analysis.average_error_eV = E_error_all / cycle_count;
+                    result.energy_analysis.average_bath_clock_eV = (E_bath_all + E_clk_all) / cycle_count;
+                }
+
+                for(auto &layer : design) {
+                    for(auto &cell : layer) {
+                        EnergyCellDissipation cell_energy;
+                        cell_energy.name = name(cell);
+                        cell_energy.x = x(cell);
+                        cell_energy.y = y(cell);
+                        cell_energy.layer_index = layer_index(cell);
+                        cell_energy.clock = timezone(cell);
+                        cell_energy.function = function(cell);
+
+                        int k_diss_idx = diss_idx(cell);
+                        if(simon::timezone(cell) == 0){
+                            --k_diss_idx;
+                        }
+
+                        for (idx = 2; idx < k_diss_idx; ++idx) {
+                            cell_energy.bath_eV += int_diss_bath(cell).at(idx) / QCHARGE;
+                            cell_energy.clock_eV += int_diss_clk(cell).at(idx) / QCHARGE;
+                            cell_energy.io_eV += int_diss_io(cell).at(idx) / QCHARGE;
+                        }
+                        cell_energy.error_eV = cell_energy.bath_eV + cell_energy.clock_eV + cell_energy.io_eV;
+                        cell_energy.bath_clock_eV = cell_energy.bath_eV + cell_energy.clock_eV;
+                        result.energy_analysis.cells.push_back(cell_energy);
+                    }
+                }
 
             }
 

@@ -34,12 +34,16 @@ std::vector<position> GridChessboard::getPosssibleDirection(const position& pos,
         unsigned int target_x = x, target_y = y;
         switch (dir) {
             case Direction::UP:
+                if (y == 0)
+                    continue;
                 target_y = y - 1;
                 break;
             case Direction::DOWN:
                 target_y = y + 1;
                 break;
             case Direction::LEFT:
+                if (x == 0)
+                    continue;
                 target_x = x - 1;
                 break;
             case Direction::RIGHT:

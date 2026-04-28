@@ -13,7 +13,6 @@
 #include <functional> // For std::hash
 #include <vector>
 #include <unordered_set>
-#include <random>
 // 定义一个自定义哈希函数
 namespace std {
     template <>
@@ -39,14 +38,11 @@ private:
     std::vector<Grid> cross_nodes;
     std::vector<int> start_phases;
     std::unordered_map<Grid, int> global_phases;
-
-    std::random_device rd;
-    std::mt19937 gen;
-    std::uniform_int_distribution<> phase_dist{1, 4};
+    int phase_count = 4;
 
 public:
-    PhaseSolver(const std::vector<Path> &p, const std::vector<int> &sp);
-    PhaseSolver(const std::vector<Path> &p);
+    PhaseSolver(const std::vector<Path> &p, const std::vector<int> &sp, int phaseCount = 4);
+    PhaseSolver(const std::vector<Path> &p, int phaseCount = 4);
 
     // 主求解函数
     std::vector<std::vector<int>> solve();
@@ -60,14 +56,12 @@ private:
     // 查找交叉节点
     void find_cross_nodes();
 
-    // 随机分配交叉点相位
-    void assign_cross_phases();
-
     // 验证单条路径可行性
     bool validate_path(size_t path_idx);
 
     // 计算相位跨度
     int phase_distance(int from, int to) const;
+    int phase_after_steps(int from, int steps) const;
 
     // 验证所有路径
     bool validate_all_paths();

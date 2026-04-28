@@ -2,6 +2,7 @@
 #include <QMenuBar>
 #include <QDir>
 #include <QKeySequence>
+#include <QSizePolicy>
 
 void MainWindow::createActions()
 {
@@ -94,8 +95,31 @@ void MainWindow::createActions()
     connect(captureFullScreen, &QAction::triggered, this, &MainWindow::slotCaptureFullWindow);
 
     /******** "仿真"动作 *********/
-    // connect(simulationManager, &SimulationManager::simulationFinished, this, &MainWindow::onSimulationFinished);
+    connect(simulationManager, &SimulationManager::simulationFinished,
+            this, &MainWindow::onSimulationFinished);
+    connect(simulationManager, &SimulationManager::simulationFailed,
+            this, &MainWindow::onSimulationFailed);
     connect(this, &MainWindow::savedname, simulationManager, &SimulationManager::slotSavedname);//for 仿真文件名
+    connect(simulationManager, &SimulationManager::energyAnalysisFinished,
+            this, &MainWindow::onEnergyAnalysisFinished);
+    connect(simulationManager, &SimulationManager::energyAnalysisFailed,
+            this, &MainWindow::onEnergyAnalysisFailed);
+    connect(simulationManager, &SimulationManager::operationStarted,
+            customStatusBar, &CustomStatusBar::startOperation);
+    connect(simulationManager, &SimulationManager::operationProgress,
+            customStatusBar, &CustomStatusBar::updateOperation);
+    connect(simulationManager, &SimulationManager::operationFinished,
+            customStatusBar, &CustomStatusBar::finishOperation);
+    connect(simulationManager, &SimulationManager::operationFailed,
+            customStatusBar, &CustomStatusBar::failOperation);
+    connect(verilogHandler, &VerilogHandler::operationStarted,
+            customStatusBar, &CustomStatusBar::startOperation);
+    connect(verilogHandler, &VerilogHandler::operationProgress,
+            customStatusBar, &CustomStatusBar::updateOperation);
+    connect(verilogHandler, &VerilogHandler::operationFinished,
+            customStatusBar, &CustomStatusBar::finishOperation);
+    connect(verilogHandler, &VerilogHandler::operationFailed,
+            customStatusBar, &CustomStatusBar::failOperation);
 
     startBistableSimAction = new QAction(tr("&Start Bistable Simulation"), this);
     startBistableSimAction->setShortcut(tr("Ctrl+B"));
@@ -120,7 +144,7 @@ void MainWindow::createActions()
     energyAnalysisAction = new QAction(tr("&Energy Analysis"), this);
     energyAnalysisAction->setShortcut(tr("Ctrl+E"));
     energyAnalysisAction->setStatusTip(tr("Start Energy Analysis"));
-    connect(energyAnalysisAction, &QAction::triggered, simulationManager, &SimulationManager::slotEnergyAnalysis);
+    connect(energyAnalysisAction, &QAction::triggered, this, &MainWindow::slotEnergyAnalysis);
 
     SimWithSelective = new QAction(tr("&SimWithSelective"), this);
     SimWithSelective->setShortcut(tr("Ctrl+F"));
@@ -184,18 +208,29 @@ void MainWindow::createActions()
     // thread = new QThread(this);
     // verilogHandler->moveToThread(thread);
 
-    verParseButton = new QPushButton("Heuristic");
+    auto configureAlgorithmButton = [](QPushButton *button, const QString &toolTip) {
+        button->setObjectName("algorithmButton");
+        button->setToolTip(toolTip);
+        button->setMinimumWidth(96);
+        button->setMaximumWidth(132);
+        button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    };
+
+    verParseButton = new QPushButton("Heuristic P&R");
     verParseButton->setCheckable(true);
+    configureAlgorithmButton(verParseButton, tr("Run heuristic placement and routing"));
     connect(verParseButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::handleParseVerilogFile);
 
 
-    graphRenderButton = new QPushButton("Graph Render");
+    graphRenderButton = new QPushButton("Graph P&R");
     graphRenderButton->setCheckable(true);
+    configureAlgorithmButton(graphRenderButton, tr("Run compact graph-based placement and routing"));
     connect(graphRenderButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::handleGraphRender);
 
     //gate level mapping
-    gateLevelMappingButton = new QPushButton("Gate Level Mapping");
+    gateLevelMappingButton = new QPushButton("Gate Mapping");
     gateLevelMappingButton->setCheckable(true);
+    configureAlgorithmButton(gateLevelMappingButton, tr("Load and map a gate-level layout"));
     connect(gateLevelMappingButton, &QPushButton::toggled, gateLevelMapping, [this](bool checked) {
         if (!checked) {
             return;
@@ -209,8 +244,9 @@ void MainWindow::createActions()
     connect(generateCellLevelLayoutGraph, &QAction::triggered, verilogHandler, &VerilogHandler::generateSVG);
 
     // force oriented algorithm
-    forceOrientedAlgorithmButton = new QPushButton("Force Oriented Algorithm");
+    forceOrientedAlgorithmButton = new QPushButton("Force P&R");
     forceOrientedAlgorithmButton->setCheckable(true);
+    configureAlgorithmButton(forceOrientedAlgorithmButton, tr("Run force-oriented placement and routing"));
     connect(forceOrientedAlgorithmButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::slotForceOrientedAlgorithm);
 
 
@@ -303,9 +339,14 @@ void MainWindow::createToolBars()
 
 
     /* verilog parse tool*/
-    verilogTool = addToolBar("verilog parse");
+    addToolBarBreak(Qt::TopToolBarArea);
+    verilogTool = addToolBar("Algorithms");
+    verilogTool->setObjectName("algorithmToolBar");
+    verilogTool->setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
+    verilogTool->setFloatable(false);
     verilogTool->addWidget(verParseButton);
     verilogTool->addWidget(graphRenderButton);
+    verilogTool->addSeparator();
     verilogTool->addWidget(gateLevelMappingButton);
     verilogTool->addWidget(forceOrientedAlgorithmButton);
 }

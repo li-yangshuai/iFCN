@@ -1,0 +1,59 @@
+#circuit name: 1bitAdderAOIG.v
+
+#designed by graph render algorithm with encoded 3-phase clock tiles.
+
+#gate level placement and routing infomation
+#gates number: 12
+#input/output: 3 / 2
+#edges number: 16
+#total layers: 7
+#layout area: width: 6, height: 9, area: 54
+#phase origin: top-left=(4,3), saved coordinates are normalized to (0,0)
+#phase count: 3
+#runtime: 0.608s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, x, input, (0,1);
+1, y, input, (4,1);
+2, z, input, (2,1);
+3, H, and, (1,7);
+4, I, or, (3,7);
+5, A, or, (1,2);
+6, B, and, (3,2);
+7, ~B, not, (2,3);
+8, D, and, (2,4);
+9, E, or, (1,5);
+10, F, and, (3,5);
+11, ~F, not, (2,6);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,9): (0,1),(0,2),(0,3),(0,4),(0,5),(1,5);
+(0,10): (0,1),(0,2),(0,3),(0,4),(0,5),(0,6),(0,7),(0,8),(1,8),(2,8),(3,8),(4,8),(4,7),(4,6),(3,6),(3,5);
+(1,5): (4,1),(3,1),(3,0),(2,0),(1,0),(1,1),(1,2);
+(1,6): (4,1),(3,1),(3,2);
+(2,5): (2,1),(2,2),(1,2);
+(2,6): (2,1),(2,2),(3,2);
+(5,8): (1,2),(1,3),(1,4),(2,4);
+(6,4): (3,2),(3,3),(3,4),(4,4),(4,5),(5,5),(5,6),(5,7),(4,7),(3,7);
+(6,7): (3,2),(3,3),(2,3);
+(7,8): (2,3),(2,4);
+(8,9): (2,4),(2,5),(1,5);
+(8,10): (2,4),(2,5),(3,5);
+(9,3): (1,5),(1,6),(1,7);
+(10,4): (3,5),(4,5),(4,6),(3,6),(3,7);
+(10,11): (3,5),(4,5),(4,6),(3,6),(2,6);
+(11,3): (2,6),(2,7),(1,7);
+#paths info
+#phase map
+#phase codec: phase_count=3, block_size=3, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 3x3 phase block ###
+tile(0,0):0x042801;
+tile(1,0):0x020101;
+tile(0,1):0x260819;
+tile(1,1):0x010225;
+tile(0,2):0x0a1809;
+tile(1,2):0x081505;
+#phase map

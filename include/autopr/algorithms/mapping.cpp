@@ -574,7 +574,9 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
             
             
         }
-        RouteDeviate_list.pop_back();
+        if (!RouteDeviate_list.empty()) {
+            RouteDeviate_list.pop_back();
+        }
         const auto route_key = std::make_pair(startpos, endpos);
         deviate_list.insert({route_key, RouteDeviate_list});
         updateDeviateLookup(route_key, RouteDeviate_list);
@@ -603,8 +605,10 @@ void Mapping::deviate_mapping(std::map<std::pair<position, position>, std::vecto
                 std::pair<unsigned int, unsigned int> nwpos = itpos;
                 nwpos.first *= 5;
                 nwpos.second *= 5;
-                auto nextpos = (*(std::next(it))).first;
-                auto prevpos = (*(std::prev(it))).first;
+                const bool has_next = (std::next(it) != single_route.end());
+                const bool has_prev = (it != single_route.begin());
+                auto nextpos = has_next ? std::next(it)->first : itpos;
+                auto prevpos = has_prev ? std::prev(it)->first : itpos;
 
                 if (it == single_route.begin())
                 {

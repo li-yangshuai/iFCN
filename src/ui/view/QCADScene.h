@@ -36,6 +36,12 @@ public:
         int phase = 0;
     };
 
+    struct ClockRegionRecord {
+        int x = 0;
+        int y = 0;
+        int phase = 0;
+    };
+
     QCADScene(QObject *parent = Q_NULLPTR): QGraphicsScene(parent),
                                             currentMode(EditMode::Select),
                                             myCellType(CellType::NormalCell),
@@ -70,12 +76,15 @@ public:
     void setFastLayerVisible(int layer, bool visible);
     bool isFastLayerVisible(int layer) const;
     void updateFastCellPosition(int layer, int index, int x, int y);
+    void updateFastCellPhase(int layer, int index, int phase);
     void updateFastCellName(int layer, int index, const QString &name);
     void removeFastCell(int layer, int index);
     void setHighQualityMode(bool enabled);
     bool isHighQualityMode() const;
     void setClockGridVisible(bool visible);
     bool isClockGridVisible() const;
+    QVector<ClockRegionRecord> clockRegions() const;
+    void restoreClockRegions(const QVector<ClockRegionRecord> &regions);
 
 protected:
     void drawBackground(QPainter* painter, const QRectF &rect) override;
@@ -95,6 +104,16 @@ private:
     void drawFastCellRecords(QPainter *painter, const QRectF &rect);
     void drawFastCell(QPainter *painter, const FastCellRecord &cell, qreal lod);
     QColor colorForPhase(int phase) const;
+    QPointF clockCenterForPosition(const QPointF &pos) const;
+    QCADClockScheme* clockSchemeAt(const QPointF &pos) const;
+    int phaseAtPosition(const QPointF &pos, int fallbackPhase) const;
+    void insertOrUpdateClockScheme(const QPointF &pos);
+    bool showClockPhaseMenu(const QPointF &pos, const QPoint &screenPos);
+    void applyClockPhase(QCADClockScheme *clockItem, int phase);
+    void deleteClockScheme(QCADClockScheme *clockItem);
+    bool syncCellsWithClockScheme(QCADClockScheme *clockItem);
+    bool setCellPhase(QCADCellItem *cellItem, int phase);
+    int normalizedCellPhase(int phase) const;
 
     EditMode currentMode;
     CellType myCellType;

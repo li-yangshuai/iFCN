@@ -1,0 +1,44 @@
+#circuit name: xor.v
+
+#designed by graph render algorithm with encoded 3-phase clock tiles.
+
+#gate level placement and routing infomation
+#gates number: 7
+#input/output: 2 / 1
+#edges number: 8
+#total layers: 4
+#layout area: width: 6, height: 4, area: 24
+#phase origin: top-left=(3,4), saved coordinates are normalized to (0,0)
+#phase count: 3
+#runtime: 0.699s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, x, input, (4,0);
+1, y, input, (1,0);
+2, XOR, or, (2,3);
+3, ~x, not, (4,1);
+4, new_n4_, and, (1,2);
+5, ~y, not, (1,1);
+6, new_n5_, and, (4,2);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,3): (4,0),(4,1);
+(0,6): (4,0),(3,0),(3,1),(3,2),(4,2);
+(1,4): (1,0),(0,0),(0,1),(0,2),(1,2);
+(1,5): (1,0),(1,1);
+(3,4): (4,1),(3,1),(2,1),(2,2),(1,2);
+(4,2): (1,2),(1,3),(2,3);
+(5,6): (1,1),(2,1),(2,2),(3,2),(3,3),(4,3),(4,2);
+(6,2): (4,2),(5,2),(5,3),(4,3),(3,3),(2,3);
+#paths info
+#phase map
+#phase codec: phase_count=3, block_size=3, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 3x3 phase block ###
+tile(0,0):0x060819;
+tile(1,0):0x010612;
+tile(0,1):0x100000;
+tile(1,1):0x200000;
+#phase map

@@ -1,9 +1,211 @@
 #include "circuitGraph.h"
 #include "autopr/algorithms/phaseSolver.h"
+#include <limits>
 #include <set>
+#include <tuple>
 
 namespace fcngraph
 {
+    namespace
+    {
+        int phaseAfter(int startPhase, int steps, int phaseCount)
+        {
+            phaseCount = std::max(2, phaseCount);
+            int phase = (startPhase - 1 + steps) % phaseCount;
+            if (phase < 0)
+            {
+                phase += phaseCount;
+            }
+            return phase + 1;
+        }
+
+        int phaseDistance(int from, int to, int phaseCount)
+        {
+            phaseCount = std::max(2, phaseCount);
+            if (from == to)
+            {
+                return 0;
+            }
+            if (to > from)
+            {
+                return to - from;
+            }
+            return (phaseCount - from) + to;
+        }
+
+        bool isForwardPhaseStep(int from, int to, int phaseCount)
+        {
+            return from == to || phaseAfter(from, 1, phaseCount) == to;
+        }
+
+        std::vector<bool> buildWaitSteps(int steps, int waits)
+        {
+            std::vector<bool> waitSteps(static_cast<std::size_t>(steps) + 1, false);
+            for (int waitIndex = 1; waitIndex <= waits; ++waitIndex)
+            {
+                int pos = (waitIndex * (steps + 1)) / (waits + 1);
+                pos = std::max(1, std::min(steps, pos));
+                const int preferred = pos;
+                while (pos <= steps && waitSteps[static_cast<std::size_t>(pos)])
+                {
+                    ++pos;
+                }
+                if (pos > steps)
+                {
+                    pos = preferred - 1;
+                    while (pos >= 1 && waitSteps[static_cast<std::size_t>(pos)])
+                    {
+                        --pos;
+                    }
+                }
+                if (pos >= 1)
+                {
+                    waitSteps[static_cast<std::size_t>(pos)] = true;
+                }
+            }
+            return waitSteps;
+        }
+
+        std::vector<int> interpolatePhaseSegment(int fromPhase, int toPhase, int steps, int phaseCount)
+        {
+            if (steps < 0)
+            {
+                throw std::invalid_argument("Negative phase segment length");
+            }
+
+            std::vector<int> phases(static_cast<std::size_t>(steps) + 1, fromPhase);
+            int minAdvances = phaseDistance(fromPhase, toPhase, phaseCount);
+            if (minAdvances > steps)
+            {
+                throw std::runtime_error("Phase continuity violation");
+            }
+
+            int advances = minAdvances + ((steps - minAdvances) / phaseCount) * phaseCount;
+            int waits = steps - advances;
+            int usedAdvances = 0;
+            const auto waitSteps = buildWaitSteps(steps, waits);
+
+            for (int i = 1; i <= steps; ++i)
+            {
+                if (waitSteps[static_cast<std::size_t>(i)])
+                {
+                    phases[static_cast<std::size_t>(i)] = phases[static_cast<std::size_t>(i - 1)];
+                }
+                else
+                {
+                    ++usedAdvances;
+                    phases[static_cast<std::size_t>(i)] = phaseAfter(fromPhase, usedAdvances, phaseCount);
+                }
+            }
+
+            return phases;
+        }
+
+        std::vector<int> solveForwardPhasePath(const std::vector<int> &fixedPhases,
+                                               int phaseCount,
+                                               int preferredStartPhase = -1)
+        {
+            phaseCount = std::max(2, phaseCount);
+            if (fixedPhases.empty())
+            {
+                return {};
+            }
+
+            constexpr int kUnreachable = 1000000000;
+            const int phaseSlots = phaseCount + 1;
+            const auto length = fixedPhases.size();
+
+            std::vector<std::vector<int>> cost(length, std::vector<int>(phaseSlots, kUnreachable));
+            std::vector<std::vector<int>> previous(length, std::vector<int>(phaseSlots, -1));
+
+            const auto phaseAllowed = [&fixedPhases](std::size_t index, int phase) {
+                return fixedPhases[index] < 1 || fixedPhases[index] == phase;
+            };
+
+            auto seedStart = [&](int startPhase) {
+                bool seeded = false;
+                for (int phase = 1; phase <= phaseCount; ++phase)
+                {
+                    if (startPhase >= 1 && phase != startPhase)
+                    {
+                        continue;
+                    }
+                    if (!phaseAllowed(0, phase))
+                    {
+                        continue;
+                    }
+                    cost[0][phase] = 0;
+                    seeded = true;
+                }
+                return seeded;
+            };
+
+            bool seeded = seedStart(preferredStartPhase);
+            if (!seeded && preferredStartPhase >= 1)
+            {
+                seeded = seedStart(-1);
+            }
+            if (!seeded)
+            {
+                throw std::runtime_error("No valid phase path start");
+            }
+
+            for (std::size_t index = 1; index < length; ++index)
+            {
+                for (int prevPhase = 1; prevPhase <= phaseCount; ++prevPhase)
+                {
+                    if (cost[index - 1][prevPhase] >= kUnreachable)
+                    {
+                        continue;
+                    }
+
+                    const int candidates[2] = {prevPhase, phaseAfter(prevPhase, 1, phaseCount)};
+                    for (int phase : candidates)
+                    {
+                        if (!phaseAllowed(index, phase))
+                        {
+                            continue;
+                        }
+                        const int nextCost = cost[index - 1][prevPhase] + ((phase == prevPhase) ? 1 : 0);
+                        if (nextCost < cost[index][phase])
+                        {
+                            cost[index][phase] = nextCost;
+                            previous[index][phase] = prevPhase;
+                        }
+                    }
+                }
+            }
+
+            int bestPhase = -1;
+            int bestCost = kUnreachable;
+            for (int phase = 1; phase <= phaseCount; ++phase)
+            {
+                if (cost[length - 1][phase] < bestCost)
+                {
+                    bestCost = cost[length - 1][phase];
+                    bestPhase = phase;
+                }
+            }
+            if (bestPhase < 1)
+            {
+                throw std::runtime_error("No valid phase path");
+            }
+
+            std::vector<int> phases(length, 1);
+            int phase = bestPhase;
+            for (std::size_t offset = 0; offset < length; ++offset)
+            {
+                const std::size_t index = length - 1 - offset;
+                phases[index] = phase;
+                phase = previous[index][phase];
+                if (index == 0)
+                {
+                    break;
+                }
+            }
+            return phases;
+        }
+    }
 
     void CircuitGraph::setFitnessCallback(const std::function<void(std::string)> &callback)
     {
@@ -287,60 +489,169 @@ namespace fcngraph
 
     bool CircuitGraph::placeAndRoute()
     {
-        routes.clear();
-        astar.reset();
-
-        for (auto &node_pos : nodeIndex_pos)
+        enum class RouteOrderPolicy
         {
-            if (!chessboard.is_placeNode(node_pos.second))
+            GroupFanoutNearFirst,
+            GroupFanoutFarFirst,
+            LongFirst,
+            ShortFirst
+        };
+
+        const auto prepareBoard = [this]() {
+            routes.clear();
+            astar.reset();
+            chessboard.reset();
+
+            for (const auto &node_pos : nodeIndex_pos)
+            {
+                if (!chessboard.is_placeNode(node_pos.second))
+                {
+                    return false;
+                }
+                chessboard.placeNode(node_pos.second);
+            }
+            return true;
+        };
+
+        const auto edgeDistance = [this](const std::pair<int, int> &edge) {
+            const auto start = nodeIndex_pos.at(edge.first);
+            const auto end = nodeIndex_pos.at(edge.second);
+            return std::abs(static_cast<int>(end.first) - static_cast<int>(start.first))
+                 + std::abs(static_cast<int>(end.second) - static_cast<int>(start.second));
+        };
+
+        const auto isMultiFanout = [this](int nodeIndex) {
+            return parse.getFanoutsIndex(nodeIndex).size() > 1;
+        };
+
+        const auto crossesIntermediateNode =
+            [this](const std::pair<int, int> &edge, const std::vector<position> &path) {
+                if (path.size() <= 2)
+                {
+                    return false;
+                }
+
+                for (auto it = std::next(path.begin()); std::next(it) != path.end(); ++it)
+                {
+                    for (const auto &node_pos : nodeIndex_pos)
+                    {
+                        if (node_pos.first != edge.first &&
+                            node_pos.first != edge.second &&
+                            node_pos.second == *it)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+
+        const auto sortEdges = [&](RouteOrderPolicy policy) {
+            auto edges = parse.getEffectiveEdges();
+            std::stable_sort(edges.begin(), edges.end(), [&](const auto &lhs, const auto &rhs) {
+                const int lhsLayer = parse.getVertexLayer(lhs.first);
+                const int rhsLayer = parse.getVertexLayer(rhs.first);
+                if (lhsLayer != rhsLayer)
+                {
+                    return lhsLayer < rhsLayer;
+                }
+
+                const int lhsDistance = edgeDistance(lhs);
+                const int rhsDistance = edgeDistance(rhs);
+                const bool lhsMultiFanout = isMultiFanout(lhs.first);
+                const bool rhsMultiFanout = isMultiFanout(rhs.first);
+
+                if (policy == RouteOrderPolicy::LongFirst)
+                {
+                    if (lhsDistance != rhsDistance)
+                    {
+                        return lhsDistance > rhsDistance;
+                    }
+                    return lhs < rhs;
+                }
+
+                if (policy == RouteOrderPolicy::ShortFirst)
+                {
+                    if (lhsDistance != rhsDistance)
+                    {
+                        return lhsDistance < rhsDistance;
+                    }
+                    return lhs < rhs;
+                }
+
+                if (lhs.first != rhs.first)
+                {
+                    if (lhsMultiFanout != rhsMultiFanout)
+                    {
+                        return lhsMultiFanout;
+                    }
+                    if (lhsMultiFanout && rhsMultiFanout)
+                    {
+                        return lhs.first < rhs.first;
+                    }
+                    if (lhsDistance != rhsDistance)
+                    {
+                        return lhsDistance > rhsDistance;
+                    }
+                    return lhs < rhs;
+                }
+
+                if (lhsMultiFanout)
+                {
+                    if (lhsDistance != rhsDistance)
+                    {
+                        return policy == RouteOrderPolicy::GroupFanoutNearFirst
+                            ? lhsDistance < rhsDistance
+                            : lhsDistance > rhsDistance;
+                    }
+                }
+                else if (lhsDistance != rhsDistance)
+                {
+                    return lhsDistance > rhsDistance;
+                }
+                return lhs.second < rhs.second;
+            });
+            return edges;
+        };
+
+        const auto routeEdges = [&](const std::vector<std::pair<int, int>> &orderedEdges) {
+            if (!prepareBoard())
             {
                 return false;
             }
-            chessboard.placeNode(node_pos.second);
-        }
 
-        auto edges = parse.getEffectiveEdges();
-        std::stable_sort(edges.begin(), edges.end(), [this](const auto &lhs, const auto &rhs) {
-            const auto lhsStart = nodeIndex_pos[lhs.first];
-            const auto lhsEnd = nodeIndex_pos[lhs.second];
-            const auto rhsStart = nodeIndex_pos[rhs.first];
-            const auto rhsEnd = nodeIndex_pos[rhs.second];
-            const int lhsDistance = std::abs(static_cast<int>(lhsEnd.first) - static_cast<int>(lhsStart.first))
-                                  + std::abs(static_cast<int>(lhsEnd.second) - static_cast<int>(lhsStart.second));
-            const int rhsDistance = std::abs(static_cast<int>(rhsEnd.first) - static_cast<int>(rhsStart.first))
-                                  + std::abs(static_cast<int>(rhsEnd.second) - static_cast<int>(rhsStart.second));
-            if (lhs.first == rhs.first)
+            for (const auto &edge : orderedEdges)
             {
-                return lhsDistance > rhsDistance;
-            }
-            if (parse.getVertexLayer(lhs.first) == parse.getVertexLayer(rhs.first))
-            {
-                return lhsDistance > rhsDistance;
-            }
-            return parse.getVertexLayer(lhs.first) < parse.getVertexLayer(rhs.first);
-        });
-        for (auto &edge : edges)
-        {
-            auto start = nodeIndex_pos[edge.first];
-            auto end = nodeIndex_pos[edge.second];
-            bool isOneFanout = false;
-            if (parse.getm_vertexType(edge.first) == typeid(AndNode) ||
-                parse.getm_vertexType(edge.first) == typeid(OrNode) ||
-                parse.getm_vertexType(edge.first) == typeid(MajNode))
-            {
-                isOneFanout = true;
-            }
-            auto path = astar.findPath(start, end, isOneFanout);
-            if (!path.empty())
-            {
+                auto start = nodeIndex_pos[edge.first];
+                auto end = nodeIndex_pos[edge.second];
+                auto path = astar.findPath(start, end, isMultiFanout(edge.first));
+                if (path.empty())
+                {
+                    return false;
+                }
+                if (crossesIntermediateNode(edge, path))
+                {
+                    return false;
+                }
                 routes.insert({edge, path});
             }
-            else
+            return true;
+        };
+
+        const RouteOrderPolicy policies[] = {
+            RouteOrderPolicy::GroupFanoutNearFirst,
+            RouteOrderPolicy::GroupFanoutFarFirst,
+            RouteOrderPolicy::LongFirst,
+            RouteOrderPolicy::ShortFirst
+        };
+        for (RouteOrderPolicy policy : policies)
+        {
+            if (routeEdges(sortEdges(policy)))
             {
-                return false;
+                return true;
             }
         }
-        return true;
+        return false;
     }
     // 计算层与层之间除了起始节点和最终节点之间的交叉节点，把有交叉的层分到同一组
     std::map<unsigned int, std::vector<std::vector<position>>> CircuitGraph::reclassifyLayers(
@@ -544,7 +855,11 @@ namespace fcngraph
             is_first_layer = false;
         }
 
-        return true; // 所有层都成功分配相位
+        if (validateAssignedRoutePhases(phaseCount) && hasAcceptableAssignedRoutePhases(phaseCount))
+        {
+            return true;
+        }
+        return assignPhasesFallback(phaseCount);
     }
 
     bool CircuitGraph::phaseOptimize(int current_layer, std::vector<fcngraph::Path> &paths, std::vector<int> &start_phases, int phaseCount, int recursion_count)
@@ -653,15 +968,6 @@ namespace fcngraph
             }
         }
 
-        auto phaseAfter = [phaseCount](int startPhase, int steps) {
-            int phase = (startPhase - 1 + steps) % phaseCount;
-            if (phase < 0)
-            {
-                phase += phaseCount;
-            }
-            return phase + 1;
-        };
-
         std::vector<std::pair<std::pair<unsigned int, unsigned int>, std::vector<position>>> orderedRoutes(routes.begin(), routes.end());
         std::stable_sort(orderedRoutes.begin(), orderedRoutes.end(), [this](const auto &lhs, const auto &rhs) {
             const int lhsLayer = parse.getVertexLayer(lhs.first.first);
@@ -673,6 +979,30 @@ namespace fcngraph
             return lhs.second.size() > rhs.second.size();
         });
 
+        const auto getPhaseAt = [this](const position &pos) -> int {
+            auto cell = chessboard.gridMap.find(pos);
+            if (cell == chessboard.gridMap.end())
+            {
+                return -1;
+            }
+            return cell->second.getPhase();
+        };
+
+        const auto setPhaseAt = [this](const position &pos, int phase) -> bool {
+            auto cell = chessboard.gridMap.find(pos);
+            if (cell == chessboard.gridMap.end())
+            {
+                return false;
+            }
+            int existingPhase = cell->second.getPhase();
+            if (existingPhase >= 1 && existingPhase != phase)
+            {
+                return false;
+            }
+            cell->second.setPhase(phase);
+            return true;
+        };
+
         for (const auto &route : orderedRoutes)
         {
             if (route.second.empty())
@@ -680,32 +1010,410 @@ namespace fcngraph
                 continue;
             }
 
-            int anchorPhase = chessboard.gridMap[route.second.front()].getPhase();
-            if (anchorPhase < 1)
+            std::vector<int> fixedPhases;
+            fixedPhases.reserve(route.second.size());
+            bool hasFixedPhase = false;
+            for (const position &pos : route.second)
             {
-                anchorPhase = phaseAfter(1, parse.getVertexLayer(route.first.first));
-                chessboard.gridMap[route.second.front()].setPhase(anchorPhase);
-            }
-            std::size_t anchorIndex = 0;
-
-            for (std::size_t i = 1; i < route.second.size(); ++i)
-            {
-                const auto &pos = route.second[i];
-                const int existingPhase = chessboard.gridMap[pos].getPhase();
-                const int idealPhase = phaseAfter(anchorPhase, static_cast<int>(i - anchorIndex));
-                if (existingPhase < 1)
+                const int phase = getPhaseAt(pos);
+                fixedPhases.push_back(phase);
+                if (phase >= 1)
                 {
-                    chessboard.gridMap[pos].setPhase(idealPhase);
+                    hasFixedPhase = true;
                 }
-                else if (existingPhase != idealPhase)
+            }
+
+            const int preferredStartPhase = hasFixedPhase
+                ? -1
+                : phaseAfter(1, parse.getVertexLayer(route.first.first), phaseCount);
+
+            std::vector<int> phases;
+            try
+            {
+                phases = solveForwardPhasePath(fixedPhases, phaseCount, preferredStartPhase);
+            }
+            catch (const std::exception &)
+            {
+                return assignRouteConstraintPhases(phaseCount);
+            }
+
+            for (std::size_t i = 0; i < route.second.size(); ++i)
+            {
+                if (!setPhaseAt(route.second[i], phases[i]))
                 {
-                    anchorPhase = existingPhase;
-                    anchorIndex = i;
+                    return assignRouteConstraintPhases(phaseCount);
+                }
+            }
+        }
+
+        if (validateAssignedRoutePhases(phaseCount) && hasAcceptableAssignedRoutePhases(phaseCount))
+        {
+            return true;
+        }
+        if (assignRouteConstraintPhases(phaseCount))
+        {
+            return true;
+        }
+        return validateAssignedRoutePhases(phaseCount);
+    }
+
+    bool CircuitGraph::assignRouteConstraintPhases(int phaseCount)
+    {
+        phaseCount = std::max(2, phaseCount);
+
+        struct ConstraintEdge
+        {
+            int from = 0;
+            int to = 0;
+        };
+
+        struct PhaseScore
+        {
+            int invalid = 0;
+            int maxRun = 1;
+            int waits = 0;
+        };
+
+        std::map<position, int> positionIndex;
+        std::vector<position> positions;
+        const auto getPositionIndex = [&positionIndex, &positions](const position &pos) {
+            auto iter = positionIndex.find(pos);
+            if (iter != positionIndex.end())
+            {
+                return iter->second;
+            }
+            const int index = static_cast<int>(positions.size());
+            positionIndex[pos] = index;
+            positions.push_back(pos);
+            return index;
+        };
+
+        for (auto &cell : chessboard.gridMap)
+        {
+            if (cell.second.get_current_weight() > 0)
+            {
+                getPositionIndex(cell.first);
+            }
+        }
+
+        std::vector<ConstraintEdge> constraintEdges;
+        std::vector<std::vector<int>> routePositionIndexes;
+        for (const auto &route : routes)
+        {
+            const auto &path = route.second;
+            std::vector<int> routeIndexes;
+            routeIndexes.reserve(path.size());
+            for (std::size_t i = 0; i < path.size(); ++i)
+            {
+                routeIndexes.push_back(getPositionIndex(path[i]));
+                if (i > 0)
+                {
+                    constraintEdges.push_back({
+                        routeIndexes[i - 1],
+                        routeIndexes[i]
+                    });
+                }
+            }
+            routePositionIndexes.push_back(std::move(routeIndexes));
+        }
+
+        if (positions.empty())
+        {
+            return false;
+        }
+
+        const auto transitionCost = [phaseCount](int fromPhase, int toPhase) {
+            if (toPhase == phaseAfter(fromPhase, 1, phaseCount))
+            {
+                return 0;
+            }
+            if (toPhase == fromPhase)
+            {
+                return 1;
+            }
+            return 1000000;
+        };
+
+        const auto scorePhases = [&constraintEdges, &routePositionIndexes, &transitionCost](const std::vector<int> &phases) {
+            PhaseScore score;
+            for (const auto &edge : constraintEdges)
+            {
+                const int cost = transitionCost(phases[edge.from], phases[edge.to]);
+                if (cost >= 1000000)
+                {
+                    ++score.invalid;
+                }
+                else if (cost > 0)
+                {
+                    ++score.waits;
+                }
+            }
+            for (const auto &path : routePositionIndexes)
+            {
+                int currentRun = 1;
+                for (std::size_t i = 1; i < path.size(); ++i)
+                {
+                    if (phases[path[i]] == phases[path[i - 1]])
+                    {
+                        ++currentRun;
+                        score.maxRun = std::max(score.maxRun, currentRun);
+                    }
+                    else
+                    {
+                        currentRun = 1;
+                    }
+                }
+            }
+            return score;
+        };
+
+        const auto isBetterScore = [](const PhaseScore &candidate, const PhaseScore &current) {
+            return std::tie(candidate.invalid, candidate.maxRun, candidate.waits)
+                 < std::tie(current.invalid, current.maxRun, current.waits);
+        };
+
+        std::vector<std::vector<int>> incidentEdges(positions.size());
+        for (std::size_t edgeIndex = 0; edgeIndex < constraintEdges.size(); ++edgeIndex)
+        {
+            const auto &edge = constraintEdges[edgeIndex];
+            incidentEdges[edge.from].push_back(static_cast<int>(edgeIndex));
+            incidentEdges[edge.to].push_back(static_cast<int>(edgeIndex));
+        }
+
+        const auto localCost = [&constraintEdges, &transitionCost](const std::vector<int> &phases, int edgeIndex) {
+            const auto &edge = constraintEdges[static_cast<std::size_t>(edgeIndex)];
+            return transitionCost(phases[edge.from], phases[edge.to]);
+        };
+
+        const auto improve = [&](std::vector<int> phases) {
+            const std::size_t maxPasses = std::max<std::size_t>(32, std::min<std::size_t>(512, phases.size() * 4));
+            for (std::size_t pass = 0; pass < maxPasses; ++pass)
+            {
+                bool changed = false;
+                for (std::size_t index = 0; index < positions.size(); ++index)
+                {
+                    int currentPhase = phases[index];
+                    int bestPhase = currentPhase;
+                    int bestCost = 0;
+                    for (int edgeIndex : incidentEdges[index])
+                    {
+                        bestCost += localCost(phases, edgeIndex);
+                    }
+
+                    const int preferredPhase = static_cast<int>(positions[index].second % static_cast<unsigned int>(phaseCount)) + 1;
+                    for (int phase = 1; phase <= phaseCount; ++phase)
+                    {
+                        phases[index] = phase;
+                        int cost = 0;
+                        for (int edgeIndex : incidentEdges[index])
+                        {
+                            cost += localCost(phases, edgeIndex);
+                        }
+                        if (cost < bestCost || (cost == bestCost && phase == preferredPhase && bestPhase != preferredPhase))
+                        {
+                            bestCost = cost;
+                            bestPhase = phase;
+                        }
+                    }
+
+                    phases[index] = bestPhase;
+                    if (bestPhase != currentPhase)
+                    {
+                        changed = true;
+                    }
+                }
+
+                if (!changed)
+                {
+                    break;
+                }
+            }
+            return phases;
+        };
+
+        std::vector<std::vector<int>> seeds;
+        for (int phase = 1; phase <= phaseCount; ++phase)
+        {
+            seeds.push_back(std::vector<int>(positions.size(), phase));
+        }
+        for (int offset = 0; offset < phaseCount; ++offset)
+        {
+            std::vector<int> ySeed(positions.size());
+            std::vector<int> diagonalSeed(positions.size());
+            for (std::size_t index = 0; index < positions.size(); ++index)
+            {
+                const int x = static_cast<int>(positions[index].first);
+                const int y = static_cast<int>(positions[index].second);
+                ySeed[index] = ((y + offset) % phaseCount) + 1;
+                diagonalSeed[index] = ((x + y + offset) % phaseCount) + 1;
+            }
+            seeds.push_back(std::move(ySeed));
+            seeds.push_back(std::move(diagonalSeed));
+        }
+
+        std::vector<int> voteSeed(positions.size(), 0);
+        std::vector<std::vector<int>> phaseVotes(positions.size(), std::vector<int>(phaseCount + 1, 0));
+        for (const auto &route : routes)
+        {
+            const auto &path = route.second;
+            for (std::size_t i = 0; i < path.size(); ++i)
+            {
+                const int index = positionIndex[path[i]];
+                const int phase = phaseAfter(1, static_cast<int>(i), phaseCount);
+                ++phaseVotes[static_cast<std::size_t>(index)][phase];
+            }
+        }
+        for (std::size_t index = 0; index < positions.size(); ++index)
+        {
+            int bestPhase = static_cast<int>(positions[index].second % static_cast<unsigned int>(phaseCount)) + 1;
+            int bestVotes = -1;
+            for (int phase = 1; phase <= phaseCount; ++phase)
+            {
+                if (phaseVotes[index][phase] > bestVotes)
+                {
+                    bestVotes = phaseVotes[index][phase];
+                    bestPhase = phase;
+                }
+            }
+            voteSeed[index] = bestPhase;
+        }
+        seeds.push_back(std::move(voteSeed));
+
+        std::vector<int> bestPhases;
+        PhaseScore bestScore{
+            std::numeric_limits<int>::max(),
+            std::numeric_limits<int>::max(),
+            std::numeric_limits<int>::max()
+        };
+        for (const auto &seed : seeds)
+        {
+            auto candidate = improve(seed);
+            const auto candidateScore = scorePhases(candidate);
+            if (bestPhases.empty() || isBetterScore(candidateScore, bestScore))
+            {
+                bestScore = candidateScore;
+                bestPhases = std::move(candidate);
+            }
+        }
+
+        if (bestPhases.empty() || bestScore.invalid > 0)
+        {
+            return false;
+        }
+
+        std::set<int> usedPhases(bestPhases.begin(), bestPhases.end());
+        if (usedPhases.size() < 2 && positions.size() > 1)
+        {
+            return false;
+        }
+
+        for (auto &cell : chessboard.gridMap)
+        {
+            if (cell.second.getPhase() >= 1)
+            {
+                cell.second.setPhase(-1);
+            }
+        }
+
+        for (std::size_t index = 0; index < positions.size(); ++index)
+        {
+            auto cell = chessboard.gridMap.find(positions[index]);
+            if (cell == chessboard.gridMap.end())
+            {
+                return false;
+            }
+            cell->second.setPhase(bestPhases[index]);
+        }
+
+        return validateAssignedRoutePhases(phaseCount);
+    }
+
+    bool CircuitGraph::validateAssignedRoutePhases(int phaseCount) const
+    {
+        phaseCount = std::max(2, phaseCount);
+
+        for (const auto &route : routes)
+        {
+            const auto &path = route.second;
+            if (path.empty())
+            {
+                continue;
+            }
+
+            for (std::size_t i = 1; i < path.size(); ++i)
+            {
+                auto prevCell = chessboard.gridMap.find(path[i - 1]);
+                auto currCell = chessboard.gridMap.find(path[i]);
+                if (prevCell == chessboard.gridMap.end() || currCell == chessboard.gridMap.end())
+                {
+                    return false;
+                }
+
+                const int prevPhase = prevCell->second.getPhase();
+                const int currPhase = currCell->second.getPhase();
+                if (prevPhase < 1 || currPhase < 1)
+                {
+                    return false;
+                }
+                if (!isForwardPhaseStep(prevPhase, currPhase, phaseCount))
+                {
+                    return false;
                 }
             }
         }
 
         return true;
+    }
+
+    bool CircuitGraph::hasAcceptableAssignedRoutePhases(int phaseCount) const
+    {
+        phaseCount = std::max(2, phaseCount);
+        const int maxRunLimit = std::max(phaseCount + 2, phaseCount * 2 + 2);
+
+        int repeatedAdjacent = 0;
+        int totalAdjacent = 0;
+        int maxRun = 1;
+
+        for (const auto &route : routes)
+        {
+            int previousPhase = -1;
+            int currentRun = 1;
+            for (const position &pos : route.second)
+            {
+                auto cell = chessboard.gridMap.find(pos);
+                if (cell == chessboard.gridMap.end() || cell->second.getPhase() < 1)
+                {
+                    return false;
+                }
+
+                const int phase = cell->second.getPhase();
+                if (previousPhase >= 1)
+                {
+                    ++totalAdjacent;
+                    if (phase == previousPhase)
+                    {
+                        ++repeatedAdjacent;
+                        ++currentRun;
+                        maxRun = std::max(maxRun, currentRun);
+                    }
+                    else
+                    {
+                        currentRun = 1;
+                    }
+                }
+                previousPhase = phase;
+            }
+        }
+
+        if (maxRun > maxRunLimit)
+        {
+            return false;
+        }
+        if (totalAdjacent == 0)
+        {
+            return true;
+        }
+        return repeatedAdjacent * 10 <= totalAdjacent * 3;
     }
 
     void CircuitGraph::printLaTex()

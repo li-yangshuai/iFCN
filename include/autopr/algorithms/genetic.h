@@ -52,7 +52,8 @@ public:
     
     void printLaTex(CLOCK_SCHEME  _clockType, position _northWest, position _southEast, 
         std::map<unsigned int, position> nodeIndex_pos, std::map<std::pair<unsigned int, unsigned int>, 
-        std::vector<position>> routes, std::vector<position> cross_nodes);
+        std::vector<position>> routes, std::vector<position> cross_nodes,
+        const std::map<position, int> &phaseMap = {});
     
 
     std::vector<Individual> populations;       //种群

@@ -3,14 +3,17 @@
 #include <QFileDialog>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QImage>
 #include <QPainter>
+#include <QTextStream>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QSpinBox>
+#include <autopr/algorithms/phase_codec.h>
 #include "ui/widgets/GaChessboardInputDialog.h"
 #include <QElapsedTimer>
 #include <cmath>
@@ -21,7 +24,7 @@
 namespace {
 struct GraphRenderSettings {
     int phaseCount = 4;
-    int maxAttempts = 220;
+    int maxAttempts = 320;
 };
 
 struct LayoutAttempt {
@@ -42,6 +45,7 @@ struct LayoutBounds {
 
 struct PhaseRepeatStats {
     int repeatedAdjacent = 0;
+    int totalAdjacent = 0;
     int maxRun = 1;
 };
 
@@ -68,7 +72,7 @@ bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
     phaseCombo->setCurrentIndex(0);
 
     auto *attemptSpin = new QSpinBox(&dialog);
-    attemptSpin->setRange(8, 300);
+    attemptSpin->setRange(8, 600);
     attemptSpin->setValue(settings.maxAttempts);
     attemptSpin->setSingleStep(8);
 
@@ -93,14 +97,17 @@ bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
 std::vector<LayoutAttempt> buildLayoutAttempts()
 {
     std::vector<LayoutAttempt> attempts;
-    for (unsigned int ySpacing = 2; ySpacing <= 12; ++ySpacing) {
-        for (unsigned int xSpacing = 2; xSpacing <= 12; ++xSpacing) {
+    for (unsigned int ySpacing = 1; ySpacing <= 14; ++ySpacing) {
+        for (unsigned int xSpacing = 1; xSpacing <= 14; ++xSpacing) {
             attempts.push_back({xSpacing, ySpacing, 90.0});
             if (xSpacing <= 8 && ySpacing <= 8) {
                 attempts.push_back({xSpacing, ySpacing, 150.0});
             }
-            if (xSpacing >= 7 || ySpacing >= 7) {
+            if (xSpacing <= 3 || ySpacing <= 3 || xSpacing >= 7 || ySpacing >= 7) {
                 attempts.push_back({xSpacing, ySpacing, 240.0});
+            }
+            if (xSpacing <= 4 || ySpacing <= 4 || xSpacing >= 7 || ySpacing >= 7) {
+                attempts.push_back({xSpacing, ySpacing, 600.0});
             }
         }
     }
@@ -178,11 +185,16 @@ PhaseRepeatStats calculatePhaseRepeatStats(
         for (const auto &pos : route.second) {
             auto cell = gridCells.find(pos);
             const int phase = (cell != gridCells.end()) ? cell->second.getPhase() : -1;
-            if (phase >= 1 && phase == previousPhase) {
-                ++stats.repeatedAdjacent;
-                ++currentRun;
-                stats.maxRun = std::max(stats.maxRun, currentRun);
-            } else {
+            if (phase >= 1 && previousPhase >= 1) {
+                ++stats.totalAdjacent;
+                if (phase == previousPhase) {
+                    ++stats.repeatedAdjacent;
+                    ++currentRun;
+                    stats.maxRun = std::max(stats.maxRun, currentRun);
+                } else {
+                    currentRun = 1;
+                }
+            } else if (phase < 1) {
                 currentRun = 1;
             }
             previousPhase = phase;
@@ -191,59 +203,84 @@ PhaseRepeatStats calculatePhaseRepeatStats(
     return stats;
 }
 
+int phaseRepeatMaxRunLimit(int phaseCount)
+{
+    return std::max(phaseCount + 2, phaseCount * 2 + 2);
+}
+
+bool hasAcceptablePhaseRepeats(const PhaseRepeatStats &stats, int phaseCount)
+{
+    if (stats.maxRun > phaseRepeatMaxRunLimit(phaseCount)) {
+        return false;
+    }
+    if (stats.totalAdjacent == 0) {
+        return true;
+    }
+    return stats.repeatedAdjacent * 10 <= stats.totalAdjacent * 3;
+}
+
+int phaseRepeatPenalty(const PhaseRepeatStats &stats, int phaseCount)
+{
+    const int maxRunPenalty = std::max(0, stats.maxRun - phaseRepeatMaxRunLimit(phaseCount));
+    const int repeatPenalty = (stats.totalAdjacent == 0)
+        ? 0
+        : std::max(0, stats.repeatedAdjacent * 10 - stats.totalAdjacent * 3);
+    return maxRunPenalty * 100000 + repeatPenalty;
+}
+
 bool isBetterLayout(const LayoutSearchResult &candidate,
                     const LayoutSearchResult &currentBest,
                     int phaseCount)
 {
-    const int allowedRun = std::max(4, phaseCount * 2);
-    const bool candidateAllowed = candidate.phaseRepeats.maxRun <= allowedRun;
-    const bool currentAllowed = currentBest.phaseRepeats.maxRun <= allowedRun;
-
-    if (candidateAllowed != currentAllowed) {
-        return candidateAllowed;
+    const bool candidatePhaseOk = hasAcceptablePhaseRepeats(candidate.phaseRepeats, phaseCount);
+    const bool currentPhaseOk = hasAcceptablePhaseRepeats(currentBest.phaseRepeats, phaseCount);
+    if (candidatePhaseOk != currentPhaseOk) {
+        return candidatePhaseOk;
     }
 
-    if (candidateAllowed) {
-        return std::tie(candidate.bounds.area,
-                        candidate.routeLength,
-                        candidate.phaseRepeats.maxRun,
-                        candidate.phaseRepeats.repeatedAdjacent,
-                        candidate.bounds.width,
-                        candidate.bounds.height)
-             < std::tie(currentBest.bounds.area,
-                        currentBest.routeLength,
-                        currentBest.phaseRepeats.maxRun,
-                        currentBest.phaseRepeats.repeatedAdjacent,
-                        currentBest.bounds.width,
-                        currentBest.bounds.height);
+    if (candidatePhaseOk) {
+        const auto score = [](const LayoutSearchResult &layout) {
+            return std::make_tuple(layout.bounds.area,
+                                   layout.phaseRepeats.maxRun,
+                                   layout.phaseRepeats.repeatedAdjacent,
+                                   layout.routeLength,
+                                   std::max(layout.bounds.width, layout.bounds.height),
+                                   layout.bounds.width,
+                                   layout.bounds.height,
+                                   layout.xSpacing * layout.ySpacing,
+                                   layout.searchCost);
+        };
+        return score(candidate) < score(currentBest);
     }
 
-    const auto score = [allowedRun](const LayoutSearchResult &layout) {
-        const int excessiveRun = std::max(0, layout.phaseRepeats.maxRun - allowedRun);
-        return static_cast<long long>(layout.bounds.area)
-             + static_cast<long long>(excessiveRun) * 800
-             + static_cast<long long>(layout.phaseRepeats.repeatedAdjacent) * 2
-             + static_cast<long long>(layout.routeLength) / 4;
+    const auto score = [phaseCount](const LayoutSearchResult &layout) {
+        return std::make_tuple(phaseRepeatPenalty(layout.phaseRepeats, phaseCount),
+                               layout.phaseRepeats.maxRun,
+                               layout.phaseRepeats.repeatedAdjacent,
+                               layout.bounds.area,
+                               layout.routeLength,
+                               std::max(layout.bounds.width, layout.bounds.height),
+                               layout.bounds.width,
+                               layout.bounds.height);
     };
 
-    const auto candidateScore = score(candidate);
-    const auto currentScore = score(currentBest);
-    if (candidateScore != currentScore) {
-        return candidateScore < currentScore;
+    return score(candidate) < score(currentBest);
+}
+
+bool sceneCoordinates(const fcngraph::position &cellPos, int &xCoord, int &yCoord)
+{
+    constexpr unsigned int kPitch = 20;
+    constexpr unsigned int kOrigin = 200;
+    constexpr unsigned int kMaxCellCoord =
+        (static_cast<unsigned int>(std::numeric_limits<int>::max()) - kOrigin) / kPitch;
+
+    if (cellPos.first > kMaxCellCoord || cellPos.second > kMaxCellCoord) {
+        return false;
     }
 
-    return std::tie(candidate.bounds.area,
-                    candidate.phaseRepeats.maxRun,
-                    candidate.phaseRepeats.repeatedAdjacent,
-                    candidate.routeLength,
-                    candidate.bounds.width,
-                    candidate.bounds.height)
-         < std::tie(currentBest.bounds.area,
-                    currentBest.phaseRepeats.maxRun,
-                    currentBest.phaseRepeats.repeatedAdjacent,
-                    currentBest.routeLength,
-                    currentBest.bounds.width,
-                    currentBest.bounds.height);
+    xCoord = static_cast<int>(cellPos.first * kPitch + kOrigin);
+    yCoord = static_cast<int>(cellPos.second * kPitch + kOrigin);
+    return true;
 }
 }
 
@@ -471,9 +508,27 @@ void VerilogHandler::handleGraphRender()
         std::string lastFailure;
         const auto attempts = buildLayoutAttempts();
         const int attemptLimit = std::min(settings.maxAttempts, static_cast<int>(attempts.size()));
+        const auto &layerNodes = parse.getlayerNodeDivVec();
+        std::size_t maxLayerWidth = 0;
+        for (const auto &layer : layerNodes) {
+            maxLayerWidth = std::max(maxLayerWidth, layer.size());
+        }
+        const auto placementAreaLowerBound = [maxLayerWidth, layerCount = layerNodes.size()](const LayoutAttempt &attempt) -> int {
+            if (maxLayerWidth == 0 || layerCount == 0) {
+                return 0;
+            }
+            const int width = static_cast<int>((maxLayerWidth - 1) * attempt.xSpacing + 1);
+            const int height = static_cast<int>((layerCount - 1) * attempt.ySpacing + 1);
+            return width * height;
+        };
 
         for (int attemptIndex = 0; attemptIndex < attemptLimit; ++attemptIndex) {
             const auto &attempt = attempts[attemptIndex];
+            const bool bestPhaseOk = bestLayout.has_value()
+                && hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
+            if (bestPhaseOk && placementAreaLowerBound(attempt) > bestLayout->bounds.area) {
+                continue;
+            }
             GridChessboard chessboard;
             Astar astar(chessboard, false, attempt.searchCost);
             CircuitGraph graph(parse, file, chessboard, astar);
@@ -533,7 +588,11 @@ void VerilogHandler::handleGraphRender()
                     || isBetterLayout(result, bestLayout.value(), settings.phaseCount);
                 if (isBetter) {
                     bestLayout = std::move(result);
-                    QString message = QString("Candidate %1/%2 success: %3x%4=%5, phase=%6, spacing=(%7,%8), max repeat=%9")
+                    const bool phaseOk = hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
+                    const double repeatRatio = bestLayout->phaseRepeats.totalAdjacent > 0
+                        ? static_cast<double>(bestLayout->phaseRepeats.repeatedAdjacent) / bestLayout->phaseRepeats.totalAdjacent
+                        : 0.0;
+                    QString message = QString("Candidate %1/%2 success: %3x%4=%5, phase=%6, spacing=(%7,%8), max repeat=%9, repeat ratio=%10% (%11)")
                         .arg(attemptIndex + 1)
                         .arg(attemptLimit)
                         .arg(bestLayout->bounds.width)
@@ -542,7 +601,9 @@ void VerilogHandler::handleGraphRender()
                         .arg(settings.phaseCount)
                         .arg(bestLayout->xSpacing)
                         .arg(bestLayout->ySpacing)
-                        .arg(bestLayout->phaseRepeats.maxRun);
+                        .arg(bestLayout->phaseRepeats.maxRun)
+                        .arg(repeatRatio * 100.0, 0, 'f', 1)
+                        .arg(phaseOk ? "phase-ok" : "phase-repeat-high");
                     emit operationProgress(message, attemptIndex + 1, attemptLimit);
                     QCoreApplication::processEvents();
                 }
@@ -573,13 +634,19 @@ void VerilogHandler::handleGraphRender()
                                         " \& " + QString::number(elapsedSeconds, 'f', 1) ;
         //测试时间
 
+        const bool phaseQualityOk = hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
+        const double repeatRatio = bestLayout->phaseRepeats.totalAdjacent > 0
+            ? static_cast<double>(bestLayout->phaseRepeats.repeatedAdjacent) / bestLayout->phaseRepeats.totalAdjacent
+            : 0.0;
         QString message =  "Graph layout success! " + elapsedStr +
                            QString(" ; best spacing=(%1,%2), route length=%3")
                                .arg(bestLayout->xSpacing)
                                .arg(bestLayout->ySpacing)
                                .arg(bestLayout->routeLength) +
-                           QString(" ; max phase repeat=%1")
-                               .arg(bestLayout->phaseRepeats.maxRun);
+                           QString(" ; max phase repeat=%1 ; repeat ratio=%2% ; phase quality=%3")
+                               .arg(bestLayout->phaseRepeats.maxRun)
+                               .arg(repeatRatio * 100.0, 0, 'f', 1)
+                               .arg(phaseQualityOk ? "ok" : "high-repeat-warning");
         emit operationFinished(message);
         QCoreApplication::processEvents();
 
@@ -642,6 +709,20 @@ void VerilogHandler::handleGraphRender()
                 }
             }
         }
+
+        saveGraphRenderIfcn(filePath,
+                            parse,
+                            node_pos_trans,
+                            routes_trans,
+                            pos_phase,
+                            settings.phaseCount,
+                            static_cast<int>(gateNum),
+                            static_cast<int>(inputNum),
+                            static_cast<int>(outputNum),
+                            static_cast<int>(wireNum),
+                            width,
+                            height,
+                            elapsedSeconds);
 
         mappingCellItem(node_pos_trans, routes_trans, parse, pos_phase);
         putClock(pos_phase);
@@ -1431,14 +1512,180 @@ position VerilogHandler::coordtrans(const position& pos, unsigned int scale)
     return {x, y};
 }
 
+void VerilogHandler::saveGraphRenderIfcn(
+    const QString &sourceFilePath,
+    Parse &parse,
+    const std::map<unsigned int, position> &nodePositions,
+    const std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> &routes,
+    const std::map<position, int> &posPhase,
+    int phaseCount,
+    int gateNum,
+    int inputNum,
+    int outputNum,
+    int wireNum,
+    int width,
+    int height,
+    double elapsedSeconds)
+{
+    const int blockSize = phaseCount == 3 ? 3 : 4;
+    const QFileInfo sourceInfo(sourceFilePath);
+    const QString circuitFileName = sourceInfo.fileName().isEmpty()
+        ? QString::fromStdString(parse.get_moduleName())
+        : sourceInfo.fileName();
+    const QString outputPath = sourceInfo.absoluteDir().exists()
+        ? sourceInfo.absoluteDir().filePath(sourceInfo.completeBaseName() + "_gate_level_pr.ifcn")
+        : QDir::current().filePath(sourceInfo.completeBaseName() + "_gate_level_pr.ifcn");
+
+    bool hasCoord = false;
+    unsigned int originX = 0;
+    unsigned int originY = 0;
+    unsigned int maxX = 0;
+    unsigned int maxY = 0;
+    auto includeCoord = [&](const position &pos) {
+        if (!hasCoord) {
+            originX = maxX = pos.first;
+            originY = maxY = pos.second;
+            hasCoord = true;
+            return;
+        }
+        originX = std::min(originX, pos.first);
+        originY = std::min(originY, pos.second);
+        maxX = std::max(maxX, pos.first);
+        maxY = std::max(maxY, pos.second);
+    };
+
+    for (const auto &entry : posPhase) {
+        includeCoord(entry.first);
+    }
+    for (const auto &entry : nodePositions) {
+        includeCoord(entry.second);
+    }
+    for (const auto &route : routes) {
+        for (const position &pos : route.second) {
+            includeCoord(pos);
+        }
+    }
+
+    if (!hasCoord) {
+        mainWindow->printToStatusBar("No graph layout coordinates to save.");
+        return;
+    }
+
+    const int normalizedWidth = std::max(width, static_cast<int>(maxX - originX + 1));
+    const int normalizedHeight = std::max(height, static_cast<int>(maxY - originY + 1));
+
+    auto normalizePos = [&](const position &pos) -> position {
+        return {pos.first - originX, pos.second - originY};
+    };
+
+    std::map<unsigned int, position> normalizedNodePositions;
+    for (const auto &entry : nodePositions) {
+        normalizedNodePositions[entry.first] = normalizePos(entry.second);
+    }
+
+    std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> normalizedRoutes;
+    for (const auto &route : routes) {
+        auto &path = normalizedRoutes[route.first];
+        path.reserve(route.second.size());
+        for (const position &pos : route.second) {
+            path.push_back(normalizePos(pos));
+        }
+    }
+
+    std::map<position, int> normalizedPosPhase;
+    for (const auto &entry : posPhase) {
+        normalizedPosPhase[normalizePos(entry.first)] = entry.second;
+    }
+
+    QFile file(outputPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        mainWindow->printToStatusBar("Failed to save .ifcn: " + QDir::toNativeSeparators(outputPath));
+        return;
+    }
+
+    QTextStream out(&file);
+    out << "#circuit name: " << circuitFileName << "\n\n";
+    out << "#designed by graph render algorithm with encoded "
+        << phaseCount << "-phase clock tiles.\n\n";
+
+    out << "#gate level placement and routing infomation\n";
+    out << "#gates number: " << gateNum << "\n";
+    out << "#input/output: " << inputNum << " / " << outputNum << "\n";
+    out << "#edges number: " << wireNum << "\n";
+    out << "#total layers: " << static_cast<int>(parse.getlayerNodeDivVec().size()) << "\n";
+    out << "#layout area: width: " << normalizedWidth << ", height: " << normalizedHeight
+        << ", area: " << normalizedWidth * normalizedHeight << "\n";
+    out << "#phase origin: top-left=(" << originX << "," << originY
+        << "), saved coordinates are normalized to (0,0)\n";
+    out << "#phase count: " << phaseCount << "\n";
+    out << "#runtime: " << QString::number(elapsedSeconds, 'f', 3) << "s\n\n";
+
+    out << "#nodes info \n";
+    out << "### nodeIndex, nodeName, nodeType, nodePosition ###\n";
+    for (const auto &entry : normalizedNodePositions) {
+        const int nodeIndex = static_cast<int>(entry.first);
+        out << nodeIndex << ", "
+            << QString::fromStdString(parse.getNodeName(nodeIndex)) << ", "
+            << QString::fromStdString(parse.getNodeType(nodeIndex)) << ", "
+            << "(" << entry.second.first << "," << entry.second.second << ");\n";
+    }
+    out << "#nodes info \n\n";
+
+    out << "#paths info\n";
+    out << "### {node1, node2} : path ###\n";
+    for (const auto &route : normalizedRoutes) {
+        out << "(" << route.first.first << "," << route.first.second << "): ";
+        for (std::size_t i = 0; i < route.second.size(); ++i) {
+            if (i > 0) {
+                out << ",";
+            }
+            out << "(" << route.second[i].first << "," << route.second[i].second << ")";
+        }
+        out << ";\n";
+    }
+    out << "#paths info\n";
+
+    out << "#phase map\n";
+    out << "#phase codec: phase_count=" << phaseCount
+        << ", block_size=" << blockSize
+        << ", encoding=packed_hex_2bit_row_major\n";
+    out << "### tile(x,y) : packed_hex for a "
+        << blockSize << "x" << blockSize << " phase block ###\n";
+
+    try {
+        const auto encodedTiles = fcngraph::phase_codec::encodePhaseMapToTiles(
+            normalizedPosPhase,
+            phaseCount,
+            blockSize,
+            normalizedWidth,
+            normalizedHeight
+        );
+        for (const auto &tile : encodedTiles) {
+            out << "tile(" << tile.tileX << "," << tile.tileY << "):0x"
+                << QString::fromStdString(tile.hex) << ";\n";
+        }
+    } catch (const std::exception &ex) {
+        mainWindow->printToStatusBar(QString("Failed to encode phase map: %1").arg(ex.what()));
+        return;
+    }
+    out << "#phase map\n";
+    file.close();
+
+    mainWindow->printToStatusBar("Graph render .ifcn saved: " + QDir::toNativeSeparators(outputPath));
+}
+
 void VerilogHandler::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position, int>& _pos_phase, QString _name)
 {
-    int x_node = _cellpos.first / 5;
-    int y_node = _cellpos.second / 5;
-    int x_coord = _cellpos.first*20 + 200;  // 坐标
-    int y_coord = _cellpos.second*20 + 200;
+    int x_coord = 0;
+    int y_coord = 0;
+    if (!sceneCoordinates(_cellpos, x_coord, y_coord)) {
+        qWarning() << "[VerilogHandler] Skip mapped cell with invalid scene coordinate:"
+                   << _cellpos.first << _cellpos.second;
+        return;
+    }
+
     int cell_layer = _celllayer;
-    position node_pos = {static_cast<unsigned int>(x_node), static_cast<unsigned int>(y_node)};
+    position node_pos = {_cellpos.first / 5, _cellpos.second / 5};
     auto phase_it = _pos_phase.find(node_pos);
     int phase = (phase_it != _pos_phase.end()) ? phase_it->second : -1;
     
@@ -1490,23 +1737,10 @@ void VerilogHandler::generateSVG()
         exportScale *= (static_cast<qreal>(kMaxExportDimension) / maxDimension);
     }
 
-    const QSize imageSize(
+    const QSize svgSize(
         qMax(1, static_cast<int>(std::ceil(itemsBoundingRect.width() * exportScale))),
         qMax(1, static_cast<int>(std::ceil(itemsBoundingRect.height() * exportScale)))
     );
-
-    // 创建一个QImage对象用于保存PNG文件
-    QImage image(imageSize, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent); // 透明背景
-
-    // 使用QPainter将场景内容绘制到QImage上
-    QPainter painter(&image);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setRenderHint(QPainter::TextAntialiasing);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-
-    // 渲染场景内容（不进行平移）
-    mainWindow->scene->render(&painter, QRectF(QPointF(0, 0), QSizeF(imageSize)), itemsBoundingRect);
 
     const QFileInfo currentFileInfo(mainWindow->currentFilePath());
     const QString circuitName = currentFileInfo.completeBaseName().isEmpty()
@@ -1515,20 +1749,33 @@ void VerilogHandler::generateSVG()
     const QDir outputDir = currentFileInfo.absoluteDir().exists()
         ? currentFileInfo.absoluteDir()
         : QDir::current();
-    const QString outputPath = outputDir.absoluteFilePath(circuitName + "_cell_level_layout.png");
+    const QString outputPath = outputDir.absoluteFilePath(circuitName + "_cell_level_layout.svg");
 
-    if (!image.save(outputPath)) {
+    QSvgGenerator svgGenerator;
+    svgGenerator.setFileName(outputPath);
+    svgGenerator.setSize(svgSize);
+    svgGenerator.setViewBox(QRect(QPoint(0, 0), svgSize));
+    svgGenerator.setTitle(QStringLiteral("iFCN cell-level layout"));
+    svgGenerator.setDescription(QStringLiteral("Vector cell-level layout exported by iFCN."));
+
+    QPainter painter(&svgGenerator);
+    if (!painter.isActive()) {
         QString message = "Failed to save cell-level layout: " + QDir::toNativeSeparators(outputPath);
         mainWindow->printToStatusBar(message);
         return;
     }
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+
+    mainWindow->scene->render(&painter, QRectF(QPointF(0, 0), QSizeF(svgSize)), itemsBoundingRect);
+    painter.end();
 
     //打印信息
-    QString message = QString("Cell-level layout saved: %1 (%2x, %3x%4)")
+    QString message = QString("Cell-level layout saved as SVG: %1 (%2x, %3x%4)")
         .arg(QDir::toNativeSeparators(outputPath))
         .arg(QString::number(exportScale, 'f', 2))
-        .arg(imageSize.width())
-        .arg(imageSize.height());
+        .arg(svgSize.width())
+        .arg(svgSize.height());
     mainWindow->printToStatusBar(message);
 
 }

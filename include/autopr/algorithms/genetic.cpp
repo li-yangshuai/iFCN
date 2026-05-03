@@ -181,7 +181,8 @@ bool GeneticAlgorithm::gaRun(){
 
 void GeneticAlgorithm::printLaTex(CLOCK_SCHEME  _clockType, position _northWest, position _southEast, 
     std::map<unsigned int, position> nodeIndex_pos, std::map<std::pair<unsigned int, unsigned int>, 
-    std::vector<position>> routes, std::vector<position> cross_nodes) {
+    std::vector<position>> routes, std::vector<position> cross_nodes,
+    const std::map<position, int> &phaseMap) {
     //坐标转换
     int widget_H = _southEast.second;
     std::string filename = parse.get_moduleName() +".tex";
@@ -210,17 +211,37 @@ v/.style={circle, draw, fill=white, line width = 0.8pt, minimum size=0.7cm},
 ]
 )" << std::endl;
 
-            os << R"(\def\sz{)" << _southEast.first << "}" << std::endl;
+            os << R"(\def\layoutw{)" << _southEast.first << "}" << std::endl;
+            os << R"(\def\layouth{)" << _southEast.second << "}" << std::endl;
 
-            os << R"(\pgfmathparse{\sz-1}
-\foreach \x in {0,1,...,\pgfmathresult}
-  \foreach \y in {0,1,...,\pgfmathresult})" << std::endl;
+            if (!phaseMap.empty()) {
+                os << R"(%phase map exported from the routed layout; raw origin is top-left (0,0))" << std::endl;
+                for (unsigned int x = 0; x < _southEast.first; ++x) {
+                    for (unsigned int y = 0; y < _southEast.second; ++y) {
+                        const auto phaseIt = phaseMap.find({x, y});
+                        const int rawPhase = (phaseIt != phaseMap.end()) ? phaseIt->second : 0;
+                        int stylePhase = rawPhase + 1;
+                        if (stylePhase < 1) {
+                            stylePhase = 1;
+                        } else if (stylePhase > 4) {
+                            stylePhase = 4;
+                        }
+                        const unsigned int drawY = _southEast.second - y - 1;
+                        os << "\\node[c" << stylePhase << "]at(" << x << "," << drawY << "){};" << std::endl;
+                    }
+                }
+                os << std::endl;
+            } else {
+            os << R"(\pgfmathtruncatemacro{\xmax}{\layoutw-1}
+\pgfmathtruncatemacro{\ymax}{\layouth-1}
+\foreach \x in {0,1,...,\xmax}
+  \foreach \y in {0,1,...,\ymax})" << std::endl;
             
             switch (_clockType) {
                 case CLOCK_SCHEME::USE:
                     os
                             // << R"("\pgfmathparse{(mod(\y,2)!=0) ? ((mod(\y+1,4)!=0)?(1+mod(\x+1,4)):(1+mod(\x+3,4))):((mod(\y,4)==0)?(4-mod(\x+3,4)):(4-mod(\x+1,4)))})"
-                            << R"("\pgfmathparse{(mod(\y,2)!=0) ? 
+                            << R"(\pgfmathparse{(mod(\y,2)!=0) ? 
                                 ((mod(\y+1,4)!=0)?(1+mod(\x+2,4)):(1+mod(\x,4))) :
                                 ((mod(\y,4)==0)?(4-mod(\x+2,4)):(4-mod(\x,4)))})"
                             << std::endl;
@@ -247,19 +268,20 @@ v/.style={circle, draw, fill=white, line width = 0.8pt, minimum size=0.7cm},
                     break;
                 case CLOCK_SCHEME::BANCS:
                     os
-                            <<R"(\pgfmathparse{(mod(\y,6)) == 0) ? (3 - mod(\x+2,3)):
-		                        ((mod(\y-1,6) == 0) ? (1 + mod(\x+4,3)) :
-			                    (((mod(\y-2,6) == 0) ? (3 - mod(\x + 4,3)) :
-				                (((mod(\y-3,6) == 0) ? (1 + mod(\x + 2 , 3)) :
-					            (((mod((\y - 4) , 6) == 0) ? (3 - mod((\x + 3) , 3)) : (1 + mod((\x + 3) , 3))))))})"
+                            <<R"(\pgfmathparse{(mod(\y,6) == 0) ? (3 - mod(\x+2,3)) :
+                                ((mod(\y-1,6) == 0) ? (1 + mod(\x+4,3)) :
+                                ((mod(\y-2,6) == 0) ? (3 - mod(\x+4,3)) :
+                                ((mod(\y-3,6) == 0) ? (1 + mod(\x+2,3)) :
+                                ((mod(\y-4,6) == 0) ? (3 - mod(\x+3,3)) : (1 + mod(\x+3,3))))))})"
                             << std::endl;
                     break;
             }
-            os << R"(\pgfmathparse{int(\pgfmathresult)}
-    \node[c\pgfmathresult]at(\x,\y){};)" << std::endl;
-            os << std::endl;
+	            os << R"(\pgfmathparse{int(\pgfmathresult)}
+	    \node[c\pgfmathresult]at(\x,\y){};)" << std::endl;
+	            os << std::endl;
+            }
 
-            os << R"(%nodes and edges)" << std::endl;
+	            os << R"(%nodes and edges)" << std::endl;
             for(auto &node : parse.getEffectiveNodes()){
                 auto node_pos = nodeIndex_pos[node];
                 auto x = node_pos.first;

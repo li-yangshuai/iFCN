@@ -65,6 +65,8 @@ public:
 
     bool phaseOptimize(int current_layer, std::vector<fcngraph::Path>& paths, std::vector<int>& start_phases, int phaseCount = 4, int recursion_count = 0); 
     bool assignPhasesFallback(int phaseCount = 4);
+    bool assignRouteConstraintPhases(int phaseCount = 4);
+    bool validateAssignedRoutePhases(int phaseCount = 4) const;
 
     // 打印latex结果
     void printLaTex();
@@ -87,6 +89,8 @@ private:
     std::vector<std::pair<int, position>> sorted_grid_positions;
         //回调打印的信息用；
     std::function<void(std::string)> fitnessCallback;
+
+    bool hasAcceptableAssignedRoutePhases(int phaseCount = 4) const;
 
 };
 

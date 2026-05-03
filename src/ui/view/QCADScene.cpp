@@ -1,7 +1,10 @@
 #include "QCADScene.h"
+#include <QAction>
 #include <QGraphicsSceneMouseEvent>
+#include <QMenu>
 #include<QStandardItem>
 #include <QStyleOptionGraphicsItem>
+#include <algorithm>
 #include <cmath>
 #include "ui/mainwindow/MainWindow.h"
 
@@ -68,12 +71,237 @@ void QCADScene::setItemType(CellType type){
 }
 
 void QCADScene::setCurrentClockIndex(int _clockPhase){
-    currentClockIndex = _clockPhase;
+    currentClockIndex = _clockPhase < 0 ? -1 : qBound(0, _clockPhase, 3);
 }
 
 void QCADScene::setCurrentLayerIndex(int _layer){
     currentLayerIndex = _layer;
     rebuildInteractiveFastLayer();
+}
+
+QPointF QCADScene::clockCenterForPosition(const QPointF &pos) const
+{
+    const int x = static_cast<int>(std::floor((pos.x() + 10.0) / CLOCK_SCHEME_SIZE_5)) * CLOCK_SCHEME_SIZE_5 + 40;
+    const int y = static_cast<int>(std::floor((pos.y() + 10.0) / CLOCK_SCHEME_SIZE_5)) * CLOCK_SCHEME_SIZE_5 + 40;
+    return QPointF(x, y);
+}
+
+QCADClockScheme* QCADScene::clockSchemeAt(const QPointF &pos) const
+{
+    const auto allItems = items();
+    for (QGraphicsItem *item : allItems) {
+        if (item == nullptr || item->type() != QCADClockScheme::Type) {
+            continue;
+        }
+        if (item->contains(item->mapFromScene(pos))) {
+            return static_cast<QCADClockScheme *>(item);
+        }
+    }
+    return nullptr;
+}
+
+int QCADScene::phaseAtPosition(const QPointF &pos, int fallbackPhase) const
+{
+    if (QCADClockScheme *clockItem = clockSchemeAt(pos)) {
+        if (clockItem->phase() >= 0) {
+            return clockItem->phase();
+        }
+    }
+    return normalizedCellPhase(fallbackPhase);
+}
+
+void QCADScene::insertOrUpdateClockScheme(const QPointF &pos)
+{
+    const QPointF center = clockCenterForPosition(pos);
+    if (QCADClockScheme *clockItem = clockSchemeAt(center)) {
+        applyClockPhase(clockItem, currentClockIndex);
+        return;
+    }
+
+    auto *item = new QCADClockScheme(currentClockIndex);
+    item->setPos(center);
+    item->setZValue(-1);
+    item->setVisible(clockGridVisible);
+    addItem(item);
+    syncCellsWithClockScheme(item);
+    update(item->sceneBoundingRect());
+    if (!views().isEmpty()) {
+        if (MainWindow* mw = qobject_cast<MainWindow*>(views().first()->window())) {
+            mw->setDirty(true);
+            mw->pushUndoSnapshot();
+        }
+    }
+}
+
+bool QCADScene::showClockPhaseMenu(const QPointF &pos, const QPoint &screenPos)
+{
+    QCADClockScheme *clockItem = clockSchemeAt(pos);
+    if (clockItem == nullptr) {
+        return false;
+    }
+
+    QMenu menu;
+    const QVector<int> phases = {-1, 0, 1, 2, 3};
+    for (int phase : phases) {
+        QAction *phaseAction = menu.addAction(phase < 0 ? tr("No Phase (-1)")
+                                                        : tr("Phase %1").arg(phase));
+        phaseAction->setCheckable(true);
+        phaseAction->setChecked(clockItem->phase() == phase);
+        phaseAction->setData(phase);
+    }
+    menu.addSeparator();
+    QAction *deleteAction = menu.addAction(tr("Delete"));
+
+    QAction *selectedAction = menu.exec(screenPos);
+    if (selectedAction == nullptr) {
+        return true;
+    }
+
+    if (selectedAction == deleteAction) {
+        deleteClockScheme(clockItem);
+        return true;
+    }
+
+    applyClockPhase(clockItem, selectedAction->data().toInt());
+    return true;
+}
+
+void QCADScene::applyClockPhase(QCADClockScheme *clockItem, int phase)
+{
+    if (clockItem == nullptr) {
+        return;
+    }
+
+    const int boundedPhase = qBound(0, phase, 3);
+    const int nextPhase = phase < 0 ? -1 : boundedPhase;
+    const bool phaseChanged = clockItem->phase() != nextPhase;
+    clockItem->setPhase(nextPhase);
+
+    const QVariant fastClock = clockItem->data(FastClockRole);
+    const QVariant fastIndex = clockItem->data(FastIndexRole);
+    if (fastClock.toBool() && fastIndex.isValid()) {
+        const int index = fastIndex.toInt();
+        if (index >= 0 && index < fastClocks.size()) {
+            fastClocks[index].phase = nextPhase;
+        }
+    }
+
+    const bool cellsChanged = syncCellsWithClockScheme(clockItem);
+    if ((phaseChanged || cellsChanged) && !views().isEmpty()) {
+        if (MainWindow* mw = qobject_cast<MainWindow*>(views().first()->window())) {
+            mw->setDirty(true);
+            mw->pushUndoSnapshot();
+        }
+    }
+    update(clockItem->sceneBoundingRect());
+}
+
+void QCADScene::deleteClockScheme(QCADClockScheme *clockItem)
+{
+    if (clockItem == nullptr) {
+        return;
+    }
+
+    const QRectF dirtyRect = clockItem->sceneBoundingRect();
+    const QVariant fastClock = clockItem->data(FastClockRole);
+    const QVariant fastIndex = clockItem->data(FastIndexRole);
+    bool removed = false;
+
+    if (fastClock.toBool() && fastIndex.isValid()) {
+        const int index = fastIndex.toInt();
+        if (index >= 0 && index < fastClocks.size()) {
+            fastClocks.remove(index);
+            fastClockTiles.clear();
+            fastClockOccupancy.clear();
+            for (int clockIndex = 0; clockIndex < fastClocks.size(); ++clockIndex) {
+                const auto &clock = fastClocks[clockIndex];
+                fastClockOccupancy.insert(packSceneKey(clock.x, clock.y));
+                fastClockTiles[packTileKey(clock.x / kFastRenderTileSize,
+                                           clock.y / kFastRenderTileSize)].push_back(clockIndex);
+            }
+
+            fastBounds = QRectF();
+            for (const auto &clock : fastClocks) {
+                fastBounds = fastBounds.isValid() ? fastBounds.united(clockRectForPosition(clock.x, clock.y))
+                                                  : clockRectForPosition(clock.x, clock.y);
+            }
+            for (const auto &layerCells : fastCellsPerLayer) {
+                for (const auto &cell : layerCells) {
+                    fastBounds = fastBounds.isValid() ? fastBounds.united(cellRectForPosition(cell.x, cell.y))
+                                                      : cellRectForPosition(cell.x, cell.y);
+                }
+            }
+
+            rebuildFastClockOverlay();
+            removed = true;
+        }
+    }
+
+    if (!removed) {
+        removeItem(clockItem);
+        delete clockItem;
+        removed = true;
+    }
+
+    if (!views().isEmpty()) {
+        if (MainWindow* mw = qobject_cast<MainWindow*>(views().first()->window())) {
+            mw->setDirty(true);
+            mw->pushUndoSnapshot();
+        }
+    }
+    update(dirtyRect);
+}
+
+bool QCADScene::syncCellsWithClockScheme(QCADClockScheme *clockItem)
+{
+    if (clockItem == nullptr) {
+        return false;
+    }
+    if (clockItem->phase() < 0) {
+        return false;
+    }
+
+    bool changed = false;
+    const QRectF region = clockItem->sceneBoundingRect();
+    const auto overlappingItems = items(region, Qt::IntersectsItemShape, Qt::DescendingOrder, QTransform());
+    for (QGraphicsItem *item : overlappingItems) {
+        if (item == nullptr || item->type() != QCADCellItem::Type) {
+            continue;
+        }
+        auto *cellItem = static_cast<QCADCellItem *>(item);
+        if (!clockItem->contains(clockItem->mapFromScene(cellItem->pos()))) {
+            continue;
+        }
+        changed = setCellPhase(cellItem, clockItem->phase()) || changed;
+    }
+    return changed;
+}
+
+bool QCADScene::setCellPhase(QCADCellItem *cellItem, int phase)
+{
+    if (cellItem == nullptr) {
+        return false;
+    }
+
+    const int boundedPhase = normalizedCellPhase(phase);
+    if (simon::timezone(*cellItem) == boundedPhase) {
+        return false;
+    }
+
+    simon::timezone(*cellItem) = boundedPhase;
+    cellItem->update();
+
+    const QVariant fastLayer = cellItem->data(FastLayerRole);
+    const QVariant fastIndex = cellItem->data(FastIndexRole);
+    if (fastLayer.isValid() && fastIndex.isValid()) {
+        updateFastCellPhase(fastLayer.toInt(), fastIndex.toInt(), boundedPhase);
+    }
+    return true;
+}
+
+int QCADScene::normalizedCellPhase(int phase) const
+{
+    return phase < 0 ? 0 : qBound(0, phase, 3);
 }
 
 
@@ -277,6 +505,20 @@ void QCADScene::updateFastCellPosition(int layer, int index, int x, int y)
     update();
 }
 
+void QCADScene::updateFastCellPhase(int layer, int index, int phase)
+{
+    if (layer < 0 || layer >= fastCellsPerLayer.size()) {
+        return;
+    }
+    auto &cells = fastCellsPerLayer[layer];
+    if (index < 0 || index >= cells.size()) {
+        return;
+    }
+
+    cells[index].phase = qBound(0, phase, 3);
+    update(cellRectForPosition(cells[index].x, cells[index].y));
+}
+
 void QCADScene::updateFastCellName(int layer, int index, const QString &name)
 {
     if (layer < 0 || layer >= fastCellsPerLayer.size()) {
@@ -360,6 +602,63 @@ bool QCADScene::isClockGridVisible() const
     return clockGridVisible;
 }
 
+QVector<QCADScene::ClockRegionRecord> QCADScene::clockRegions() const
+{
+    QVector<ClockRegionRecord> regions;
+    QSet<quint64> seen;
+
+    auto appendRegion = [&regions, &seen](int x, int y, int phase) {
+        const quint64 key = packSceneKey(x, y);
+        if (seen.contains(key)) {
+            return;
+        }
+        seen.insert(key);
+        ClockRegionRecord record;
+        record.x = x;
+        record.y = y;
+        record.phase = phase < 0 ? -1 : qBound(0, phase, 3);
+        regions.push_back(record);
+    };
+
+    for (const auto &clock : fastClocks) {
+        appendRegion(clock.x, clock.y, clock.phase);
+    }
+
+    const auto allItems = items();
+    for (QGraphicsItem *item : allItems) {
+        if (item == nullptr || item->type() != QCADClockScheme::Type ||
+            item->data(FastClockRole).toBool()) {
+            continue;
+        }
+        auto *clockItem = static_cast<QCADClockScheme *>(item);
+        appendRegion(static_cast<int>(std::round(clockItem->pos().x())),
+                     static_cast<int>(std::round(clockItem->pos().y())),
+                     clockItem->phase());
+    }
+
+    std::sort(regions.begin(), regions.end(), [](const ClockRegionRecord &lhs,
+                                                 const ClockRegionRecord &rhs) {
+        if (lhs.x != rhs.x) {
+            return lhs.x < rhs.x;
+        }
+        return lhs.y < rhs.y;
+    });
+    return regions;
+}
+
+void QCADScene::restoreClockRegions(const QVector<ClockRegionRecord> &regions)
+{
+    clearPhaseRecord();
+    for (const ClockRegionRecord &region : regions) {
+        auto *item = new QCADClockScheme(region.phase);
+        item->setPos(region.x, region.y);
+        item->setZValue(-1);
+        item->setVisible(clockGridVisible);
+        addItem(item);
+    }
+    update();
+}
+
 void QCADScene::drawBackground(QPainter *painter, const QRectF &rect)
 {
     painter->fillRect(rect, QColor("#FFFFFF"));
@@ -409,28 +708,41 @@ QPointF QCADScene::caculateRealPostion(int _posx, int _posy){
 /* 冲突检测*/
 void QCADScene::mousePressEvent(QGraphicsSceneMouseEvent *event){
 
-    if(currentMode == EditMode::Insert){
+    if (event->button() == Qt::RightButton) {
+        if (showClockPhaseMenu(event->scenePos(), event->screenPos())) {
+            event->accept();
+            return;
+        }
+        QGraphicsScene::mousePressEvent(event);
+        return;
+    }
+
+    if (currentMode == EditMode::ClockScheme) {
+        if (event->button() == Qt::LeftButton) {
+            insertOrUpdateClockScheme(event->scenePos());
+            event->accept();
+            return;
+        }
+    } else if(currentMode == EditMode::Insert && event->button() == Qt::LeftButton){
 
         QPointF scenePoint = event->scenePos();
-        QList<QGraphicsItem*> itemsAtPos = items(scenePoint, Qt::IntersectsItemShape, Qt::DescendingOrder, QTransform()); 
+        QPointF realPos = caculateRealPostion(scenePoint.x(),scenePoint.y());
+        QList<QGraphicsItem*> itemsAtPos = items(realPos, Qt::IntersectsItemShape, Qt::DescendingOrder, QTransform());
         
         for(QGraphicsItem* item : itemsAtPos){
-            if(item->type() == QCADClockScheme::Type){
-                QCADClockScheme* clockItem = dynamic_cast<QCADClockScheme*>(item);
-                currentClockIndex = clockItem->clockPhaseType();
-            }
-
             if(item->type() == QCADCellItem::Type){
                 if(currentLayerIndex == item->zValue())
                     return;
             }
         }
 
-        QPointF realPos = caculateRealPostion(scenePoint.x(),scenePoint.y());
-        QCADCellItem * cellItem = new QCADCellItem( realPos.x(), realPos.y(), currentLayerIndex, currentClockIndex, myCellType);
+        const int phase = phaseAtPosition(realPos, currentClockIndex);
+        QCADCellItem * cellItem = new QCADCellItem( realPos.x(), realPos.y(), currentLayerIndex, phase, myCellType);
         cellItem->setPos(simon::x(*cellItem), simon::y(*cellItem));     //在scene层添加
 
         emit cellItemInserted(cellItem);
+        event->accept();
+        return;
 
     }else if (currentMode == EditMode::Select) {
         // check if the item is cell， is not clockzone
@@ -451,6 +763,7 @@ void QCADScene::mouseMoveEvent(QGraphicsSceneMouseEvent *event){
 
 void QCADScene::mouseReleaseEvent(QGraphicsSceneMouseEvent *event) {
     if (currentMode == EditMode::Select) {
+        bool changed = false;
         foreach (QGraphicsItem *item, selectedItems()) {
             if (item->type() == QCADCellItem::Type) {
                 QCADCellItem* cellItem = static_cast<QCADCellItem*>(item);
@@ -479,19 +792,22 @@ void QCADScene::mouseReleaseEvent(QGraphicsSceneMouseEvent *event) {
                     cellItem->setPos(nextpos);
                     simon::x(*cellItem) = nextpos.x();
                     simon::y(*cellItem) = nextpos.y();
+                    const int phase = phaseAtPosition(nextpos, simon::timezone(*cellItem));
                     const QVariant fastLayer = item->data(FastLayerRole);
                     const QVariant fastIndex = item->data(FastIndexRole);
                     if (fastLayer.isValid() && fastIndex.isValid()) {
                         updateFastCellPosition(fastLayer.toInt(), fastIndex.toInt(),
                                                static_cast<int>(nextpos.x()), static_cast<int>(nextpos.y()));
                     }
-
-                    if (!views().isEmpty()) {
-                        if (MainWindow* mw = qobject_cast<MainWindow*>(views().first()->window())) {
-                            mw->setDirty(true);
-                        }
-                    }
+                    setCellPhase(cellItem, phase);
+                    changed = true;
                 }
+            }
+        }
+        if (changed && !views().isEmpty()) {
+            if (MainWindow* mw = qobject_cast<MainWindow*>(views().first()->window())) {
+                mw->setDirty(true);
+                mw->pushUndoSnapshot();
             }
         }
     }
@@ -683,6 +999,7 @@ void QCADScene::rebuildFastClockOverlay()
         item->setZValue(-1);
         item->setVisible(true);
         item->setData(FastClockRole, true);
+        item->setData(FastIndexRole, fastClockOverlayItems.size());
         addItem(item);
         fastClockOverlayItems.push_back(item);
     }

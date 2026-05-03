@@ -39,24 +39,37 @@ void MainWindow::createActions()
     copyAction->setShortcut(tr("Ctrl+C"));
     copyAction->setShortcuts(QKeySequence::Copy);
     copyAction->setStatusTip(tr("copy file"));
+    connect(copyAction, &QAction::triggered, this, &MainWindow::slotCopyItems);
 
     /******** "剪切"动作 *********/
     cutAction = new QAction(QIcon(QDir::toNativeSeparators(":/cut.png")), tr("&Cut"), this);
     cutAction->setShortcut(tr("Ctrl+X"));
     cutAction->setShortcuts(QKeySequence::Cut);
     cutAction->setStatusTip(tr("cut file"));
+    connect(cutAction, &QAction::triggered, this, &MainWindow::slotCutItems);
 
     /******** "剪切"动作 *********/
     pasteAction = new QAction(QIcon(QDir::toNativeSeparators(":/paste.png")), tr("&Paste"), this);
     pasteAction->setShortcut(tr("Ctrl+V"));
     pasteAction->setShortcuts(QKeySequence::Paste);
     pasteAction->setStatusTip(tr("paste file"));
+    connect(pasteAction, &QAction::triggered, this, &MainWindow::slotPasteItems);
 
     /******** "删除"动作 *********/
     deleteAction = new QAction(QIcon(QDir::toNativeSeparators(":/delete.png")), tr("&Delete"), this);
     deleteAction->setShortcut(tr("Delete"));
     deleteAction->setStatusTip(tr("delete cell item from scene"));
     connect(deleteAction, SIGNAL(triggered()), this, SLOT(slotDeleteItem()));
+
+    undoAction = new QAction(tr("&Undo"), this);
+    undoAction->setShortcuts(QKeySequence::Undo);
+    undoAction->setStatusTip(tr("undo last edit"));
+    connect(undoAction, &QAction::triggered, this, &MainWindow::slotUndo);
+
+    redoAction = new QAction(tr("&Redo"), this);
+    redoAction->setShortcuts(QKeySequence::Redo);
+    redoAction->setStatusTip(tr("redo last undone edit"));
+    connect(redoAction, &QAction::triggered, this, &MainWindow::slotRedo);
 
     /******** "放大"动作 *********/
     zoomInAction = new QAction(QIcon(QDir::toNativeSeparators(":/zoomIn.png")), tr("Zoom&In"), this);
@@ -170,10 +183,11 @@ void MainWindow::createActions()
     
     /******** "clock comboBox" *********/
     clockComboBox = new QComboBox(this); 
-    clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock0.png")), tr("Clock0"));
-    clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock1.png")), tr("Clock1"));
-    clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock2.png")), tr("Clock2"));
-    clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock3.png")), tr("Clock3"));
+    clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock0.png")), tr("Clock0"), 0);
+    clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock1.png")), tr("Clock1"), 1);
+    clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock2.png")), tr("Clock2"), 2);
+    clockComboBox->addItem(QIcon(QDir::toNativeSeparators(":/clock3.png")), tr("Clock3"), 3);
+    clockComboBox->addItem(tr("No Phase (-1)"), -1);
     connect(clockComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT( slotClockIndexChanged(int) ));
 
     //view mode
@@ -269,6 +283,10 @@ void MainWindow::createMenus()
     editMenu->addAction(cutAction);
     editMenu->addAction(pasteAction);
     editMenu->addAction(deleteAction);
+    editMenu->addSeparator();
+    editMenu->addAction(undoAction);
+    editMenu->addAction(redoAction);
+    editMenu->addSeparator();
     editMenu->addAction(zoomInAction);
     editMenu->addAction(zoomOutAction);
 
@@ -314,6 +332,8 @@ void MainWindow::createToolBars()
     editTool->addAction(cutAction);
     editTool->addAction(pasteAction);
     editTool->addAction(deleteAction);
+    editTool->addAction(undoAction);
+    editTool->addAction(redoAction);
 
     editTool->addAction(zoomInAction);
     editTool->addAction(zoomOutAction);

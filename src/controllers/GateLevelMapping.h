@@ -58,7 +58,10 @@ private:
     void parseNodeLine(const QString &line);
     void parsePathLine(const QString &line);
     void parsePhaseLine(const QString &line);
+    void parsePhaseCodecLine(const QString &line);
     MainWindow *mainWindow;
+    int phaseCodecPhaseCount = 4;
+    int phaseCodecBlockSize = 4;
 };
 
 

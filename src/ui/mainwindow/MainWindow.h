@@ -38,6 +38,7 @@ using namespace fcngraph;
 #include <string>
 
 class TabbedMainWindow;
+class QTextStream;
 
 class MainWindow : public QMainWindow
 {
@@ -56,6 +57,7 @@ public:
         QString currentFilePath() const;
         void setHighQualityMode(bool on);
         void setTabHost(TabbedMainWindow *host);
+        void pushUndoSnapshot();
 
 public:
         void printToStatusBar(const QString &message);
@@ -116,6 +118,9 @@ private:
         void createActions();
         void createMenus();
         void createToolBars();
+        int selectedClockPhase() const;
+        void loadClockRegionsFromFile(const QString &fileName);
+        void writeClockRegions(QTextStream &out) const;
 
         /********各项菜单栏********/
         QMenu *fileMenu;
@@ -145,6 +150,8 @@ private:
         QAction *cutAction;
         QAction *pasteAction;
         QAction *deleteAction;
+        QAction *undoAction;
+        QAction *redoAction;
         QAction *zoomInAction;
         QAction *zoomOutAction;
 
@@ -193,6 +200,45 @@ private:
         bool batchDirtyPending = false;
         QVector<QSet<quint64>> batchOccupiedByLayer;
 
+        struct SnapshotCell {
+            int x = 0;
+            int y = 0;
+            int layer = 0;
+            int phase = 0;
+            CellType type = CellType::NormalCell;
+            QString name;
+        };
+
+        struct DesignSnapshot {
+            QVector<QString> layerNames;
+            QVector<QVector<SnapshotCell>> cellsByLayer;
+            QVector<QCADScene::ClockRegionRecord> clockRegions;
+        };
+
+        struct ClipboardCell {
+            SnapshotCell cell;
+        };
+
+        QVector<ClipboardCell> clipboardCells;
+        QPoint clipboardAnchor;
+        int clipboardPasteCount = 0;
+        QVector<DesignSnapshot> undoSnapshots;
+        int undoSnapshotIndex = -1;
+        bool restoringSnapshot = false;
+
+        QVector<ClipboardCell> selectedCellsForClipboard() const;
+        DesignSnapshot captureDesignSnapshot() const;
+        void restoreDesignSnapshot(const DesignSnapshot &snapshot, bool markDirty);
+        void resetUndoHistory();
+        void updateUndoRedoActions();
+        bool snapshotsEqual(const DesignSnapshot &lhs, const DesignSnapshot &rhs) const;
+        bool snapshotCellsEqual(const SnapshotCell &lhs, const SnapshotCell &rhs) const;
+        bool clockRegionsEqual(const QCADScene::ClockRegionRecord &lhs,
+                               const QCADScene::ClockRegionRecord &rhs) const;
+        bool positionOccupied(int layer, int x, int y) const;
+        void ensureLayerExists(int layer);
+        void addCellToScene(QCADCellItem *cellItem, int layerIndex);
+
 protected:
         void closeEvent(QCloseEvent *event) override;   //重载关闭事件
 public slots:
@@ -206,6 +252,11 @@ private slots:
         bool slotSave();
         bool slotSaveAs();
         void slotDeleteItem();
+        void slotCopyItems();
+        void slotCutItems();
+        void slotPasteItems();
+        void slotUndo();
+        void slotRedo();
 
         void slotDeleteLayer();
         void slotClockIndexChanged(int idx);

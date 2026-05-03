@@ -52,6 +52,19 @@ private:
     void putClock(std::map<position, int>& pos_phase);
 
     void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position, int>& _pos_phase, QString _name = "");
+    void saveGraphRenderIfcn(const QString &sourceFilePath,
+                             Parse &parse,
+                             const std::map<unsigned int, position> &nodePositions,
+                             const std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> &routes,
+                             const std::map<position, int> &posPhase,
+                             int phaseCount,
+                             int gateNum,
+                             int inputNum,
+                             int outputNum,
+                             int wireNum,
+                             int width,
+                             int height,
+                             double elapsedSeconds);
 
 
 };

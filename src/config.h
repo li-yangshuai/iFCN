@@ -5,6 +5,7 @@
 enum class EditMode {
     Select,
     Insert,
+    ClockScheme,
     DragScene
 };
 
@@ -64,4 +65,4 @@ static constexpr int RES_CLOKC_SCHEME [4][4]= {{3,0,1,2},
 
 
 
-#endif 
+#endif

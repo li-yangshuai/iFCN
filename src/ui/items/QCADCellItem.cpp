@@ -90,9 +90,9 @@ QCADCellItem::QCADCellItem(CellType _qcaCellType)
 QPixmap QCADCellItem::image(int _clockIdx) {
     QPixmap pixmap(20, 20);
     pixmap.fill(Qt::transparent);
-    QPainter *painter =  new QPainter(&pixmap);
-    painter->setPen(QPen(Qt::black,1,Qt::SolidLine,Qt::SquareCap,Qt::MiterJoin));
-    painter->translate(10, 10);
+    QPainter painter(&pixmap);
+    painter.setPen(QPen(Qt::black,1,Qt::SolidLine,Qt::SquareCap,Qt::MiterJoin));
+    painter.translate(10, 10);
     QColor cellColor;
     switch(_clockIdx) {
         case 0 : cellColor = QColor(PARSE_0); break;
@@ -102,13 +102,13 @@ QPixmap QCADCellItem::image(int _clockIdx) {
         default: cellColor = QColor(0, 0, 0, 255); break;
     }
     switch (getCellType()) {
-        case CellType::NormalCell : drawNormalCell(painter, cellColor); break;
-        case CellType::InputCell : drawNormalCell(painter, INPUT_COLOR); break;
-        case CellType::OutputCell : drawNormalCell(painter, OUTPUT_COLOR); break;
-        case CellType::FixedCell_0 : drawFixedCell(painter, "-1.00"); break;
-        case CellType::FixedCell_1 : drawFixedCell(painter, "1.00"); break;
-        case CellType::VerticalCell : drawHoleCell(painter, cellColor); break;
-        case CellType::CrossoverCell : drawCrossoverCell(painter, cellColor); break;
+        case CellType::NormalCell : drawNormalCell(&painter, cellColor); break;
+        case CellType::InputCell : drawNormalCell(&painter, INPUT_COLOR); break;
+        case CellType::OutputCell : drawNormalCell(&painter, OUTPUT_COLOR); break;
+        case CellType::FixedCell_0 : drawFixedCell(&painter, "-1.00"); break;
+        case CellType::FixedCell_1 : drawFixedCell(&painter, "1.00"); break;
+        case CellType::VerticalCell : drawHoleCell(&painter, cellColor); break;
+        case CellType::CrossoverCell : drawCrossoverCell(&painter, cellColor); break;
         default: break;
     }
     return pixmap;

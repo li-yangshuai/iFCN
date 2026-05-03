@@ -1,7 +1,42 @@
 #include "MappingExecutor.h"
 #include <QDebug>
 #include <algorithm>
+#include <limits>
 #include <QMessageBox>
+
+namespace {
+struct ShiftedPosition {
+    position pos{0, 0};
+    bool valid = false;
+};
+
+ShiftedPosition shiftedPosition(const position &base, int dx, int dy)
+{
+    const auto x = static_cast<long long>(base.first) + dx;
+    const auto y = static_cast<long long>(base.second) + dy;
+    const auto maxCoord = static_cast<long long>(std::numeric_limits<unsigned int>::max());
+    if (x < 0 || y < 0 || x > maxCoord || y > maxCoord) {
+        return {};
+    }
+    return {{static_cast<unsigned int>(x), static_cast<unsigned int>(y)}, true};
+}
+
+bool sceneCoordinates(const position &cellPos, int &xCoord, int &yCoord)
+{
+    constexpr unsigned int kPitch = 20;
+    constexpr unsigned int kOrigin = 200;
+    constexpr unsigned int kMaxCellCoord =
+        (static_cast<unsigned int>(std::numeric_limits<int>::max()) - kOrigin) / kPitch;
+
+    if (cellPos.first > kMaxCellCoord || cellPos.second > kMaxCellCoord) {
+        return false;
+    }
+
+    xCoord = static_cast<int>(cellPos.first * kPitch + kOrigin);
+    yCoord = static_cast<int>(cellPos.second * kPitch + kOrigin);
+    return true;
+}
+} // namespace
 
 MappingExecutor::MappingExecutor(GateLevelMapping* m, MainWindow* w)
     : gatelevelmapping(m), mainWindow(w) {}
@@ -456,6 +491,9 @@ void MappingExecutor::executeMapping()
     auto contains = [](const std::vector<position>& vec, const position& p) {
         return std::find(vec.begin(), vec.end(), p) != vec.end();
     };
+    auto containsShifted = [&](const std::vector<position>& vec, const ShiftedPosition& p) {
+        return p.valid && contains(vec, p.pos);
+    };
 
     if (!crossexample.empty())
     {
@@ -482,16 +520,16 @@ void MappingExecutor::executeMapping()
                     }
 
                     // --- 端点处理 ---
-                    const position dirs[4] = {
-                        {p.first, p.second + 1},
-                        {p.first, p.second - 1},
-                        {p.first - 1, p.second},
-                        {p.first + 1, p.second}
+                    const ShiftedPosition dirs[4] = {
+                        shiftedPosition(p, 0, 1),
+                        shiftedPosition(p, 0, -1),
+                        shiftedPosition(p, -1, 0),
+                        shiftedPosition(p, 1, 0)
                     };
 
                     int neighborCount = 0;
                     for (auto& d : dirs)
-                        if (contains(crosscell, d)) ++neighborCount;
+                        if (containsShifted(crosscell, d)) ++neighborCount;
 
                     //情况1：足够连接 → 直接交叉元胞
                     if (neighborCount >= 2)
@@ -503,33 +541,44 @@ void MappingExecutor::executeMapping()
                     //情况2：连接不足 → 需要柱状延伸
                     bool extended = false;
 
-                    const auto extendVertical = [&](const position& base, const position& dirCross) {
+                    const auto extendWithPillar = [&](const position& base,
+                                                       const ShiftedPosition& dirCross,
+                                                       const ShiftedPosition& pillar) {
+                        if (!dirCross.valid || !pillar.valid) {
+                            return false;
+                        }
                         putCellItem(base, 2, CellType::CrossoverCell, positionPhaseMap);
-                        putCellItem(dirCross, 2, CellType::CrossoverCell, positionPhaseMap);
+                        putCellItem(dirCross.pos, 2, CellType::CrossoverCell, positionPhaseMap);
 
-                        position pillar = {dirCross.first, dirCross.second + 1};
-                        for (int l = 0; l < 3; ++l)
-                            putCellItem(pillar, l, CellType::VerticalCell, positionPhaseMap);
+	                        for (int l = 0; l < 3; ++l)
+	                            putCellItem(pillar.pos, l, CellType::VerticalCell, positionPhaseMap);
 
-                        verticalcell.push_back(pillar);
-                        crosscell.push_back(dirCross);
-                        crosscell.push_back(pillar);
+                        verticalcell.push_back(pillar.pos);
+                        crosscell.push_back(dirCross.pos);
+                        crosscell.push_back(pillar.pos);
+                        return true;
                     };
 
                     // 左右/上下方向延伸条件保持一致
-                    if (contains(crosscell, dirs[1]) &&
-                        contains(allroutecells, dirs[2]) &&
-                        contains(allroutecells, dirs[3]))
+                    if (containsShifted(crosscell, dirs[1]) &&
+                        containsShifted(allroutecells, dirs[2]) &&
+                        containsShifted(allroutecells, dirs[3]))
                     {
-                        extendVertical(p, dirs[0]);
-                        extended = true;
+                        extended = extendWithPillar(
+                            p,
+                            dirs[0],
+                            dirs[0].valid ? shiftedPosition(dirs[0].pos, 0, 1) : ShiftedPosition{}
+                        );
                     }
-                    else if (contains(crosscell, dirs[2]) &&
-                            contains(allroutecells, dirs[0]) &&
-                            contains(allroutecells, dirs[1]))
+                    else if (containsShifted(crosscell, dirs[2]) &&
+                            containsShifted(allroutecells, dirs[0]) &&
+                            containsShifted(allroutecells, dirs[1]))
                     {
-                        extendVertical(p, dirs[3]);
-                        extended = true;
+                        extended = extendWithPillar(
+                            p,
+                            dirs[3],
+                            dirs[3].valid ? shiftedPosition(dirs[3].pos, 1, 0) : ShiftedPosition{}
+                        );
                     }
 
                     // 情况3：无法延伸 → 三层垂直柱点
@@ -606,13 +655,25 @@ void MappingExecutor::putClock(){
 
 void MappingExecutor::putCellItem(position _cellpos, int _celllayer, CellType _cellType, std::map<position, int>& _pos_phase, QString _name)
 {
-    int x_node = _cellpos.first / 5;
-    int y_node = _cellpos.second / 5;
-    int x_coord = _cellpos.first*20 + 200;  // 坐标
-    int y_coord = _cellpos.second*20 + 200;
+    int x_coord = 0;
+    int y_coord = 0;
+    if (!sceneCoordinates(_cellpos, x_coord, y_coord)) {
+        qWarning() << "[MappingExecutor] Skip mapped cell with invalid scene coordinate:"
+                   << _cellpos.first << _cellpos.second;
+        return;
+    }
+
+    const position cellpos = std::make_pair(_cellpos.first / 5, _cellpos.second / 5);
+    const auto phaseIt = _pos_phase.find(cellpos);
+    int phase = 0;
+    if (phaseIt != _pos_phase.end()) {
+        phase = phaseIt->second;
+    } else {
+        qWarning() << "[MappingExecutor] Mapped cell outside phase map; using phase 0:"
+                   << _cellpos.first << _cellpos.second;
+    }
+
     int cell_layer = _celllayer;
-    position cellpos = std::make_pair(x_node, y_node);
-    int phase = _pos_phase[cellpos];
 
     QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
     mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);

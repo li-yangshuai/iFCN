@@ -1,0 +1,62 @@
+#circuit name: t.v
+
+#designed by graph render algorithm with encoded 4-phase clock tiles.
+
+#gate level placement and routing infomation
+#gates number: 15
+#input/output: 5 / 2
+#edges number: 16
+#total layers: 5
+#layout area: width: 9, height: 6, area: 54
+#phase origin: top-left=(4,3), saved coordinates are normalized to (0,0)
+#phase count: 4
+#runtime: 0.780s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, pi0, input, (0,1);
+1, pi1, input, (4,1);
+2, pi2, input, (2,1);
+3, pi3, input, (6,1);
+4, pi4, input, (8,1);
+5, po0, or, (3,5);
+6, po1, and, (5,5);
+7, n9, and, (3,2);
+8, ~n9, not, (3,3);
+9, n10, and, (3,4);
+10, n11, and, (1,2);
+11, ~pi1, not, (5,2);
+12, ~pi4, not, (7,2);
+13, n13, and, (5,3);
+14, ~n13, not, (5,4);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,10): (0,1),(0,2),(1,2);
+(1,9): (4,1),(4,2),(4,3),(4,4),(3,4);
+(1,11): (4,1),(4,2),(5,2);
+(2,7): (2,1),(2,2),(3,2);
+(2,10): (2,1),(2,2),(1,2);
+(3,7): (6,1),(5,1),(5,0),(4,0),(3,0),(3,1),(3,2);
+(4,12): (8,1),(7,1),(7,2);
+(7,8): (3,2),(3,3);
+(8,6): (3,3),(4,3),(4,4),(4,5),(5,5);
+(8,9): (3,3),(3,4);
+(9,5): (3,4),(3,5);
+(10,5): (1,2),(1,3),(1,4),(1,5),(2,5),(3,5);
+(11,13): (5,2),(5,3);
+(12,13): (7,2),(6,2),(6,3),(5,3);
+(13,14): (5,3),(5,4);
+(14,6): (5,4),(5,5);
+#paths info
+#phase map
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0x0051aecc;
+tile(1,0):0x0b055a2f;
+tile(2,0):0x00030000;
+tile(0,1):0x0c400000;
+tile(1,1):0x03040000;
+tile(2,1):0x00000000;
+#phase map

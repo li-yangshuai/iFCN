@@ -34,6 +34,7 @@ private:
     std::vector<position> reconstructPath(const std::unordered_map<position, position, PositionHash>& cameFrom, const position& current);
     //检查node的入度和出度
     bool drcInDegreeCheck(const position& current_neighbor);
+    bool isNodeCell(const position& pos) const;
 
 private:
     GridChessboard &chessboard;

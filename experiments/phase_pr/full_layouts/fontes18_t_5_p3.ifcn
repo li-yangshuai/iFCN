@@ -1,0 +1,65 @@
+#circuit name: t_5.v
+
+#designed by graph render algorithm with encoded 3-phase clock tiles.
+
+#gate level placement and routing infomation
+#gates number: 15
+#input/output: 5 / 2
+#edges number: 16
+#total layers: 5
+#layout area: width: 9, height: 7, area: 63
+#phase origin: top-left=(4,3), saved coordinates are normalized to (0,0)
+#phase count: 3
+#runtime: 0.805s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, pi0, input, (0,1);
+1, pi1, input, (4,1);
+2, pi2, input, (2,1);
+3, pi3, input, (6,1);
+4, pi4, input, (8,1);
+5, po0, or, (3,5);
+6, po1, and, (5,5);
+7, new_n8_, and, (1,2);
+8, new_n9_, and, (3,2);
+9, ~new_n9_, not, (3,3);
+10, new_n10_, and, (3,4);
+11, ~pi1, not, (5,2);
+12, ~pi4, not, (7,2);
+13, new_n12_, and, (5,3);
+14, ~new_n12_, not, (5,4);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,7): (0,1),(0,2),(1,2);
+(1,10): (4,1),(4,2),(4,3),(4,4),(3,4);
+(1,11): (4,1),(4,2),(5,2);
+(2,7): (2,1),(1,1),(1,2);
+(2,8): (2,1),(1,1),(1,0),(2,0),(3,0),(3,1),(3,2);
+(3,8): (6,1),(6,2),(6,3),(6,4),(6,5),(6,6),(5,6),(4,6),(4,5),(4,4),(4,3),(4,2),(3,2);
+(4,12): (8,1),(7,1),(7,2);
+(7,5): (1,2),(1,3),(1,4),(1,5),(2,5),(3,5);
+(8,9): (3,2),(3,3);
+(9,6): (3,3),(2,3),(2,4),(2,5),(2,6),(3,6),(4,6),(4,5),(5,5);
+(9,10): (3,3),(3,4);
+(10,5): (3,4),(3,5);
+(11,13): (5,2),(5,3);
+(12,13): (7,2),(6,2),(6,3),(5,3);
+(13,14): (5,3),(5,4);
+(14,6): (5,4),(5,5);
+#paths info
+#phase map
+#phase codec: phase_count=3, block_size=3, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 3x3 phase block ###
+tile(0,0):0x080409;
+tile(1,0):0x010608;
+tile(2,0):0x001801;
+tile(0,1):0x102408;
+tile(1,1):0x081825;
+tile(2,1):0x020001;
+tile(0,2):0x100000;
+tile(1,2):0x220000;
+tile(2,2):0x010000;
+#phase map

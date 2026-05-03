@@ -1,0 +1,43 @@
+#circuit name: mux21.v
+
+#designed by graph render algorithm with encoded 4-phase clock tiles.
+
+#gate level placement and routing infomation
+#gates number: 8
+#input/output: 3 / 1
+#edges number: 8
+#total layers: 4
+#layout area: width: 5, height: 5, area: 25
+#phase origin: top-left=(4,3), saved coordinates are normalized to (0,0)
+#phase count: 4
+#runtime: 0.357s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, in0, input, (0,1);
+1, in1, input, (4,1);
+2, in2, input, (2,1);
+3, out, or, (2,4);
+4, ~in2, not, (1,2);
+6, w2, and, (2,3);
+7, w3, and, (3,2);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,6): (0,1),(0,2),(0,3),(1,3),(2,3);
+(1,7): (4,1),(4,2),(3,2);
+(2,4): (2,1),(1,1),(1,2);
+(2,7): (2,1),(1,1),(1,0),(2,0),(3,0),(3,1),(3,2);
+(4,6): (1,2),(2,2),(2,3);
+(6,3): (2,3),(2,4);
+(7,3): (3,2),(3,3),(3,4),(2,4);
+#paths info
+#phase map
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0x3844b9ce;
+tile(1,0):0x00000100;
+tile(0,1):0x10000000;
+tile(1,1):0x00000000;
+#phase map

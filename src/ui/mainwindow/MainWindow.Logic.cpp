@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QPixmap>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSettings>
 #include <QStatusBar>
@@ -38,6 +39,7 @@ void MainWindow::initialDesign()
 void MainWindow::loadFile(const QString &fileName)
 {
     scene->clearFastRender();
+    scene->clearPhaseRecord();
 
     const QString suffix = QFileInfo(fileName).suffix().toLower();
     if (suffix == "ifcn" && shouldMapIfcnFile(fileName)) {
@@ -99,10 +101,12 @@ void MainWindow::loadFile(const QString &fileName)
         }
     }
 
+    loadClockRegionsFromFile(fileName);
     setCurrentFile(fileName);
     statusBar()->showMessage(tr("Loaded %1").arg(fileName), 2000);
     emit savedname(fileName);
     endSceneBatchUpdate(true);
+    resetUndoHistory();
     // curFile = fileName;
     // simfileName = fileName;//for 仿真文件名
 }
@@ -143,9 +147,62 @@ void MainWindow::mapIfcnFile(const QString &fileName)
     gateLevelMapping->parseGateLevelMappingFile(fileName);
     setCurrentFile(fileName);
     setDirty(true);
+    resetUndoHistory();
     statusBar()->showMessage(tr("Mapped %1").arg(fileName), 2000);
     emit savedname(fileName);
 }
+
+void MainWindow::loadClockRegionsFromFile(const QString &fileName)
+{
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+
+    QVector<QCADScene::ClockRegionRecord> regions;
+    QTextStream in(&file);
+    const QRegularExpression regionPattern(
+        QStringLiteral("^#IFCN_CLOCK_REGION\\s+x=(-?\\d+)\\s+y=(-?\\d+)\\s+phase=(-?\\d+)\\s*$"));
+
+    while (!in.atEnd()) {
+        const QString line = in.readLine().trimmed();
+        const QRegularExpressionMatch match = regionPattern.match(line);
+        if (!match.hasMatch()) {
+            continue;
+        }
+
+        QCADScene::ClockRegionRecord record;
+        record.x = match.captured(1).toInt();
+        record.y = match.captured(2).toInt();
+        const int phase = match.captured(3).toInt();
+        record.phase = phase < 0 ? -1 : qBound(0, phase, 3);
+        regions.push_back(record);
+    }
+
+    if (!regions.isEmpty()) {
+        scene->restoreClockRegions(regions);
+    }
+}
+
+void MainWindow::writeClockRegions(QTextStream &out) const
+{
+    if (scene == nullptr) {
+        return;
+    }
+    const QVector<QCADScene::ClockRegionRecord> regions = scene->clockRegions();
+    if (regions.isEmpty()) {
+        return;
+    }
+
+    out << "#IFCN_CLOCK_SCHEME_BEGIN\n";
+    for (const QCADScene::ClockRegionRecord &region : regions) {
+        out << "#IFCN_CLOCK_REGION x=" << region.x
+            << " y=" << region.y
+            << " phase=" << region.phase << "\n";
+    }
+    out << "#IFCN_CLOCK_SCHEME_END\n";
+}
+
 bool MainWindow::saveFile(const QString &fileName, bool updateCurrentFile, bool showStatus)
 {
     QFile file(fileName);
@@ -404,6 +461,7 @@ bool MainWindow::saveFile(const QString &fileName, bool updateCurrentFile, bool 
     //添加 bus layout
 
     out << "[#TYPE:DESIGN]\n";
+    writeClockRegions(out);
 
 
     /*********文本保存结束********/

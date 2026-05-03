@@ -1,7 +1,9 @@
 #include "ui/mainwindow/MainWindow.h"
 #include <QGridLayout>
+#include <QSignalBlocker>
 #include <QtGlobal>
 #include <algorithm>
+#include <cmath>
 
 void MainWindow::createViewAndScene()
 {
@@ -169,34 +171,65 @@ void MainWindow::slotClockSchemeGroupClicked(QAbstractButton* button){
     QList<QAbstractButton *> buttons = clockSchemeGroup->buttons();
     for (QAbstractButton *myButton: buttons) {
         if (myButton != button)
-            button->setChecked(false);
+            myButton->setChecked(false);
     }
     // reset
     QString text = button->text();
+    bool changedClockRegions = false;
     if(text == tr("Clean")){
         scene->clearPhaseRecord();
+        changedClockRegions = true;
     }else if(text == tr("Custom")){
-        //待设计
+        viewModeButtonGroup->setExclusive(false);
+        selectModeButton->setChecked(false);
+        insertModeButton->setChecked(false);
+        dragModeButton->setChecked(false);
+        viewModeButtonGroup->setExclusive(true);
+        setEditMode(EditMode::ClockScheme);
+        scene->setEditMode(EditMode::ClockScheme);
+        if (customStatusBar != nullptr) {
+            customStatusBar->addMessage(tr("Custom clock scheme placement enabled"));
+        }
     }else if(text == tr("ONE-D")){
         scene->clearPhaseRecord();
         scene->placeClockScheme(ONEDIMEN_CLOKC_SCHEME);
+        changedClockRegions = true;
     }else if(text == tr("2DDwave")){
         scene->clearPhaseRecord();
         scene->placeClockScheme(TDDWAVE_CLOCK_SCHEME);
+        changedClockRegions = true;
     }else if(text == tr("USE")){
         scene->clearPhaseRecord();
         scene->placeClockScheme(USE_CLOKC_SCHEME);
+        changedClockRegions = true;
     }else if(text == tr("RES")){
         scene->clearPhaseRecord();
         scene->placeClockScheme(RES_CLOKC_SCHEME);
+        changedClockRegions = true;
+    }
+    if (changedClockRegions) {
+        setDirty(true);
+        pushUndoSnapshot();
     }
     update();
     // setDirty(true);
 }
 
+int MainWindow::selectedClockPhase() const
+{
+    if (clockComboBox == nullptr) {
+        return 0;
+    }
+    const QVariant phaseData = clockComboBox->itemData(clockComboBox->currentIndex());
+    if (phaseData.isValid()) {
+        return phaseData.toInt();
+    }
+    return clockComboBox->currentIndex();
+}
+
 
 QWidget* MainWindow::createCellWidget(const QString &text, CellType type){
-    int clockIdx = this->clockComboBox->currentIndex();
+    int clockIdx = qMax(0, selectedClockPhase());
     QCADCellItem item(type);
     QIcon icon(item.image(clockIdx));
     QToolButton *button = new QToolButton;
@@ -247,7 +280,12 @@ void MainWindow::updateLayerAndCellZValue()
 }
 void MainWindow::slotClockIndexChanged(int idx)
 {
-    scene->setCurrentClockIndex(idx);
+    Q_UNUSED(idx);
+    const int phase = selectedClockPhase();
+    scene->setCurrentClockIndex(phase);
+    if (phase < 0) {
+        return;
+    }
     QList<QGraphicsItem *> items = scene->selectedItems();
 
     if(items.isEmpty()) 
@@ -255,9 +293,14 @@ void MainWindow::slotClockIndexChanged(int idx)
 
     for(QGraphicsItem *item: items)
     {
-        simon::timezone(*static_cast<QCADCellItem *>(item)) = idx; //时钟域，由控制面板传递
+        if (item->type() != QCADCellItem::Type) {
+            continue;
+        }
+        simon::timezone(*static_cast<QCADCellItem *>(item)) = phase; //时钟域，由控制面板传递
         //添加更新操作
     }
+    setDirty(true);
+    pushUndoSnapshot();
 }
 
 void MainWindow::slotLayerActiveChanged(int idx){
@@ -317,6 +360,10 @@ void MainWindow::setEditMode(EditMode mode) {
             view->setDragMode(QGraphicsView::NoDrag);
             view->setInteractive(true);  // 不允许交互，以便在鼠标点击时插入新item
             break;
+        case EditMode::ClockScheme:
+            view->setDragMode(QGraphicsView::NoDrag);
+            view->setInteractive(true);
+            break;
         case EditMode::DragScene:
             view->setDragMode(QGraphicsView::ScrollHandDrag);
             view->setInteractive(false);  // 允许拖动场景，但不允许选择或移动item
@@ -324,17 +371,10 @@ void MainWindow::setEditMode(EditMode mode) {
     }
 }
 void MainWindow::slotCellItemInserted(QCADCellItem *cellItem){
-    if(cellItem->myCellType == CellType::InputCell)
-    {
-        this->inputname.append(cellItem->IOName);
-    }
-    emit savedinputname(inputname);//for 输入lable可选择仿真
     int idx = layerComboBox->currentIndex();
-    layers[idx].push_back(cellItem);
-    cellItem->setZValue(idx);
-    cellItem->setVisible(true);
-    scene->addItem(cellItem);
+    addCellToScene(cellItem, idx);
     setDirty(true); 
+    pushUndoSnapshot();
 
     // 获取 cellItem 的坐标
     QPointF pos = cellItem->pos();
@@ -349,23 +389,20 @@ void MainWindow::slotCellItemInserted(QCADCellItem *cellItem){
 
 
 void MainWindow::slotCellItemInserted(QCADCellItem* cellItem, int layerIndex){
-    if(cellItem->myCellType == CellType::InputCell)
-    {
-        this->inputname.append(cellItem->IOName);
-    }
-    emit savedinputname(inputname);//for 输入lable可选择仿真
-    cellItem->setPos(simon::x(*cellItem), simon::y(*cellItem));     //在scene层添加
-    layers[layerIndex].push_back(cellItem);
-    cellItem->setZValue(layerIndex);
-    cellItem->setVisible(true);
-    scene->addItem(cellItem);
+    addCellToScene(cellItem, layerIndex);
     setDirty(true); //这行代码很重要，否则操作的界面无法保存
+    if (!isBatchUpdating) {
+        pushUndoSnapshot();
+    }
 
 }
 
 void MainWindow::slotDeleteItem()
 {
     QList<QGraphicsItem *> selectedItems = scene->selectedItems();
+    if (selectedItems.isEmpty()) {
+        return;
+    }
     QHash<int, QVector<int>> fastSelectionsByLayer;
     QList<QGraphicsItem *> regularSelections;
 
@@ -410,7 +447,344 @@ void MainWindow::slotDeleteItem()
         }
     }
     setDirty(true);
+    pushUndoSnapshot();
 }
+
+QVector<MainWindow::ClipboardCell> MainWindow::selectedCellsForClipboard() const
+{
+    QVector<ClipboardCell> selectedCells;
+    if (scene == nullptr) {
+        return selectedCells;
+    }
+
+    const QList<QGraphicsItem *> selectedItems = scene->selectedItems();
+    selectedCells.reserve(selectedItems.size());
+    for (QGraphicsItem *item : selectedItems) {
+        if (item == nullptr || item->type() != QCADCellItem::Type) {
+            continue;
+        }
+        const auto *cellItem = static_cast<const QCADCellItem *>(item);
+        ClipboardCell copied;
+        copied.cell.x = static_cast<int>(std::round(simon::x(*cellItem)));
+        copied.cell.y = static_cast<int>(std::round(simon::y(*cellItem)));
+        copied.cell.layer = qBound(0, static_cast<int>(std::round(item->zValue())), qMax(0, layers.size() - 1));
+        copied.cell.phase = qBound(0, simon::timezone(*cellItem), 3);
+        copied.cell.type = cellItem->getCellType();
+        copied.cell.name = QString::fromStdString(simon::name(*cellItem));
+        selectedCells.push_back(copied);
+    }
+
+    std::sort(selectedCells.begin(), selectedCells.end(), [](const ClipboardCell &lhs,
+                                                             const ClipboardCell &rhs) {
+        if (lhs.cell.layer != rhs.cell.layer) {
+            return lhs.cell.layer < rhs.cell.layer;
+        }
+        if (lhs.cell.y != rhs.cell.y) {
+            return lhs.cell.y < rhs.cell.y;
+        }
+        return lhs.cell.x < rhs.cell.x;
+    });
+    return selectedCells;
+}
+
+void MainWindow::slotCopyItems()
+{
+    clipboardCells = selectedCellsForClipboard();
+    clipboardPasteCount = 0;
+    if (clipboardCells.isEmpty()) {
+        return;
+    }
+
+    clipboardAnchor = QPoint(clipboardCells.first().cell.x, clipboardCells.first().cell.y);
+    for (const ClipboardCell &copied : clipboardCells) {
+        clipboardAnchor.setX(qMin(clipboardAnchor.x(), copied.cell.x));
+        clipboardAnchor.setY(qMin(clipboardAnchor.y(), copied.cell.y));
+    }
+    customStatusBar->addMessage(tr("Copied %1 cell(s)").arg(clipboardCells.size()));
+}
+
+void MainWindow::slotCutItems()
+{
+    slotCopyItems();
+    if (!clipboardCells.isEmpty()) {
+        slotDeleteItem();
+    }
+}
+
+bool MainWindow::positionOccupied(int layer, int x, int y) const
+{
+    if (layer < 0 || layer >= layers.size()) {
+        return false;
+    }
+    for (QGraphicsItem *item : layers[layer]) {
+        if (item == nullptr) {
+            continue;
+        }
+        if (static_cast<int>(std::round(item->x())) == x &&
+            static_cast<int>(std::round(item->y())) == y) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void MainWindow::ensureLayerExists(int layer)
+{
+    while (layer >= layers.size()) {
+        const int nextLayer = layers.size();
+        layerComboBox->AddItem(tr("New Layer %1").arg(nextLayer), true);
+        layers.push_back(QVector<QGraphicsItem*>());
+    }
+}
+
+void MainWindow::addCellToScene(QCADCellItem *cellItem, int layerIndex)
+{
+    if (cellItem == nullptr) {
+        return;
+    }
+    ensureLayerExists(layerIndex);
+    cellItem->setPos(simon::x(*cellItem), simon::y(*cellItem));
+    cellItem->setZValue(layerIndex);
+    cellItem->setVisible(true);
+    layers[layerIndex].push_back(cellItem);
+    scene->addItem(cellItem);
+    if (cellItem->myCellType == CellType::InputCell) {
+        inputname.append(cellItem->IOName);
+        emit savedinputname(inputname);
+    }
+}
+
+void MainWindow::slotPasteItems()
+{
+    if (clipboardCells.isEmpty()) {
+        return;
+    }
+
+    ++clipboardPasteCount;
+    const int baseOffset = GRID_SIZE * clipboardPasteCount;
+    QVector<QGraphicsItem *> pastedItems;
+    int extraOffset = 0;
+
+    for (const ClipboardCell &copied : clipboardCells) {
+        int targetLayer = copied.cell.layer;
+        if (targetLayer < 0) {
+            targetLayer = qMax(0, layerComboBox->currentIndex());
+        }
+        ensureLayerExists(targetLayer);
+
+        int x = copied.cell.x + baseOffset + extraOffset;
+        int y = copied.cell.y + baseOffset + extraOffset;
+        while (positionOccupied(targetLayer, x, y)) {
+            extraOffset += GRID_SIZE;
+            x = copied.cell.x + baseOffset + extraOffset;
+            y = copied.cell.y + baseOffset + extraOffset;
+        }
+
+        auto *cellItem = new QCADCellItem(x, y, targetLayer, copied.cell.phase,
+                                          copied.cell.type, copied.cell.name);
+        addCellToScene(cellItem, targetLayer);
+        pastedItems.push_back(cellItem);
+    }
+
+    scene->clearSelection();
+    for (QGraphicsItem *item : pastedItems) {
+        item->setSelected(true);
+    }
+    setDirty(true);
+    pushUndoSnapshot();
+}
+
+bool MainWindow::snapshotCellsEqual(const SnapshotCell &lhs, const SnapshotCell &rhs) const
+{
+    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.layer == rhs.layer &&
+           lhs.phase == rhs.phase && lhs.type == rhs.type && lhs.name == rhs.name;
+}
+
+bool MainWindow::clockRegionsEqual(const QCADScene::ClockRegionRecord &lhs,
+                                   const QCADScene::ClockRegionRecord &rhs) const
+{
+    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.phase == rhs.phase;
+}
+
+bool MainWindow::snapshotsEqual(const DesignSnapshot &lhs, const DesignSnapshot &rhs) const
+{
+    if (lhs.layerNames != rhs.layerNames ||
+        lhs.cellsByLayer.size() != rhs.cellsByLayer.size() ||
+        lhs.clockRegions.size() != rhs.clockRegions.size()) {
+        return false;
+    }
+    for (int layer = 0; layer < lhs.cellsByLayer.size(); ++layer) {
+        if (lhs.cellsByLayer[layer].size() != rhs.cellsByLayer[layer].size()) {
+            return false;
+        }
+        for (int index = 0; index < lhs.cellsByLayer[layer].size(); ++index) {
+            if (!snapshotCellsEqual(lhs.cellsByLayer[layer][index], rhs.cellsByLayer[layer][index])) {
+                return false;
+            }
+        }
+    }
+    for (int index = 0; index < lhs.clockRegions.size(); ++index) {
+        if (!clockRegionsEqual(lhs.clockRegions[index], rhs.clockRegions[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+MainWindow::DesignSnapshot MainWindow::captureDesignSnapshot() const
+{
+    DesignSnapshot snapshot;
+    snapshot.layerNames.reserve(layers.size());
+    snapshot.cellsByLayer.resize(layers.size());
+
+    for (int layer = 0; layer < layers.size(); ++layer) {
+        const QStandardItem *layerItem = layerComboBox->GetItem(layer);
+        snapshot.layerNames.push_back(layerItem != nullptr ? layerItem->text()
+                                                           : tr("Layer %1").arg(layer));
+        auto &snapshotLayer = snapshot.cellsByLayer[layer];
+        snapshotLayer.reserve(layers[layer].size());
+        for (QGraphicsItem *item : layers[layer]) {
+            if (item == nullptr || item->type() != QCADCellItem::Type) {
+                continue;
+            }
+            const auto *cellItem = static_cast<const QCADCellItem *>(item);
+            SnapshotCell cell;
+            cell.x = static_cast<int>(std::round(simon::x(*cellItem)));
+            cell.y = static_cast<int>(std::round(simon::y(*cellItem)));
+            cell.layer = layer;
+            cell.phase = qBound(0, simon::timezone(*cellItem), 3);
+            cell.type = cellItem->getCellType();
+            cell.name = QString::fromStdString(simon::name(*cellItem));
+            snapshotLayer.push_back(cell);
+        }
+        std::sort(snapshotLayer.begin(), snapshotLayer.end(), [](const SnapshotCell &lhs,
+                                                                 const SnapshotCell &rhs) {
+            if (lhs.y != rhs.y) {
+                return lhs.y < rhs.y;
+            }
+            return lhs.x < rhs.x;
+        });
+    }
+
+    snapshot.clockRegions = scene != nullptr ? scene->clockRegions()
+                                             : QVector<QCADScene::ClockRegionRecord>();
+    return snapshot;
+}
+
+void MainWindow::restoreDesignSnapshot(const DesignSnapshot &snapshot, bool markDirty)
+{
+    restoringSnapshot = true;
+    scene->clearSelection();
+    scene->clearFastRender();
+
+    for (auto &layer : layers) {
+        for (QGraphicsItem *item : layer) {
+            if (item != nullptr) {
+                scene->removeItem(item);
+                delete item;
+            }
+        }
+    }
+    layers.clear();
+    inputname.clear();
+
+    {
+        QSignalBlocker blocker(layerComboBox);
+        while (layerComboBox->GetNumRows() > 0) {
+            layerComboBox->RemoveItem(layerComboBox->GetNumRows() - 1);
+        }
+        for (int layer = 0; layer < snapshot.layerNames.size(); ++layer) {
+            layerComboBox->AddItem(snapshot.layerNames[layer], true);
+            layers.push_back(QVector<QGraphicsItem*>());
+        }
+    }
+
+    if (layers.isEmpty()) {
+        layerComboBox->AddItem(tr("Main Cell Layer"), true);
+        layers.push_back(QVector<QGraphicsItem*>());
+    }
+
+    for (int layer = 0; layer < snapshot.cellsByLayer.size(); ++layer) {
+        ensureLayerExists(layer);
+        for (const SnapshotCell &cell : snapshot.cellsByLayer[layer]) {
+            auto *cellItem = new QCADCellItem(cell.x, cell.y, layer, cell.phase, cell.type, cell.name);
+            addCellToScene(cellItem, layer);
+        }
+    }
+
+    scene->restoreClockRegions(snapshot.clockRegions);
+    layerComboBox->setCurrentIndex(qBound(0, layerComboBox->currentIndex(), qMax(0, layerComboBox->GetNumRows() - 1)));
+    scene->setCurrentLayerIndex(qMax(0, layerComboBox->currentIndex()));
+    emit savedinputname(inputname);
+
+    restoringSnapshot = false;
+    if (markDirty) {
+        setDirty(true);
+    }
+}
+
+void MainWindow::updateUndoRedoActions()
+{
+    if (undoAction != nullptr) {
+        undoAction->setEnabled(undoSnapshotIndex > 0);
+    }
+    if (redoAction != nullptr) {
+        redoAction->setEnabled(undoSnapshotIndex >= 0 &&
+                               undoSnapshotIndex < undoSnapshots.size() - 1);
+    }
+}
+
+void MainWindow::resetUndoHistory()
+{
+    undoSnapshots.clear();
+    undoSnapshotIndex = -1;
+    pushUndoSnapshot();
+}
+
+void MainWindow::pushUndoSnapshot()
+{
+    if (restoringSnapshot || scene == nullptr || layerComboBox == nullptr) {
+        return;
+    }
+
+    const DesignSnapshot snapshot = captureDesignSnapshot();
+    if (undoSnapshotIndex >= 0 && undoSnapshotIndex < undoSnapshots.size() &&
+        snapshotsEqual(undoSnapshots[undoSnapshotIndex], snapshot)) {
+        updateUndoRedoActions();
+        return;
+    }
+
+    while (undoSnapshots.size() > undoSnapshotIndex + 1) {
+        undoSnapshots.removeLast();
+    }
+    undoSnapshots.push_back(snapshot);
+    if (undoSnapshots.size() > 100) {
+        undoSnapshots.removeFirst();
+    }
+    undoSnapshotIndex = undoSnapshots.size() - 1;
+    updateUndoRedoActions();
+}
+
+void MainWindow::slotUndo()
+{
+    if (undoSnapshotIndex <= 0 || undoSnapshotIndex >= undoSnapshots.size()) {
+        return;
+    }
+    --undoSnapshotIndex;
+    restoreDesignSnapshot(undoSnapshots[undoSnapshotIndex], true);
+    updateUndoRedoActions();
+}
+
+void MainWindow::slotRedo()
+{
+    if (undoSnapshotIndex < 0 || undoSnapshotIndex >= undoSnapshots.size() - 1) {
+        return;
+    }
+    ++undoSnapshotIndex;
+    restoreDesignSnapshot(undoSnapshots[undoSnapshotIndex], true);
+    updateUndoRedoActions();
+}
+
 void MainWindow::checkCellInserted(QVector<QVector<QGraphicsItem*>> &_layers, QCADCellItem* cellItem, int cell_layer, int x_coord, int y_coord)
 {
     if (cell_layer < 0 || cell_layer >= _layers.size()) {  

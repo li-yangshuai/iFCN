@@ -19,9 +19,74 @@ namespace fcngraph
             int steps = 0;
         };
 
+        struct PhaseScore
+        {
+            int max_run = 1;
+            int repeated_adjacent = 0;
+        };
+
         bool has_fixed_phase(const std::vector<int> &start_phases, size_t path_idx)
         {
             return path_idx < start_phases.size() && start_phases[path_idx] >= 1;
+        }
+
+        std::vector<bool> build_wait_steps(int steps, int waits)
+        {
+            std::vector<bool> wait_steps(static_cast<std::size_t>(steps) + 1, false);
+            for (int wait_idx = 1; wait_idx <= waits; ++wait_idx)
+            {
+                int pos = (wait_idx * (steps + 1)) / (waits + 1);
+                pos = std::max(1, std::min(steps, pos));
+                const int preferred = pos;
+                while (pos <= steps && wait_steps[static_cast<std::size_t>(pos)])
+                {
+                    ++pos;
+                }
+                if (pos > steps)
+                {
+                    pos = preferred - 1;
+                    while (pos >= 1 && wait_steps[static_cast<std::size_t>(pos)])
+                    {
+                        --pos;
+                    }
+                }
+                if (pos >= 1)
+                {
+                    wait_steps[static_cast<std::size_t>(pos)] = true;
+                }
+            }
+            return wait_steps;
+        }
+
+        PhaseScore score_phase_paths(const std::vector<std::vector<int>> &phases)
+        {
+            PhaseScore score;
+            for (const auto &path_phases : phases)
+            {
+                int previous_phase = -1;
+                int current_run = 1;
+                for (int phase : path_phases)
+                {
+                    if (phase >= 1 && phase == previous_phase)
+                    {
+                        ++score.repeated_adjacent;
+                        ++current_run;
+                        score.max_run = std::max(score.max_run, current_run);
+                    }
+                    else
+                    {
+                        current_run = 1;
+                    }
+                    previous_phase = phase;
+                }
+            }
+            return score;
+        }
+
+        bool is_better_score(const PhaseScore &candidate, const PhaseScore &current)
+        {
+            return std::tie(candidate.max_run, candidate.repeated_adjacent)
+                 < std::tie(current.max_run, current.repeated_adjacent);
         }
     }
 
@@ -157,15 +222,36 @@ namespace fcngraph
         };
 
         std::size_t visited = 0;
-        const std::size_t max_visited = 8192;
-        std::function<bool(size_t)> search = [&](size_t order_index) {
-            if (++visited > max_visited)
+        const std::size_t max_visited = 32768;
+        std::vector<std::vector<int>> best_phases;
+        PhaseScore best_score;
+
+        std::function<void(size_t)> search = [&](size_t order_index) {
+            if (++visited > max_visited || (!best_phases.empty() && best_score.repeated_adjacent == 0))
             {
-                return false;
+                return;
             }
             if (order_index >= order.size())
             {
-                return constraints_ok();
+                if (!constraints_ok() || !validate_all_paths())
+                {
+                    return;
+                }
+
+                try
+                {
+                    auto candidate_phases = generate_all_phases();
+                    const auto candidate_score = score_phase_paths(candidate_phases);
+                    if (best_phases.empty() || is_better_score(candidate_score, best_score))
+                    {
+                        best_score = candidate_score;
+                        best_phases = std::move(candidate_phases);
+                    }
+                }
+                catch (const std::exception &)
+                {
+                }
+                return;
             }
 
             const int variable_index = order[order_index];
@@ -173,20 +259,24 @@ namespace fcngraph
             {
                 assignment[variable_index] = phase;
                 global_phases[cross_nodes[variable_index]] = phase;
-                if (constraints_ok() && search(order_index + 1))
+                if (constraints_ok())
                 {
-                    return true;
+                    search(order_index + 1);
                 }
                 global_phases.erase(cross_nodes[variable_index]);
                 assignment[variable_index] = 0;
+                if (visited > max_visited || (!best_phases.empty() && best_score.repeated_adjacent == 0))
+                {
+                    return;
+                }
             }
-            return false;
         };
 
         global_phases.clear();
-        if (search(0) && validate_all_paths())
+        search(0);
+        if (!best_phases.empty())
         {
-            return generate_all_phases();
+            return best_phases;
         }
 
         throw std::runtime_error("No valid solution found");
@@ -400,15 +490,13 @@ namespace fcngraph
                 const int advances = min_advances + ((steps - min_advances) / phase_count) * phase_count;
                 const int waits = steps - advances;
                 int used_advances = 0;
-                int used_waits = 0;
+                const auto wait_steps = build_wait_steps(steps, waits);
 
                 for (int i = 1; i <= steps; ++i)
                 {
-                    const int expected_waits = (i * waits) / steps;
-                    if (expected_waits > used_waits)
+                    if (wait_steps[static_cast<std::size_t>(i)])
                     {
                         phases[prev_pos + i] = phases[prev_pos + i - 1];
-                        ++used_waits;
                     }
                     else
                     {

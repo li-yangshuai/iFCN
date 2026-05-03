@@ -8,7 +8,49 @@
 #include <QMessageBox>
 #include <unordered_map>
 #include <unordered_set>
+#include <limits>
+#include <autopr/algorithms/phase_codec.h>
 #include "ui/mainwindow/MainWindow.h"
+
+namespace {
+struct ShiftedPosition {
+    position pos{0, 0};
+    bool valid = false;
+};
+
+ShiftedPosition shiftedPosition(const position &base, int dx, int dy)
+{
+    const auto x = static_cast<long long>(base.first) + dx;
+    const auto y = static_cast<long long>(base.second) + dy;
+    const auto maxCoord = static_cast<long long>(std::numeric_limits<unsigned int>::max());
+    if (x < 0 || y < 0 || x > maxCoord || y > maxCoord) {
+        return {};
+    }
+    return {{static_cast<unsigned int>(x), static_cast<unsigned int>(y)}, true};
+}
+
+bool containsPosition(const std::unordered_set<position, MappingPositionHash> &positions,
+                      const ShiftedPosition &candidate)
+{
+    return candidate.valid && positions.find(candidate.pos) != positions.end();
+}
+
+bool sceneCoordinates(const position &cellPos, int &xCoord, int &yCoord)
+{
+    constexpr unsigned int kPitch = 20;
+    constexpr unsigned int kOrigin = 200;
+    constexpr unsigned int kMaxCellCoord =
+        (static_cast<unsigned int>(std::numeric_limits<int>::max()) - kOrigin) / kPitch;
+
+    if (cellPos.first > kMaxCellCoord || cellPos.second > kMaxCellCoord) {
+        return false;
+    }
+
+    xCoord = static_cast<int>(cellPos.first * kPitch + kOrigin);
+    yCoord = static_cast<int>(cellPos.second * kPitch + kOrigin);
+    return true;
+}
+} // namespace
 
 GateLevelMapping::GateLevelMapping(MainWindow *parent)
     : QObject(parent), mainWindow(parent)
@@ -48,6 +90,8 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
     nodes.clear();
     routes.clear();
     coordPhaseMap.clear();
+    phaseCodecPhaseCount = 4;
+    phaseCodecBlockSize = 4;
 
     bool nodeSection = false;
     bool pathSection = false;
@@ -70,6 +114,10 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
         }
         else if (line.startsWith("#phase map")) {
             phaseSection = true; nodeSection = pathSection = false;
+            continue;
+        }
+        else if (line.startsWith("#phase codec")) {
+            parsePhaseCodecLine(line);
             continue;
         }
         else if (line.startsWith("#")) {
@@ -192,6 +240,38 @@ void GateLevelMapping::parsePathLine(const QString &line)
 
 void GateLevelMapping::parsePhaseLine(const QString &line)
 {
+    // 新格式: tile(x,y):0xhhhh; 其中 tile 坐标映射到 block_size x block_size 的相位块。
+    QRegularExpression tileEntry("tile\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)\\s*:\\s*(?:0x)?([0-9a-fA-F]+)");
+    QRegularExpressionMatchIterator tileIt = tileEntry.globalMatch(line);
+    bool decodedTile = false;
+    while (tileIt.hasNext()) {
+        decodedTile = true;
+        QRegularExpressionMatch m = tileIt.next();
+        const int tileX = m.captured(1).toInt();
+        const int tileY = m.captured(2).toInt();
+        const std::string hex = m.captured(3).toStdString();
+
+        try {
+            const auto matrix = fcngraph::phase_codec::decodePackedHexToMatrix(
+                hex,
+                phaseCodecPhaseCount,
+                phaseCodecBlockSize
+            );
+            for (int row = 0; row < phaseCodecBlockSize; ++row) {
+                for (int column = 0; column < phaseCodecBlockSize; ++column) {
+                    const QPoint pt(tileX * phaseCodecBlockSize + column,
+                                    tileY * phaseCodecBlockSize + row);
+                    coordPhaseMap.insert(pt, matrix[static_cast<size_t>(row)][static_cast<size_t>(column)]);
+                }
+            }
+        } catch (const std::exception &ex) {
+            qWarning() << "[GateLevelMapping] Failed to decode phase tile:" << ex.what();
+        }
+    }
+    if (decodedTile) {
+        return;
+    }
+
     // 格式: (x,y):phase
     QRegularExpression entry("\\((\\d+),(\\d+)\\)\\s*:\\s*(\\d+)");
     QRegularExpressionMatchIterator it = entry.globalMatch(line);
@@ -200,6 +280,29 @@ void GateLevelMapping::parsePhaseLine(const QString &line)
         QRegularExpressionMatch m = it.next();
         QPoint pt(m.captured(1).toInt(), m.captured(2).toInt());
         coordPhaseMap.insert(pt, m.captured(3).toInt());
+    }
+}
+
+void GateLevelMapping::parsePhaseCodecLine(const QString &line)
+{
+    QRegularExpression phaseCountPattern("phase_count\\s*=\\s*(\\d+)");
+    QRegularExpression blockSizePattern("block_size\\s*=\\s*(\\d+)");
+
+    QRegularExpressionMatch phaseMatch = phaseCountPattern.match(line);
+    if (phaseMatch.hasMatch()) {
+        phaseCodecPhaseCount = phaseMatch.captured(1).toInt();
+    }
+
+    QRegularExpressionMatch blockMatch = blockSizePattern.match(line);
+    if (blockMatch.hasMatch()) {
+        phaseCodecBlockSize = blockMatch.captured(1).toInt();
+    }
+
+    if (phaseCodecPhaseCount != 3 && phaseCodecPhaseCount != 4) {
+        phaseCodecPhaseCount = 4;
+    }
+    if (phaseCodecBlockSize != 3 && phaseCodecBlockSize != 4) {
+        phaseCodecBlockSize = phaseCodecPhaseCount;
     }
 }
 
@@ -471,24 +574,25 @@ void GateLevelMapping::mappingCellItem(){
                 {
                     if((unit == cross.begin()) || (std::next(unit) == cross.end()))
                     {
-                        int count = 0; 
-                        position dir1 = {(*unit).first, (*unit).second + 1}; 
-                        position dir2 = {(*unit).first, (*unit).second - 1}; 
-                        position dir3 = {(*unit).first - 1, (*unit).second}; 
-                        position dir4 = {(*unit).first + 1, (*unit).second}; 
-                        if(crosscellSet.find(dir1) != crosscellSet.end())
+                        int count = 0;
+                        const position base = *unit;
+                        const auto dir1 = shiftedPosition(base, 0, 1);
+                        const auto dir2 = shiftedPosition(base, 0, -1);
+                        const auto dir3 = shiftedPosition(base, -1, 0);
+                        const auto dir4 = shiftedPosition(base, 1, 0);
+                        if(containsPosition(crosscellSet, dir1))
                         {
                             ++count;  
                         }
-                        if(crosscellSet.find(dir2) != crosscellSet.end())
+                        if(containsPosition(crosscellSet, dir2))
                         {
                             ++count;  
                         }
-                        if(crosscellSet.find(dir3) != crosscellSet.end())
+                        if(containsPosition(crosscellSet, dir3))
                         {
                             ++count;  
                         }
-                        if(crosscellSet.find(dir4) != crosscellSet.end())
+                        if(containsPosition(crosscellSet, dir4))
                         {
                             ++count;  
                         }
@@ -502,48 +606,54 @@ void GateLevelMapping::mappingCellItem(){
                         if(count < 2) 
                         {
                             //若端点无法直接放置柱点，则跨时钟延伸两个单位元胞
-                            if((crosscellSet.find(dir2) != crosscellSet.end())
-                            &&(allroutecellsSet.find(dir3) != allroutecellsSet.end())
-                            &&(allroutecellsSet.find(dir4) != allroutecellsSet.end()))
+                            if(containsPosition(crosscellSet, dir2)
+                            && containsPosition(allroutecellsSet, dir3)
+                            && containsPosition(allroutecellsSet, dir4)
+                            && dir1.valid)
                             {
                                 position cellpos1 = *unit;
                                 putCellItem(cellpos1, 2, CellType::CrossoverCell, positionPhaseMap);
 
 
-                                position cellpos2 = dir1;
+                                position cellpos2 = dir1.pos;
                                 putCellItem(cellpos2, 2, CellType::CrossoverCell, positionPhaseMap);
 
 
-                                position cellpos3 = {dir1.first, dir1.second + 1};
-                                putCellItem(cellpos3, 0, CellType::VerticalCell, positionPhaseMap);
-                                putCellItem(cellpos3, 1, CellType::VerticalCell, positionPhaseMap);
-                                putCellItem(cellpos3, 2, CellType::VerticalCell, positionPhaseMap);
-                                verticalcellSet.insert(cellpos3);
+                                auto cellpos3 = shiftedPosition(dir1.pos, 0, 1);
+                                if (cellpos3.valid) {
+                                    putCellItem(cellpos3.pos, 0, CellType::VerticalCell, positionPhaseMap);
+                                    putCellItem(cellpos3.pos, 1, CellType::VerticalCell, positionPhaseMap);
+                                    putCellItem(cellpos3.pos, 2, CellType::VerticalCell, positionPhaseMap);
+                                    verticalcellSet.insert(cellpos3.pos);
 
 
-                                crosscellSet.insert(cellpos2);
-                                crosscellSet.insert(cellpos3);
+                                    crosscellSet.insert(cellpos2);
+                                    crosscellSet.insert(cellpos3.pos);
+                                }
                             }
-                            else if ((crosscellSet.find(dir3) != crosscellSet.end())
-                            &&(allroutecellsSet.find(dir1) != allroutecellsSet.end())
-                            &&(allroutecellsSet.find(dir2) != allroutecellsSet.end()))
+                            else if (containsPosition(crosscellSet, dir3)
+                            && containsPosition(allroutecellsSet, dir1)
+                            && containsPosition(allroutecellsSet, dir2)
+                            && dir4.valid)
                             {
                                 position cellpos1 = *unit;
                                 putCellItem(cellpos1, 2, CellType::CrossoverCell, positionPhaseMap);
 
 
-                                position cellpos2 = dir4;
+                                position cellpos2 = dir4.pos;
                                 putCellItem(cellpos2, 2, CellType::CrossoverCell, positionPhaseMap);
 
 
-                                position cellpos3 = {dir4.first + 1, dir4.second};
-                                putCellItem(cellpos3, 0, CellType::VerticalCell, positionPhaseMap);
-                                putCellItem(cellpos3, 1, CellType::VerticalCell, positionPhaseMap);
-                                putCellItem(cellpos3, 2, CellType::VerticalCell, positionPhaseMap);
-                                verticalcellSet.insert(cellpos3);
+                                auto cellpos3 = shiftedPosition(dir4.pos, 1, 0);
+                                if (cellpos3.valid) {
+                                    putCellItem(cellpos3.pos, 0, CellType::VerticalCell, positionPhaseMap);
+                                    putCellItem(cellpos3.pos, 1, CellType::VerticalCell, positionPhaseMap);
+                                    putCellItem(cellpos3.pos, 2, CellType::VerticalCell, positionPhaseMap);
+                                    verticalcellSet.insert(cellpos3.pos);
 
-                                crosscellSet.insert(cellpos2);
-                                crosscellSet.insert(cellpos3);
+                                    crosscellSet.insert(cellpos2);
+                                    crosscellSet.insert(cellpos3.pos);
+                                }
                             }
                             else//放置交叉线端点三层柱点
                             {
@@ -620,13 +730,25 @@ void GateLevelMapping::mappingCellItem(){
 }
 
 void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name ){
-    int x_node = _cellpos.first / 5;
-    int y_node = _cellpos.second / 5;
-    int x_coord = _cellpos.first*20 + 200;  // 坐标
-    int y_coord = _cellpos.second*20 + 200;
+    int x_coord = 0;
+    int y_coord = 0;
+    if (!sceneCoordinates(_cellpos, x_coord, y_coord)) {
+        qWarning() << "[GateLevelMapping] Skip mapped cell with invalid scene coordinate:"
+                   << _cellpos.first << _cellpos.second;
+        return;
+    }
+
+    const position cellpos = std::make_pair(_cellpos.first / 5, _cellpos.second / 5);
+    const auto phaseIt = _pos_phase.find(cellpos);
+    int phase = 0;
+    if (phaseIt != _pos_phase.end()) {
+        phase = phaseIt->second;
+    } else {
+        qWarning() << "[GateLevelMapping] Mapped cell outside phase map; using phase 0:"
+                   << _cellpos.first << _cellpos.second;
+    }
+
     int cell_layer = _celllayer;
-    position cellpos = std::make_pair(x_node, y_node);
-    int phase = _pos_phase[cellpos];
     mainWindow->scene->addFastCell(x_coord, y_coord, cell_layer, phase, _cellType, _name);
 }
 

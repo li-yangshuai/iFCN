@@ -10,34 +10,22 @@ class QCADClockScheme : public QGraphicsItem
 {
 public:
     enum {Type = UserType + 30};
-    enum ClockPhaseType { Phase_0, Phase_1, Phase_2, Phase_3};
+    enum ClockPhaseType { Phase_None = -1, Phase_0 = 0, Phase_1, Phase_2, Phase_3};
 
     ClockPhaseType clockPhaseType() const{
         return myClockPhaseType;
     }
 
-    QCADClockScheme(ClockPhaseType _clockPhaseType);
+    int phase() const;
+    void setPhase(int _phase);
+    void setClockPhaseType(ClockPhaseType _clockPhaseType);
 
-    QCADClockScheme(int _phase){
-        switch(_phase){
-            case 0:
-                myClockPhaseType = Phase_0;
-                break;
-            case 1:
-                myClockPhaseType = Phase_1;
-                break;
-            case 2:
-                myClockPhaseType = Phase_2;
-                break;
-            case 3:
-                myClockPhaseType = Phase_3;
-                break;
-        }
-        setFlags(ItemIsFocusable);
-        setCacheMode(DeviceCoordinateCache);
-    }
+    QCADClockScheme(ClockPhaseType _clockPhaseType);
+    QCADClockScheme(int _phase);
 
 private:
+    static ClockPhaseType phaseTypeFromInt(int _phase);
+
     ClockPhaseType myClockPhaseType;
 
 protected:
@@ -51,6 +39,4 @@ protected:
 };
 
 
-
-
-#endif 
+#endif

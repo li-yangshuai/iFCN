@@ -1,0 +1,30 @@
+#circuit name: HS.v
+
+#designed by graph render algorithm with encoded 3-phase clock tiles.
+
+#gate level placement and routing infomation
+#gates number: 4
+#input/output: 2 / 2
+#edges number: 0
+#total layers: 2
+#layout area: width: 2, height: 2, area: 4
+#phase origin: top-left=(4,4), saved coordinates are normalized to (0,0)
+#phase count: 3
+#runtime: 0.001s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, x, input, (0,0);
+1, y, input, (1,0);
+2, bout, output, (0,1);
+3, diff, output, (1,1);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+#paths info
+#phase map
+#phase codec: phase_count=3, block_size=3, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 3x3 phase block ###
+tile(0,0):0x000000;
+#phase map

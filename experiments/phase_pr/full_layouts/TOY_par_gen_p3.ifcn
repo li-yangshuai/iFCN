@@ -1,0 +1,60 @@
+#circuit name: par_gen.v
+
+#designed by graph render algorithm with encoded 3-phase clock tiles.
+
+#gate level placement and routing infomation
+#gates number: 17
+#input/output: 3 / 1
+#edges number: 20
+#total layers: 7
+#layout area: width: 6, height: 8, area: 48
+#phase origin: top-left=(3,3), saved coordinates are normalized to (0,0)
+#phase count: 3
+#runtime: 0.475s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (1,1);
+1, b, input, (3,1);
+2, c, input, (5,1);
+3, parity, or, (3,7);
+4, ~b, not, (3,2);
+6, w2, and, (4,3);
+7, ~c, not, (5,2);
+9, w4, and, (2,3);
+10, n1, or, (3,4);
+11, ~n1, not, (4,5);
+13, w6, and, (3,6);
+14, ~a, not, (1,2);
+16, w8, and, (2,5);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,13): (1,1),(0,1),(0,2),(0,3),(0,4),(0,5),(0,6),(1,6),(2,6),(3,6);
+(0,14): (1,1),(1,2);
+(1,4): (3,1),(3,2);
+(1,9): (3,1),(2,1),(2,2),(2,3);
+(2,6): (5,1),(4,1),(4,2),(4,3);
+(2,7): (5,1),(5,2);
+(4,6): (3,2),(3,3),(4,3);
+(6,10): (4,3),(4,4),(3,4);
+(7,9): (5,2),(4,2),(4,1),(4,0),(3,0),(2,0),(1,0),(0,0),(0,1),(0,2),(0,3),(1,3),(2,3);
+(9,10): (2,3),(2,4),(3,4);
+(10,11): (3,4),(3,5),(4,5);
+(10,16): (3,4),(3,5),(2,5);
+(11,13): (4,5),(4,6),(3,6);
+(13,3): (3,6),(3,7);
+(14,16): (1,2),(1,3),(1,4),(1,5),(2,5);
+(16,3): (2,5),(2,6),(2,7),(3,7);
+#paths info
+#phase map
+#phase codec: phase_count=3, block_size=3, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 3x3 phase block ###
+tile(0,0):0x001122;
+tile(1,0):0x062122;
+tile(0,1):0x240912;
+tile(1,1):0x040509;
+tile(0,2):0x240000;
+tile(1,2):0x000100;
+#phase map

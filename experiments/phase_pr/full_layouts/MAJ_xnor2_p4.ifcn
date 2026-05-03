@@ -1,0 +1,68 @@
+#circuit name: xnor2.v
+
+#designed by graph render algorithm with encoded 4-phase clock tiles.
+
+#gate level placement and routing infomation
+#gates number: 14
+#input/output: 2 / 1
+#edges number: 19
+#total layers: 9
+#layout area: width: 5, height: 17, area: 85
+#phase origin: top-left=(4,4), saved coordinates are normalized to (0,0)
+#phase count: 4
+#runtime: 1.663s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, x0, input, (1,0);
+1, x1, input, (3,0);
+2, y0, output, (2,16);
+3, n3, or, (0,2);
+4, n4, maj, (2,8);
+5, n4_0, and, (3,4);
+6, ~n3, not, (1,4);
+7, n4_1, and, (1,6);
+8, n4_2, and, (3,6);
+9, ~n4, not, (2,10);
+10, n5, and, (2,12);
+11, ~n5, not, (2,14);
+12, 0_7_5, fanout, (2,2);
+13, 1_8_5, fanout, (4,2);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,3): (1,0),(0,0),(0,1),(0,2);
+(0,12): (1,0),(0,0),(0,1),(1,1),(1,2),(2,2);
+(1,3): (3,0),(3,1),(2,1),(1,1),(1,2),(0,2);
+(1,13): (3,0),(3,1),(3,2),(4,2);
+(3,6): (0,2),(0,3),(0,4),(1,4);
+(3,10): (0,2),(0,3),(0,4),(0,5),(0,6),(0,7),(0,8),(0,9),(0,10),(0,11),(0,12),(1,12),(2,12);
+(4,9): (2,8),(2,9),(2,10);
+(5,4): (3,4),(3,5),(4,5),(4,6),(4,7),(3,7),(2,7),(2,8);
+(6,7): (1,4),(1,5),(0,5),(0,6),(1,6);
+(6,8): (1,4),(1,5),(2,5),(2,6),(3,6);
+(7,4): (1,6),(1,7),(1,8),(2,8);
+(8,4): (3,6),(3,7),(3,8),(2,8);
+(9,10): (2,10),(2,11),(2,12);
+(10,11): (2,12),(2,13),(2,14);
+(11,2): (2,14),(2,15),(2,16);
+(12,5): (2,2),(2,3),(2,4),(3,4);
+(12,7): (2,2),(2,3),(2,4),(2,5),(1,5),(1,6);
+(13,5): (4,2),(4,3),(3,3),(3,4);
+(13,8): (4,2),(4,3),(4,4),(4,5),(3,5),(3,6);
+#paths info
+#phase map
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0x015abb00;
+tile(1,0):0x00000300;
+tile(0,1):0x55aaeecf;
+tile(1,1):0x01020203;
+tile(0,2):0x10213203;
+tile(1,2):0x00000000;
+tile(0,3):0x10203000;
+tile(1,3):0x00000000;
+tile(0,4):0x10000000;
+tile(1,4):0x00000000;
+#phase map

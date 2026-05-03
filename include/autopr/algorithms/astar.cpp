@@ -2,6 +2,17 @@
 
 namespace fcngraph{
 
+bool Astar::isNodeCell(const position& pos) const
+{
+    const auto cell = chessboard.gridMap.find(pos);
+    if (cell == chessboard.gridMap.end()) {
+        return false;
+    }
+
+    const auto weight = cell->second.get_current_weight();
+    return weight >= NODE_WEIGHT && ((weight - NODE_WEIGHT) % WIRE_WEIGHT == 0);
+}
+
 std::vector<position> Astar::findPath(const position& startPosInput, const position& goalPosInput, bool isOneFanout) {
 
     reusedPath.clear();
@@ -18,16 +29,27 @@ std::vector<position> Astar::findPath(const position& startPosInput, const posit
     //如果路径复用，起点设置为复用路径的起点
     if(isOneFanout){
         if(outDirections.find(startPosLocal) != outDirections.end()){
-            //复用路径，当前起点直接设置为出度方向，保存出度方向和真正起点的映射关系
-            is_pathReused = true;
+            const auto reusableStart = outDirections[startPosLocal];
+            const auto finishedRoute = finishRoutes.find(startPos);
+            const bool hasReusableInterior =
+                finishedRoute != finishRoutes.end() &&
+                finishedRoute->second.size() > 2 &&
+                !isNodeCell(reusableStart);
 
-            reusedPath = finishRoutes[startPos];
-            reusedPath.pop_back();
-            reusedPath.erase(reusedPath.begin());
+            if (hasReusableInterior) {
+                //复用路径，当前起点直接设置为出度方向，保存出度方向和真正起点的映射关系
+                is_pathReused = true;
 
-            startPosLocal = outDirections[startPosLocal];
-            cameFrom[startPosLocal] = startPos;
-            gScore[startPosLocal] = 1.0;  
+                reusedPath = finishedRoute->second;
+                reusedPath.pop_back();
+                reusedPath.erase(reusedPath.begin());
+
+                startPosLocal = reusableStart;
+                cameFrom[startPosLocal] = startPos;
+                gScore[startPosLocal] = 1.0;
+            }else{
+                gScore[startPosLocal] = 0.0;
+            }
         }else{
             gScore[startPosLocal] = 0.0;  
         }
@@ -74,11 +96,15 @@ std::vector<position> Astar::findPath(const position& startPosInput, const posit
             //因为这些邻居节点相对于当前节点都移动了一个单位，所以邻居的g值增加1
             double tentative_gScore = gScore[current] + 1.0; 
 
-            if(is_pathReused){
-                auto iter = std::find(reusedPath.begin(), reusedPath.end(), neighbor);
-                if(iter != reusedPath.end()){
-                    //复用路径 -1
-                    tentative_gScore -= 1;
+            const auto reusedIter = std::find(reusedPath.begin(), reusedPath.end(), neighbor);
+            const bool followsReusedPath = is_pathReused && reusedIter != reusedPath.end();
+            if(followsReusedPath){
+                // 同一扇出源的主干复用优先，普通重叠线在下面加罚。
+                tentative_gScore -= 1;
+            }else if(neighbor != goalPos){
+                auto cell = chessboard.gridMap.find(neighbor);
+                if(cell != chessboard.gridMap.end() && cell->second.get_current_weight() >= WIRE_WEIGHT){
+                    tentative_gScore += maxSearchCost > 100.0 ? 6.0 : 0.0;
                 }
             }
             
@@ -162,7 +188,9 @@ std::vector<position> Astar::getNeighbors(const position& pos){
                 
                 auto it = std::find(reusedPath.begin(), reusedPath.end(), pos);
                 if (it != reusedPath.end() && (it + 1) != reusedPath.end() && *(it + 1) == neighbor_pos) {
-                    neighbors.push_back(neighbor_pos);
+                    if (!isNodeCell(neighbor_pos)) {
+                        neighbors.push_back(neighbor_pos);
+                    }
                     continue;
                 }
 
@@ -204,7 +232,9 @@ std::vector<position> Astar::getNeighbors(const position& pos){
             //复用路径,如果当前点的邻居是复用路径的点，那么直接加入
             auto it = std::find(reusedPath.begin(), reusedPath.end(), pos);
             if (it != reusedPath.end() && (it + 1) != reusedPath.end() && *(it + 1) == neighbor_pos) {
-                neighbors.push_back(neighbor_pos);
+                if (!isNodeCell(neighbor_pos)) {
+                    neighbors.push_back(neighbor_pos);
+                }
                 continue;
             }
 

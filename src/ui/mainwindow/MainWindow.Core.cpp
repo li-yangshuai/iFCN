@@ -18,6 +18,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     resetUndoHistory();
 
     connect(scene, SIGNAL(cellItemInserted(QCADCellItem *)), this, SLOT(slotCellItemInserted(QCADCellItem *)));
+    connect(scene, &QCADScene::clockRegionsChanged, this, [this]() {
+        if (phaseCodecPreviewActive) {
+            updatePhaseCodecPreview();
+        }
+    });
     // connect(scene, SIGNAL(clockPhaseInserted(QCADClockScheme *)), this, SLOT(slotQCADClockScheme(QCADClockScheme *)));
 
     QSettings settings;

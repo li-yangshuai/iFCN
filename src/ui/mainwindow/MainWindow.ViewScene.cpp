@@ -1,9 +1,19 @@
 #include "ui/mainwindow/MainWindow.h"
+#include <autopr/algorithms/phase_codec.h>
+#include <QGraphicsRectItem>
+#include <QGraphicsSimpleTextItem>
 #include <QGridLayout>
+#include <QHeaderView>
+#include <QPushButton>
 #include <QSignalBlocker>
+#include <QTableWidgetItem>
+#include <QVBoxLayout>
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <limits>
+#include <map>
 
 void MainWindow::createViewAndScene()
 {
@@ -22,9 +32,14 @@ void MainWindow::createViewAndScene()
     view = new QCADView(this);
     view->setScene(scene);
     view->resize(800,600);
+    phaseCodecPanel = createPhaseCodecPanel();
 
     splitter->addWidget(toolBox);
-    splitter->addWidget(view);   
+    splitter->addWidget(view);
+    splitter->addWidget(phaseCodecPanel);
+    splitter->setStretchFactor(0, 0);
+    splitter->setStretchFactor(1, 1);
+    splitter->setStretchFactor(2, 0);
     verticalLayout->setContentsMargins(12, 12, 12, 8);
     verticalLayout->setSpacing(10);
     verticalLayout->addWidget(splitter);
@@ -34,6 +49,126 @@ void MainWindow::createViewAndScene()
     customStatusBar = new CustomStatusBar(this);
     verticalLayout->addWidget(customStatusBar, 1);
 
+}
+
+QWidget* MainWindow::createPhaseCodecPanel()
+{
+    QWidget *panel = new QWidget(splitter);
+    panel->setMinimumWidth(300);
+    panel->setMaximumWidth(420);
+    panel->setObjectName(QStringLiteral("phaseCodecPanel"));
+
+    QVBoxLayout *layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(12, 10, 12, 10);
+    layout->setSpacing(10);
+
+    QLabel *titleLabel = new QLabel(tr("Phase Codec"), panel);
+    titleLabel->setObjectName(QStringLiteral("phaseCodecTitle"));
+    QFont titleFont = titleLabel->font();
+    titleFont.setBold(true);
+    titleLabel->setFont(titleFont);
+
+    phaseCodecModeComboBox = new QComboBox(panel);
+    phaseCodecModeComboBox->setMinimumHeight(30);
+    phaseCodecModeComboBox->addItem(tr("Auto phase"), 0);
+    phaseCodecModeComboBox->addItem(tr("4-phase / 4x4"), 4);
+    phaseCodecModeComboBox->addItem(tr("3-phase / 3x3"), 3);
+
+    phaseCodecEncodeButton = new QPushButton(tr("Encode Clock Regions"), panel);
+    phaseCodecEncodeButton->setObjectName(QStringLiteral("phaseCodecEncodeButton"));
+    phaseCodecEncodeButton->setMinimumHeight(34);
+
+    phaseCodecTable = new QTableWidget(panel);
+    phaseCodecTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    phaseCodecTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    phaseCodecTable->setSelectionBehavior(QAbstractItemView::SelectItems);
+    phaseCodecTable->setFocusPolicy(Qt::NoFocus);
+    phaseCodecTable->setShowGrid(false);
+    phaseCodecTable->setWordWrap(true);
+    phaseCodecTable->setAlternatingRowColors(true);
+    phaseCodecTable->setCornerButtonEnabled(false);
+    phaseCodecTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    phaseCodecTable->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    phaseCodecTable->horizontalHeader()->setDefaultSectionSize(112);
+    phaseCodecTable->verticalHeader()->setDefaultSectionSize(96);
+    phaseCodecTable->horizontalHeader()->setMinimumSectionSize(88);
+    phaseCodecTable->verticalHeader()->setMinimumSectionSize(72);
+
+    phaseCodecStatusLabel = new QLabel(tr("Not encoded"), panel);
+    phaseCodecStatusLabel->setObjectName(QStringLiteral("phaseCodecStatusLabel"));
+    phaseCodecStatusLabel->setWordWrap(true);
+
+    layout->addWidget(titleLabel);
+    layout->addWidget(phaseCodecModeComboBox);
+    layout->addWidget(phaseCodecEncodeButton);
+    layout->addWidget(phaseCodecTable, 1);
+    layout->addWidget(phaseCodecStatusLabel);
+
+    connect(phaseCodecEncodeButton, &QPushButton::clicked,
+            this, &MainWindow::slotEncodeClockRegions);
+    connect(phaseCodecModeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::slotPhaseCodecModeChanged);
+    connect(phaseCodecTable, &QTableWidget::cellClicked,
+            this, &MainWindow::slotPhaseCodecTileActivated);
+
+    panel->setStyleSheet(QStringLiteral(
+        "QWidget#phaseCodecPanel {"
+        "  background: #f7f9fc;"
+        "  border-left: 1px solid #d7dde6;"
+        "}"
+        "QLabel#phaseCodecTitle {"
+        "  color: #172033;"
+        "  font-size: 14px;"
+        "}"
+        "QLabel#phaseCodecStatusLabel {"
+        "  color: #526173;"
+        "}"
+        "QComboBox {"
+        "  background: #ffffff;"
+        "  border: 1px solid #c8d1dc;"
+        "  border-radius: 5px;"
+        "  padding: 4px 8px;"
+        "  color: #172033;"
+        "}"
+        "QPushButton#phaseCodecEncodeButton {"
+        "  background: #0067c0;"
+        "  border: 0;"
+        "  border-radius: 6px;"
+        "  color: #ffffff;"
+        "  font-weight: 600;"
+        "  padding: 7px 10px;"
+        "}"
+        "QPushButton#phaseCodecEncodeButton:hover {"
+        "  background: #075fae;"
+        "}"
+        "QPushButton#phaseCodecEncodeButton:pressed {"
+        "  background: #004f93;"
+        "}"
+        "QTableWidget {"
+        "  background: #ffffff;"
+        "  alternate-background-color: #f8fafc;"
+        "  border: 1px solid #d7dde6;"
+        "  border-radius: 7px;"
+        "  color: #172033;"
+        "}"
+        "QTableWidget::item {"
+        "  border-bottom: 1px solid #eef2f6;"
+        "  border-right: 1px solid #eef2f6;"
+        "  padding: 6px;"
+        "}"
+        "QTableWidget::item:selected {"
+        "  background: #d7ebff;"
+        "  color: #0b3558;"
+        "}"
+        "QHeaderView::section {"
+        "  background: #edf2f7;"
+        "  border: 0;"
+        "  color: #405064;"
+        "  padding: 5px;"
+        "}"
+    ));
+
+    return panel;
 }
 
 void MainWindow::centerViewOnItems(bool fitToView)
@@ -225,6 +360,308 @@ int MainWindow::selectedClockPhase() const
         return phaseData.toInt();
     }
     return clockComboBox->currentIndex();
+}
+
+int MainWindow::selectedPhaseCodecCount(const QVector<QCADScene::ClockRegionRecord> &regions) const
+{
+    const int mode = phaseCodecModeComboBox != nullptr
+        ? phaseCodecModeComboBox->currentData().toInt()
+        : 4;
+    if (mode == 3 || mode == 4) {
+        return mode;
+    }
+
+    for (const QCADScene::ClockRegionRecord &region : regions) {
+        if (region.phase == 3) {
+            return 4;
+        }
+    }
+    return 3;
+}
+
+QPoint MainWindow::clockRegionGridCoord(const QCADScene::ClockRegionRecord &region) const
+{
+    const int gridX = static_cast<int>(std::round((region.x - 40.0) / CLOCK_SCHEME_SIZE_5));
+    const int gridY = static_cast<int>(std::round((region.y - 40.0) / CLOCK_SCHEME_SIZE_5));
+    return QPoint(gridX, gridY);
+}
+
+void MainWindow::clearPhaseCodecHighlight()
+{
+    for (QGraphicsItem *item : phaseCodecHighlightItems) {
+        if (item == nullptr) {
+            continue;
+        }
+        if (scene != nullptr && item->scene() == scene) {
+            scene->removeItem(item);
+        }
+        delete item;
+    }
+    phaseCodecHighlightItems.clear();
+}
+
+void MainWindow::highlightPhaseCodecTile(const PhaseCodecTilePreview &tile)
+{
+    if (scene == nullptr || view == nullptr) {
+        return;
+    }
+
+    clearPhaseCodecHighlight();
+
+    const int startGridX = phaseCodecOriginGrid.x()
+        + static_cast<int>(tile.tileX) * phaseCodecBlockSize;
+    const int startGridY = phaseCodecOriginGrid.y()
+        + static_cast<int>(tile.tileY) * phaseCodecBlockSize;
+    const qreal left = 40.0 + startGridX * CLOCK_SCHEME_SIZE_5 - CLOCK_SCHEME_SIZE_5 / 2.0;
+    const qreal top = 40.0 + startGridY * CLOCK_SCHEME_SIZE_5 - CLOCK_SCHEME_SIZE_5 / 2.0;
+    const QRectF blockRect(left,
+                           top,
+                           phaseCodecBlockSize * CLOCK_SCHEME_SIZE_5,
+                           phaseCodecBlockSize * CLOCK_SCHEME_SIZE_5);
+
+    QPen outerPen(QColor(0, 103, 192, 235), 4.0);
+    outerPen.setCosmetic(true);
+    outerPen.setJoinStyle(Qt::MiterJoin);
+    auto *overlay = scene->addRect(blockRect,
+                                   outerPen,
+                                   QBrush(QColor(0, 103, 192, 42)));
+    overlay->setZValue(1000000);
+    phaseCodecHighlightItems.push_back(overlay);
+
+    QPen innerPen(QColor(255, 255, 255, 230), 1.6);
+    innerPen.setCosmetic(true);
+    auto *inner = scene->addRect(blockRect.adjusted(3, 3, -3, -3), innerPen, Qt::NoBrush);
+    inner->setZValue(1000001);
+    phaseCodecHighlightItems.push_back(inner);
+
+    QPen markerPen(QColor(255, 255, 255, 240), 1.8);
+    markerPen.setCosmetic(true);
+    const QBrush markerBrush(QColor(0, 103, 192, 230));
+    const qreal markerSize = 24.0;
+    const QVector<QRectF> markerRects = {
+        QRectF(blockRect.left(), blockRect.top(), markerSize, markerSize),
+        QRectF(blockRect.right() - markerSize, blockRect.top(), markerSize, markerSize),
+        QRectF(blockRect.left(), blockRect.bottom() - markerSize, markerSize, markerSize),
+        QRectF(blockRect.right() - markerSize, blockRect.bottom() - markerSize, markerSize, markerSize)
+    };
+    for (const QRectF &markerRect : markerRects) {
+        auto *marker = scene->addRect(markerRect, markerPen, markerBrush);
+        marker->setZValue(1000002);
+        phaseCodecHighlightItems.push_back(marker);
+    }
+
+    auto *label = scene->addSimpleText(tr("tile(%1,%2) 0x%3")
+                                       .arg(tile.tileX)
+                                       .arg(tile.tileY)
+                                       .arg(tile.hex));
+    QFont labelFont = label->font();
+    labelFont.setBold(true);
+    labelFont.setPointSize(10);
+    label->setFont(labelFont);
+    label->setBrush(QBrush(QColor(0, 63, 120)));
+    label->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+    label->setPos(blockRect.left() + 8, blockRect.top() - 24);
+    label->setZValue(1000003);
+    phaseCodecHighlightItems.push_back(label);
+
+    view->centerOn(blockRect.center());
+
+    if (customStatusBar != nullptr) {
+        customStatusBar->addMessage(tr("Located encoded tile (%1, %2)")
+                                    .arg(tile.tileX)
+                                    .arg(tile.tileY));
+    }
+}
+
+void MainWindow::updatePhaseCodecPreview()
+{
+    if (scene == nullptr || phaseCodecTable == nullptr || phaseCodecStatusLabel == nullptr) {
+        return;
+    }
+
+    const QVector<QCADScene::ClockRegionRecord> regions = scene->clockRegions();
+    phaseCodecTiles.clear();
+    phaseCodecTable->clear();
+    phaseCodecTable->setRowCount(0);
+    phaseCodecTable->setColumnCount(0);
+
+    if (regions.isEmpty()) {
+        clearPhaseCodecHighlight();
+        phaseCodecStatusLabel->setText(tr("No clock regions"));
+        return;
+    }
+
+    const int phaseCount = selectedPhaseCodecCount(regions);
+    const int blockSize = phaseCount;
+    phaseCodecBlockSize = blockSize;
+    phaseCodecTable->verticalHeader()->setDefaultSectionSize(blockSize == 4 ? 104 : 88);
+    phaseCodecTable->horizontalHeader()->setDefaultSectionSize(blockSize == 4 ? 118 : 104);
+
+    int minGridX = std::numeric_limits<int>::max();
+    int minGridY = std::numeric_limits<int>::max();
+    int maxGridX = std::numeric_limits<int>::min();
+    int maxGridY = std::numeric_limits<int>::min();
+
+    struct RegionGridRecord {
+        QPoint grid;
+        int phase = 0;
+    };
+    QVector<RegionGridRecord> validRegions;
+    validRegions.reserve(regions.size());
+
+    for (const QCADScene::ClockRegionRecord &region : regions) {
+        if (region.phase < 0) {
+            continue;
+        }
+        if (region.phase >= phaseCount) {
+            phaseCodecStatusLabel->setText(
+                tr("Phase %1 is invalid in %2-phase mode")
+                    .arg(region.phase)
+                    .arg(phaseCount));
+            clearPhaseCodecHighlight();
+            return;
+        }
+
+        const QPoint grid = clockRegionGridCoord(region);
+        minGridX = qMin(minGridX, grid.x());
+        minGridY = qMin(minGridY, grid.y());
+        maxGridX = qMax(maxGridX, grid.x());
+        maxGridY = qMax(maxGridY, grid.y());
+        validRegions.push_back({grid, region.phase});
+    }
+
+    if (validRegions.isEmpty()) {
+        clearPhaseCodecHighlight();
+        phaseCodecStatusLabel->setText(tr("No phased clock regions"));
+        return;
+    }
+
+    phaseCodecOriginGrid = QPoint(minGridX, minGridY);
+
+    std::map<fcngraph::phase_codec::PhaseCoord, int> phaseMap;
+    for (const RegionGridRecord &region : validRegions) {
+        const unsigned int normalizedX = static_cast<unsigned int>(region.grid.x() - minGridX);
+        const unsigned int normalizedY = static_cast<unsigned int>(region.grid.y() - minGridY);
+        phaseMap[{normalizedX, normalizedY}] = region.phase;
+    }
+
+    const int gridWidth = maxGridX - minGridX + 1;
+    const int gridHeight = maxGridY - minGridY + 1;
+
+    try {
+        const auto encodedTiles = fcngraph::phase_codec::encodePhaseMapToTiles(
+            phaseMap,
+            phaseCount,
+            blockSize,
+            gridWidth,
+            gridHeight
+        );
+
+        const int tableColumns = (gridWidth + blockSize - 1) / blockSize;
+        const int tableRows = (gridHeight + blockSize - 1) / blockSize;
+        phaseCodecTable->setColumnCount(tableColumns);
+        phaseCodecTable->setRowCount(tableRows);
+
+        QStringList horizontalLabels;
+        for (int column = 0; column < tableColumns; ++column) {
+            horizontalLabels.push_back(tr("X%1").arg(column));
+        }
+        QStringList verticalLabels;
+        for (int row = 0; row < tableRows; ++row) {
+            verticalLabels.push_back(tr("Y%1").arg(row));
+        }
+        phaseCodecTable->setHorizontalHeaderLabels(horizontalLabels);
+        phaseCodecTable->setVerticalHeaderLabels(verticalLabels);
+
+        phaseCodecTiles.reserve(static_cast<int>(encodedTiles.size()));
+        for (const auto &tile : encodedTiles) {
+            PhaseCodecTilePreview preview;
+            preview.tileX = tile.tileX;
+            preview.tileY = tile.tileY;
+            preview.hex = QString::fromStdString(tile.hex);
+            const int previewIndex = phaseCodecTiles.size();
+            phaseCodecTiles.push_back(preview);
+
+            QString matrixText;
+            const auto matrix = fcngraph::phase_codec::decodePackedHexToMatrix(
+                tile.hex,
+                phaseCount,
+                blockSize
+            );
+            for (int row = 0; row < blockSize; ++row) {
+                if (row > 0) {
+                    matrixText += QLatin1Char('\n');
+                }
+                for (int column = 0; column < blockSize; ++column) {
+                    if (column > 0) {
+                        matrixText += QLatin1Char(' ');
+                    }
+                    matrixText += QString::number(matrix[static_cast<size_t>(row)]
+                                                        [static_cast<size_t>(column)]);
+                }
+            }
+
+            auto *item = new QTableWidgetItem(
+                tr("0x%1\n%2").arg(preview.hex, matrixText)
+            );
+            item->setTextAlignment(Qt::AlignCenter);
+            item->setData(Qt::UserRole, previewIndex);
+            QFont tileFont(QStringLiteral("monospace"));
+            tileFont.setStyleHint(QFont::Monospace);
+            tileFont.setPointSize(9);
+            item->setFont(tileFont);
+            item->setBackground(QColor("#fbfdff"));
+            item->setForeground(QColor("#172033"));
+            item->setToolTip(tr("Tile (%1, %2), %3x%3")
+                             .arg(preview.tileX)
+                             .arg(preview.tileY)
+                             .arg(blockSize));
+            phaseCodecTable->setItem(static_cast<int>(preview.tileY),
+                                     static_cast<int>(preview.tileX),
+                                     item);
+        }
+
+        phaseCodecStatusLabel->setText(
+            tr("%1-phase, %2x%2 scan, %3 tile(s)")
+                .arg(phaseCount)
+                .arg(blockSize)
+                .arg(phaseCodecTiles.size()));
+    } catch (const std::exception &ex) {
+        clearPhaseCodecHighlight();
+        phaseCodecStatusLabel->setText(tr("Encoding failed: %1").arg(ex.what()));
+    }
+}
+
+void MainWindow::slotEncodeClockRegions()
+{
+    phaseCodecPreviewActive = true;
+    updatePhaseCodecPreview();
+}
+
+void MainWindow::slotPhaseCodecModeChanged(int idx)
+{
+    Q_UNUSED(idx);
+    if (phaseCodecPreviewActive) {
+        updatePhaseCodecPreview();
+    }
+}
+
+void MainWindow::slotPhaseCodecTileActivated(int row, int column)
+{
+    if (phaseCodecTable == nullptr) {
+        return;
+    }
+    QTableWidgetItem *item = phaseCodecTable->item(row, column);
+    if (item == nullptr) {
+        return;
+    }
+
+    bool ok = false;
+    const int previewIndex = item->data(Qt::UserRole).toInt(&ok);
+    if (!ok || previewIndex < 0 || previewIndex >= phaseCodecTiles.size()) {
+        return;
+    }
+    highlightPhaseCodecTile(phaseCodecTiles[previewIndex]);
 }
 
 

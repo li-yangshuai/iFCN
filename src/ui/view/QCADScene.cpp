@@ -57,6 +57,11 @@ QCADScene::~QCADScene()
     clearInteractiveFastLayer();
 }
 
+void QCADScene::notifyClockRegionsChanged()
+{
+    emit clockRegionsChanged();
+}
+
 void QCADScene::setEditMode(EditMode mode)
 {
     if (currentMode == mode) {
@@ -131,6 +136,7 @@ void QCADScene::insertOrUpdateClockScheme(const QPointF &pos)
             mw->pushUndoSnapshot();
         }
     }
+    notifyClockRegionsChanged();
 }
 
 bool QCADScene::showClockPhaseMenu(const QPointF &pos, const QPoint &screenPos)
@@ -193,6 +199,9 @@ void QCADScene::applyClockPhase(QCADClockScheme *clockItem, int phase)
             mw->pushUndoSnapshot();
         }
     }
+    if (phaseChanged) {
+        notifyClockRegionsChanged();
+    }
     update(clockItem->sceneBoundingRect());
 }
 
@@ -248,6 +257,9 @@ void QCADScene::deleteClockScheme(QCADClockScheme *clockItem)
             mw->setDirty(true);
             mw->pushUndoSnapshot();
         }
+    }
+    if (removed) {
+        notifyClockRegionsChanged();
     }
     update(dirtyRect);
 }
@@ -326,16 +338,37 @@ void QCADScene::placeClockScheme( const int _clock_scheme [4][4] ) {
         }
         i++;
     }
+    notifyClockRegionsChanged();
 }
 
 
 void QCADScene::clearPhaseRecord(){
     clearFastClockOverlay();
+    const bool hadFastClocks = !fastClocks.isEmpty();
+    fastClocks.clear();
+    fastClockTiles.clear();
+    fastClockOccupancy.clear();
+
+    if (hadFastClocks) {
+        fastBounds = QRectF();
+        for (const auto &layerCells : fastCellsPerLayer) {
+            for (const auto &cell : layerCells) {
+                fastBounds = fastBounds.isValid() ? fastBounds.united(cellRectForPosition(cell.x, cell.y))
+                                                  : cellRectForPosition(cell.x, cell.y);
+            }
+        }
+    }
+
+    bool removedClockItem = hadFastClocks;
     foreach(QGraphicsItem *item, items()){
         if(item->type() == QCADClockScheme::Type){
             removeItem(item);
             delete item;
+            removedClockItem = true;
         }
+    }
+    if (removedClockItem) {
+        notifyClockRegionsChanged();
     }
 }
 
@@ -415,6 +448,7 @@ void QCADScene::finalizeFastRenderBuild()
     rebuildFastClockOverlay();
     rebuildInteractiveFastLayer();
     update(fastBounds);
+    notifyClockRegionsChanged();
 }
 
 void QCADScene::clearFastRender()
@@ -657,6 +691,7 @@ void QCADScene::restoreClockRegions(const QVector<ClockRegionRecord> &regions)
         addItem(item);
     }
     update();
+    notifyClockRegionsChanged();
 }
 
 void QCADScene::drawBackground(QPainter *painter, const QRectF &rect)

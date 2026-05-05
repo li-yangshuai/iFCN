@@ -10,7 +10,7 @@
 #layout area: width: 32, height: 46, area: 1472
 #phase origin: top-left=(3,4), saved coordinates are normalized to (0,0)
 #phase count: 4
-#runtime: 4.484s
+#runtime: 33.415s
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###

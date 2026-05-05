@@ -65,6 +65,14 @@ private:
                              int width,
                              int height,
                              double elapsedSeconds);
+    void saveGraphRenderLatex(const QString &sourceFilePath,
+                              Parse &parse,
+                              const std::map<unsigned int, position> &nodePositions,
+                              const std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> &routes,
+                              const std::map<position, int> &posPhase,
+                              int phaseCount,
+                              int width,
+                              int height);
 
 
 };

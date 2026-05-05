@@ -65,6 +65,7 @@ public:
     // int caculateCellatCsPhase(QPointF _cellPos);
 
     void clearPhaseRecord();
+    void notifyClockRegionsChanged();
     void beginFastRenderBuild(int layerCount);
     void addFastCell(int x, int y, int layer, int phase, CellType type, const QString &name = QString());
     void addFastClock(int x, int y, int phase);
@@ -141,6 +142,7 @@ private:
 signals:
     void cellItemInserted(QCADCellItem * item);
     void clockPhaseInserted(QCADClockScheme * item);
+    void clockRegionsChanged();
 
 
 };

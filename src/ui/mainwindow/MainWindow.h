@@ -70,6 +70,7 @@ private:
 private:
         void createViewAndScene();
         void createToolBox();
+        QWidget* createPhaseCodecPanel();
         QWidget* createCellWidget(const QString &text, CellType type);
         QWidget* createClockSchemeWidget(const QString &text, const QString &image);
         void setEditMode(EditMode mode);
@@ -85,6 +86,7 @@ public:
         QButtonGroup* clockSchemeGroup;
         QSplitter *splitter;
         QWidget* centralWidget;
+        QWidget* phaseCodecPanel;
         //view select mode
         QLabel *viewLabel;
         QButtonGroup *viewModeButtonGroup;
@@ -99,6 +101,10 @@ public:
 
         //gate level mapping
         QPushButton *gateLevelMappingButton;
+        QPushButton *phaseCodecEncodeButton;
+        QComboBox *phaseCodecModeComboBox;
+        QTableWidget *phaseCodecTable;
+        QLabel *phaseCodecStatusLabel;
 
         //view & scene
         QCADView *view;
@@ -226,6 +232,18 @@ private:
         int undoSnapshotIndex = -1;
         bool restoringSnapshot = false;
 
+        struct PhaseCodecTilePreview {
+            unsigned int tileX = 0;
+            unsigned int tileY = 0;
+            QString hex;
+        };
+
+        QVector<PhaseCodecTilePreview> phaseCodecTiles;
+        QPoint phaseCodecOriginGrid;
+        int phaseCodecBlockSize = 4;
+        bool phaseCodecPreviewActive = false;
+        QVector<QGraphicsItem*> phaseCodecHighlightItems;
+
         QVector<ClipboardCell> selectedCellsForClipboard() const;
         DesignSnapshot captureDesignSnapshot() const;
         void restoreDesignSnapshot(const DesignSnapshot &snapshot, bool markDirty);
@@ -238,6 +256,11 @@ private:
         bool positionOccupied(int layer, int x, int y) const;
         void ensureLayerExists(int layer);
         void addCellToScene(QCADCellItem *cellItem, int layerIndex);
+        int selectedPhaseCodecCount(const QVector<QCADScene::ClockRegionRecord> &regions) const;
+        QPoint clockRegionGridCoord(const QCADScene::ClockRegionRecord &region) const;
+        void updatePhaseCodecPreview();
+        void clearPhaseCodecHighlight();
+        void highlightPhaseCodecTile(const PhaseCodecTilePreview &tile);
 
 protected:
         void closeEvent(QCloseEvent *event) override;   //重载关闭事件
@@ -282,6 +305,9 @@ private slots:
         //toolBox：basic qca cell
         void buttonGroupClicked(int);
         void slotClockSchemeGroupClicked(QAbstractButton * button);
+        void slotEncodeClockRegions();
+        void slotPhaseCodecModeChanged(int idx);
+        void slotPhaseCodecTileActivated(int row, int column);
 
         //scene add cell item
         void slotCellItemInserted(QCADCellItem *cellItem);

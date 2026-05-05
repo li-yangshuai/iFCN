@@ -13,6 +13,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QSpinBox>
+#include <QTemporaryDir>
 #include <autopr/algorithms/phase_codec.h>
 #include "ui/widgets/GaChessboardInputDialog.h"
 #include <QElapsedTimer>
@@ -723,6 +724,14 @@ void VerilogHandler::handleGraphRender()
                             width,
                             height,
                             elapsedSeconds);
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             routes_trans,
+                             pos_phase,
+                             settings.phaseCount,
+                             width,
+                             height);
 
         mappingCellItem(node_pos_trans, routes_trans, parse, pos_phase);
         putClock(pos_phase);
@@ -1672,6 +1681,141 @@ void VerilogHandler::saveGraphRenderIfcn(
     file.close();
 
     mainWindow->printToStatusBar("Graph render .ifcn saved: " + QDir::toNativeSeparators(outputPath));
+}
+
+void VerilogHandler::saveGraphRenderLatex(
+    const QString &sourceFilePath,
+    Parse &parse,
+    const std::map<unsigned int, position> &nodePositions,
+    const std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> &routes,
+    const std::map<position, int> &posPhase,
+    int phaseCount,
+    int width,
+    int height)
+{
+    const QFileInfo sourceInfo(sourceFilePath);
+    const QDir outputDir = sourceInfo.absoluteDir().exists()
+        ? sourceInfo.absoluteDir()
+        : QDir::current();
+    const QString outputStem = sourceInfo.completeBaseName().isEmpty()
+        ? QString::fromStdString(parse.get_moduleName())
+        : sourceInfo.completeBaseName();
+    const QString outputPath = outputDir.filePath(outputStem + "_layout.tex");
+
+    bool hasCoord = false;
+    unsigned int originX = 0;
+    unsigned int originY = 0;
+    unsigned int maxX = 0;
+    unsigned int maxY = 0;
+    auto includeCoord = [&](const position &pos) {
+        if (!hasCoord) {
+            originX = maxX = pos.first;
+            originY = maxY = pos.second;
+            hasCoord = true;
+            return;
+        }
+        originX = std::min(originX, pos.first);
+        originY = std::min(originY, pos.second);
+        maxX = std::max(maxX, pos.first);
+        maxY = std::max(maxY, pos.second);
+    };
+
+    for (const auto &entry : posPhase) {
+        includeCoord(entry.first);
+    }
+    for (const auto &entry : nodePositions) {
+        includeCoord(entry.second);
+    }
+    for (const auto &route : routes) {
+        for (const position &pos : route.second) {
+            includeCoord(pos);
+        }
+    }
+
+    if (!hasCoord) {
+        mainWindow->printToStatusBar("No graph layout coordinates to save as LaTeX.");
+        return;
+    }
+
+    const int normalizedWidth = std::max(width, static_cast<int>(maxX - originX + 1));
+    const int normalizedHeight = std::max(height, static_cast<int>(maxY - originY + 1));
+    auto normalizePos = [&](const position &pos) -> position {
+        return {pos.first - originX, pos.second - originY};
+    };
+
+    std::map<unsigned int, position> normalizedNodePositions;
+    for (const auto &entry : nodePositions) {
+        normalizedNodePositions[entry.first] = normalizePos(entry.second);
+    }
+
+    std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> normalizedRoutes;
+    for (const auto &route : routes) {
+        auto &path = normalizedRoutes[route.first];
+        path.reserve(route.second.size());
+        for (const position &pos : route.second) {
+            path.push_back(normalizePos(pos));
+        }
+    }
+
+    std::map<position, int> normalizedPosPhase;
+    for (const auto &entry : posPhase) {
+        normalizedPosPhase[normalizePos(entry.first)] = entry.second;
+    }
+
+    QTemporaryDir tempDir;
+    if (!tempDir.isValid()) {
+        mainWindow->printToStatusBar("Failed to create temporary directory for graph render LaTeX.");
+        return;
+    }
+
+    const QString previousPath = QDir::currentPath();
+    bool changedCurrentPath = false;
+    try {
+        if (!QDir::setCurrent(tempDir.path())) {
+            mainWindow->printToStatusBar("Failed to enter temporary directory for graph render LaTeX.");
+            return;
+        }
+        changedCurrentPath = true;
+
+        GridChessboard latexChessboard;
+        Astar latexAstar(latexChessboard);
+        GeneticAlgorithm latexPrinter(parse, latexChessboard, latexAstar, 1, 1, 0.0, 0.0);
+        const auto clockScheme = phaseCount == 3 ? CLOCK_SCHEME::BANCS : CLOCK_SCHEME::USE;
+        latexPrinter.printLaTex(clockScheme,
+                                {0, 0},
+                                {static_cast<unsigned int>(normalizedWidth),
+                                 static_cast<unsigned int>(normalizedHeight)},
+                                normalizedNodePositions,
+                                normalizedRoutes,
+                                {},
+                                normalizedPosPhase);
+
+        const QString generatedPath = QDir(tempDir.path()).filePath(
+            QString::fromStdString(parse.get_moduleName() + ".tex"));
+        if (!QFile::exists(generatedPath)) {
+            mainWindow->printToStatusBar("Graph render LaTeX exporter did not create a .tex file.");
+            QDir::setCurrent(previousPath);
+            return;
+        }
+
+        QDir::setCurrent(previousPath);
+        changedCurrentPath = false;
+
+        if (QFile::exists(outputPath)) {
+            QFile::remove(outputPath);
+        }
+        if (!QFile::copy(generatedPath, outputPath)) {
+            mainWindow->printToStatusBar("Failed to save graph render LaTeX: " + QDir::toNativeSeparators(outputPath));
+            return;
+        }
+
+        mainWindow->printToStatusBar("Graph render LaTeX saved: " + QDir::toNativeSeparators(outputPath));
+    } catch (const std::exception &ex) {
+        if (changedCurrentPath) {
+            QDir::setCurrent(previousPath);
+        }
+        mainWindow->printToStatusBar(QString("Failed to save graph render LaTeX: %1").arg(ex.what()));
+    }
 }
 
 void VerilogHandler::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position, int>& _pos_phase, QString _name)

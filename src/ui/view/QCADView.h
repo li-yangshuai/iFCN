@@ -27,8 +27,12 @@ class QCADView : public QGraphicsView
         void wheelEvent(QWheelEvent *event) override;
 
     private:
+        void ensurePanTargetVisible(const QPointF &targetCenter);
+
         QWidget *parentWindow;
         bool highQualityMode = false;
+        bool handPanning = false;
+        QPoint lastPanPoint;
         //qreal zoom;
 
 };

@@ -2,6 +2,7 @@
 #include <autopr/algorithms/phase_codec.h>
 #include <QGraphicsRectItem>
 #include <QGraphicsSimpleTextItem>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QPushButton>
@@ -78,6 +79,10 @@ QWidget* MainWindow::createPhaseCodecPanel()
     phaseCodecEncodeButton->setObjectName(QStringLiteral("phaseCodecEncodeButton"));
     phaseCodecEncodeButton->setMinimumHeight(34);
 
+    phaseCodecCancelButton = new QPushButton(tr("Cancel Encoding"), panel);
+    phaseCodecCancelButton->setObjectName(QStringLiteral("phaseCodecCancelButton"));
+    phaseCodecCancelButton->setMinimumHeight(34);
+
     phaseCodecTable = new QTableWidget(panel);
     phaseCodecTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     phaseCodecTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -98,14 +103,42 @@ QWidget* MainWindow::createPhaseCodecPanel()
     phaseCodecStatusLabel->setObjectName(QStringLiteral("phaseCodecStatusLabel"));
     phaseCodecStatusLabel->setWordWrap(true);
 
+    QLabel *layoutInfoTitleLabel = new QLabel(tr("Layout Info"), panel);
+    layoutInfoTitleLabel->setObjectName(QStringLiteral("layoutInfoTitle"));
+    QFont layoutInfoTitleFont = layoutInfoTitleLabel->font();
+    layoutInfoTitleFont.setBold(true);
+    layoutInfoTitleLabel->setFont(layoutInfoTitleFont);
+
+    layoutInfoTable = new QTableWidget(panel);
+    layoutInfoTable->setColumnCount(2);
+    layoutInfoTable->setHorizontalHeaderLabels(QStringList() << tr("Metric") << tr("Value"));
+    layoutInfoTable->verticalHeader()->hide();
+    layoutInfoTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    layoutInfoTable->setSelectionMode(QAbstractItemView::NoSelection);
+    layoutInfoTable->setFocusPolicy(Qt::NoFocus);
+    layoutInfoTable->setShowGrid(false);
+    layoutInfoTable->setWordWrap(true);
+    layoutInfoTable->setAlternatingRowColors(true);
+    layoutInfoTable->setCornerButtonEnabled(false);
+    layoutInfoTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    layoutInfoTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    layoutInfoTable->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    layoutInfoTable->setMinimumHeight(180);
+
     layout->addWidget(titleLabel);
     layout->addWidget(phaseCodecModeComboBox);
     layout->addWidget(phaseCodecEncodeButton);
+    layout->addWidget(phaseCodecCancelButton);
     layout->addWidget(phaseCodecTable, 1);
     layout->addWidget(phaseCodecStatusLabel);
+    layout->addSpacing(6);
+    layout->addWidget(layoutInfoTitleLabel);
+    layout->addWidget(layoutInfoTable, 1);
 
     connect(phaseCodecEncodeButton, &QPushButton::clicked,
             this, &MainWindow::slotEncodeClockRegions);
+    connect(phaseCodecCancelButton, &QPushButton::clicked,
+            this, &MainWindow::slotCancelPhaseCodecEncoding);
     connect(phaseCodecModeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::slotPhaseCodecModeChanged);
     connect(phaseCodecTable, &QTableWidget::cellClicked,
@@ -122,6 +155,10 @@ QWidget* MainWindow::createPhaseCodecPanel()
         "}"
         "QLabel#phaseCodecStatusLabel {"
         "  color: #526173;"
+        "}"
+        "QLabel#layoutInfoTitle {"
+        "  color: #172033;"
+        "  font-size: 14px;"
         "}"
         "QComboBox {"
         "  background: #ffffff;"
@@ -143,6 +180,20 @@ QWidget* MainWindow::createPhaseCodecPanel()
         "}"
         "QPushButton#phaseCodecEncodeButton:pressed {"
         "  background: #004f93;"
+        "}"
+        "QPushButton#phaseCodecCancelButton {"
+        "  background: #ffffff;"
+        "  border: 1px solid #b9c5d2;"
+        "  border-radius: 6px;"
+        "  color: #253449;"
+        "  font-weight: 600;"
+        "  padding: 7px 10px;"
+        "}"
+        "QPushButton#phaseCodecCancelButton:hover {"
+        "  background: #eef3f8;"
+        "}"
+        "QPushButton#phaseCodecCancelButton:pressed {"
+        "  background: #dfe7f0;"
         "}"
         "QTableWidget {"
         "  background: #ffffff;"
@@ -249,6 +300,14 @@ void MainWindow::endSceneBatchUpdate(bool recenter)
         updateUi();
     }
     batchDirtyPending = false;
+    const bool mappedIfcn = QFileInfo(curFile).suffix().compare(QStringLiteral("ifcn"), Qt::CaseInsensitive) == 0 &&
+                            gateLevelMapping != nullptr &&
+                            !gateLevelMapping->metadata.isEmpty();
+    if (mappedIfcn) {
+        updateLayoutInfoFromMapping(*gateLevelMapping);
+    } else {
+        refreshLayoutInfoPanel();
+    }
 
     if (recenter) {
         centerViewOnItems(true);
@@ -638,6 +697,24 @@ void MainWindow::slotEncodeClockRegions()
     updatePhaseCodecPreview();
 }
 
+void MainWindow::slotCancelPhaseCodecEncoding()
+{
+    phaseCodecPreviewActive = false;
+    phaseCodecTiles.clear();
+    clearPhaseCodecHighlight();
+    if (phaseCodecTable != nullptr) {
+        phaseCodecTable->clear();
+        phaseCodecTable->setRowCount(0);
+        phaseCodecTable->setColumnCount(0);
+    }
+    if (phaseCodecStatusLabel != nullptr) {
+        phaseCodecStatusLabel->setText(tr("Not encoded"));
+    }
+    if (customStatusBar != nullptr) {
+        customStatusBar->addMessage(tr("Phase encoding cancelled"));
+    }
+}
+
 void MainWindow::slotPhaseCodecModeChanged(int idx)
 {
     Q_UNUSED(idx);
@@ -792,18 +869,22 @@ void MainWindow::setEditMode(EditMode mode) {
         case EditMode::Select:
             view->setDragMode(QGraphicsView::RubberBandDrag);
             view->setInteractive(true);  // 允许选择和移动item
+            view->unsetCursor();
             break;
         case EditMode::Insert:
             view->setDragMode(QGraphicsView::NoDrag);
             view->setInteractive(true);  // 不允许交互，以便在鼠标点击时插入新item
+            view->unsetCursor();
             break;
         case EditMode::ClockScheme:
             view->setDragMode(QGraphicsView::NoDrag);
             view->setInteractive(true);
+            view->unsetCursor();
             break;
         case EditMode::DragScene:
             view->setDragMode(QGraphicsView::ScrollHandDrag);
             view->setInteractive(false);  // 允许拖动场景，但不允许选择或移动item
+            view->setCursor(Qt::OpenHandCursor);
             break;
     }
 }

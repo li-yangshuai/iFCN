@@ -1,5 +1,8 @@
 #include "CustomStatusBar.h"
+#include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QSizePolicy>
 
 CustomStatusBar::CustomStatusBar(QWidget *parent) : QWidget(parent)
 {
@@ -31,16 +34,13 @@ CustomStatusBar::CustomStatusBar(QWidget *parent) : QWidget(parent)
 
 void CustomStatusBar::addMessage(const QString &message)
 {
-    QTextEdit *newMessageText = new QTextEdit(this);
+    QLabel *newMessageText = new QLabel(message, statusContent);
     newMessageText->setObjectName("statusMessage");
-    newMessageText->setReadOnly(true);  // 设置为只读模式
-    newMessageText->setPlainText(message);  // 添加文本消息
-    newMessageText->setWordWrapMode(QTextOption::WordWrap);  // 设置自动换行
-
-    const int lineCount = message.count('\n') + 1;
-    const int textHeight = newMessageText->fontMetrics().lineSpacing() * lineCount + 18;
-    newMessageText->setFixedHeight(qBound(32, textHeight, 180));  // 字号更大，留出可读高度
-    newMessageText->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    newMessageText->setWordWrap(true);
+    newMessageText->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    newMessageText->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    newMessageText->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    newMessageText->setMinimumHeight(newMessageText->fontMetrics().lineSpacing() + 12);
 
     // 将文本消息添加到布局中
     statusLayout->insertWidget(statusLayout->count() - 1, newMessageText);
@@ -112,25 +112,33 @@ void CustomStatusBar::ensureOperationWidget()
     operationWidget->setObjectName("operationStatus");
 
     operationTitleLabel = new QLabel(operationWidget);
-    operationTitleLabel->setMinimumWidth(160);
-    operationTitleLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    operationTitleLabel->setWordWrap(true);
+    operationTitleLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    operationTitleLabel->setMinimumWidth(120);
+    operationTitleLabel->setMaximumWidth(220);
+    operationTitleLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
 
     operationDetailLabel = new QLabel(operationWidget);
     operationDetailLabel->setWordWrap(true);
-    operationDetailLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    operationDetailLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    operationDetailLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    operationDetailLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
 
     operationProgressBar = new QProgressBar(operationWidget);
     operationProgressBar->setTextVisible(false);
-    operationProgressBar->setMinimumWidth(180);
-    operationProgressBar->setMaximumWidth(280);
+    operationProgressBar->setMinimumWidth(120);
+    operationProgressBar->setMaximumWidth(260);
     operationProgressBar->setFixedHeight(14);
 
-    QHBoxLayout *operationLayout = new QHBoxLayout(operationWidget);
+    QGridLayout *operationLayout = new QGridLayout(operationWidget);
     operationLayout->setContentsMargins(6, 4, 6, 4);
-    operationLayout->setSpacing(8);
-    operationLayout->addWidget(operationTitleLabel);
-    operationLayout->addWidget(operationProgressBar);
-    operationLayout->addWidget(operationDetailLabel, 1);
+    operationLayout->setHorizontalSpacing(8);
+    operationLayout->setVerticalSpacing(4);
+    operationLayout->addWidget(operationTitleLabel, 0, 0, 2, 1);
+    operationLayout->addWidget(operationProgressBar, 0, 1, Qt::AlignVCenter);
+    operationLayout->addWidget(operationDetailLabel, 1, 1);
+    operationLayout->setColumnStretch(0, 0);
+    operationLayout->setColumnStretch(1, 1);
 
     operationTimer = new QTimer(this);
     connect(operationTimer, &QTimer::timeout, this, &CustomStatusBar::refreshOperationElapsed);

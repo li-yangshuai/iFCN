@@ -8,6 +8,7 @@
 #include <QPoint>
 #include <QVector>
 #include <QHash>
+#include <QStringList>
 #include "ui/items/QCADCellItem.h"
 #include <map>
 #include <vector>
@@ -41,6 +42,8 @@ public:
     QMap<int, NodeInfo> nodes;                        // 节点信息
     QMap<QPair<int,int>, QVector<QPoint>> routes;     // 节点对 → 路径
     QHash<QPoint, int> coordPhaseMap;                 // 坐标 → 相位
+    QMap<QString, QString> metadata;                  // .ifcn header metadata
+    QString currentMappingFilePath;                   // 当前映射文件路径
 
 public slots:
         void parseGateLevelMappingFile();                 // 打开并解析文件
@@ -55,6 +58,10 @@ signals:
     void mappingLoaded();                             // 解析完成信号
 
 private:
+    void parseMetadataLine(const QString &line);
+    QString metadataValue(const QStringList &keys) const;
+    QString buildMappingStatusMessage() const;
+    void writeMappingMetricsToFile(qulonglong cellCount, qulonglong crossCount);
     void parseNodeLine(const QString &line);
     void parsePathLine(const QString &line);
     void parsePhaseLine(const QString &line);

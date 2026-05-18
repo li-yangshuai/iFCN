@@ -6,6 +6,11 @@
 #include <QFileDialog>
 #include <QDir>
 #include <QMessageBox>
+#include <QTimer>
+#include <QApplication>
+#include <QScreen>
+#include <QShowEvent>
+#include <QResizeEvent>
 #include <unordered_map>
 #include <unordered_set>
 #include <limits>
@@ -50,6 +55,92 @@ bool sceneCoordinates(const position &cellPos, int &xCoord, int &yCoord)
     yCoord = static_cast<int>(cellPos.second * kPitch + kOrigin);
     return true;
 }
+
+class CenteredMessageBox : public QMessageBox
+{
+public:
+    CenteredMessageBox(QWidget *parent,
+                       QMessageBox::Icon icon,
+                       const QString &title,
+                       const QString &text)
+        : QMessageBox(icon,
+                      title,
+                      text,
+                      QMessageBox::Ok,
+                      parent ? parent->window() : nullptr),
+          anchor(parent ? parent->window() : nullptr)
+    {
+        setWindowModality(anchor ? Qt::WindowModal : Qt::ApplicationModal);
+    }
+
+protected:
+    void showEvent(QShowEvent *event) override
+    {
+        QMessageBox::showEvent(event);
+        centerOnAnchor();
+        QTimer::singleShot(0, this, [this]() { centerOnAnchor(); });
+        QTimer::singleShot(50, this, [this]() { centerOnAnchor(); });
+    }
+
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QMessageBox::resizeEvent(event);
+        if (isVisible()) {
+            centerOnAnchor();
+        }
+    }
+
+private:
+    void centerOnAnchor()
+    {
+        QWidget *target = anchor;
+        if (target == nullptr || !target->isVisible()) {
+            target = QApplication::activeWindow();
+        }
+
+        QPoint centerPoint;
+        QScreen *screen = nullptr;
+        if (target != nullptr) {
+            centerPoint = target->mapToGlobal(target->rect().center());
+            screen = target->screen();
+        } else {
+            screen = QApplication::primaryScreen();
+            if (screen != nullptr) {
+                centerPoint = screen->availableGeometry().center();
+            }
+        }
+
+        QSize dialogSize = frameGeometry().size();
+        if (dialogSize.isEmpty() || dialogSize.width() <= 0 || dialogSize.height() <= 0) {
+            dialogSize = sizeHint();
+        }
+        QPoint topLeft(centerPoint.x() - dialogSize.width() / 2,
+                       centerPoint.y() - dialogSize.height() / 2);
+
+        if (screen != nullptr) {
+            const QRect available = screen->availableGeometry();
+            topLeft.setX(qBound(available.left(),
+                                topLeft.x(),
+                                available.right() - dialogSize.width() + 1));
+            topLeft.setY(qBound(available.top(),
+                                topLeft.y(),
+                                available.bottom() - dialogSize.height() + 1));
+        }
+
+        move(topLeft);
+    }
+
+    QWidget *anchor = nullptr;
+};
+
+void showCenteredMessageBox(QWidget *parent,
+                            QMessageBox::Icon icon,
+                            const QString &title,
+                            const QString &text)
+{
+    CenteredMessageBox box(parent, icon, title, text);
+    box.exec();
+}
 } // namespace
 
 GateLevelMapping::GateLevelMapping(MainWindow *parent)
@@ -61,7 +152,7 @@ GateLevelMapping::GateLevelMapping(MainWindow *parent)
 void GateLevelMapping::parseGateLevelMappingFile()
 {
     QString filePath = QFileDialog::getOpenFileName(
-        nullptr,
+        mainWindow,
         "Open .ifcn File",
         QDir::currentPath(),
         "iFCN Mapping Files (*.ifcn *.iFCN);;All file (*)"
@@ -82,7 +173,10 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(nullptr, "File Error", "Cannot open file:\n" + filePath);
+        showCenteredMessageBox(mainWindow,
+                               QMessageBox::Warning,
+                               "File Error",
+                               "Cannot open file:\n" + filePath);
         return;
     }
 
@@ -90,6 +184,8 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
     nodes.clear();
     routes.clear();
     coordPhaseMap.clear();
+    metadata.clear();
+    currentMappingFilePath = filePath;
     phaseCodecPhaseCount = 4;
     phaseCodecBlockSize = 4;
 
@@ -100,6 +196,10 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
     while (!in.atEnd()) {
         QString line = in.readLine().trimmed();
         if (line.isEmpty()) continue;
+
+        if (line.startsWith("#")) {
+            parseMetadataLine(line);
+        }
 
         if (line.startsWith("#circuit name:")) {
             circuitName = line.section(':', 1).trimmed();
@@ -137,17 +237,17 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
 
     file.close();
 
-    QMessageBox::information(nullptr, "Parsing Complete",
-        QString("Circuit: %1\nNodes: %2\nRoutes: %3\nPhases: %4")
+    mainWindow->updateLayoutInfoFromMapping(*this);
+    showCenteredMessageBox(mainWindow,
+        QMessageBox::Information,
+        "Parsing Complete",
+        QString("Circuit: %1\nNodes: %2\nRoutes: %3\nPhase entries: %4")
         .arg(circuitName)
         .arg(nodes.size())
         .arg(routes.size())
         .arg(coordPhaseMap.size()));
 
-    QString message = "Mapping loaded: " + circuitName +
-                      ", Nodes: " + QString::number(nodes.size()) +
-                      ", Routes: " + QString::number(routes.size()) +
-                      ", Phases: " + QString::number(coordPhaseMap.size());
+    const QString message = QStringLiteral("Parsed .ifcn: %1").arg(circuitName);
     mainWindow->customStatusBar->addMessage(message);
     QCoreApplication::processEvents();
 
@@ -189,6 +289,203 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
     // printCrossline();
 
     emit mappingLoaded();
+}
+
+void GateLevelMapping::parseMetadataLine(const QString &line)
+{
+    if (line.startsWith("###")) {
+        return;
+    }
+
+    QString body = line;
+    while (body.startsWith("#")) {
+        body.remove(0, 1);
+    }
+    body = body.trimmed();
+    if (body.isEmpty()) {
+        return;
+    }
+
+    if (body.startsWith("designed by", Qt::CaseInsensitive)) {
+        QString value = body.mid(QStringLiteral("designed by").size()).trimmed();
+        if (value.endsWith('.')) {
+            value.chop(1);
+        }
+        metadata.insert(QStringLiteral("designed by"), value);
+        return;
+    }
+
+    const int colonIndex = body.indexOf(':');
+    if (colonIndex <= 0) {
+        return;
+    }
+
+    const QString key = body.left(colonIndex).trimmed().toLower();
+    const QString value = body.mid(colonIndex + 1).trimmed();
+    if (!key.isEmpty()) {
+        metadata.insert(key, value);
+    }
+}
+
+QString GateLevelMapping::metadataValue(const QStringList &keys) const
+{
+    for (const QString &key : keys) {
+        const auto it = metadata.constFind(key.toLower());
+        if (it != metadata.constEnd() && !it.value().isEmpty()) {
+            return it.value();
+        }
+    }
+    return QString();
+}
+
+QString GateLevelMapping::buildMappingStatusMessage() const
+{
+    QStringList parts;
+    parts << QStringLiteral("Circuit: %1").arg(circuitName);
+
+    const QString gates = metadataValue({QStringLiteral("gates number")});
+    if (!gates.isEmpty()) {
+        parts << QStringLiteral("Gates: %1").arg(gates);
+    }
+
+    const QString io = metadataValue({QStringLiteral("input/output")});
+    if (!io.isEmpty()) {
+        parts << QStringLiteral("I/O: %1").arg(io);
+    }
+
+    const QString edges = metadataValue({QStringLiteral("edges number")});
+    if (!edges.isEmpty()) {
+        parts << QStringLiteral("Edges: %1").arg(edges);
+    }
+
+    const QString layers = metadataValue({QStringLiteral("total layers")});
+    if (!layers.isEmpty()) {
+        parts << QStringLiteral("Layers: %1").arg(layers);
+    }
+
+    const QString area = metadataValue({QStringLiteral("layout area")});
+    if (!area.isEmpty()) {
+        parts << QStringLiteral("Area: %1").arg(area);
+    }
+
+    const QString cellCount = metadataValue({QStringLiteral("cell count")});
+    if (!cellCount.isEmpty()) {
+        parts << QStringLiteral("Cell count: %1").arg(cellCount);
+    }
+
+    const QString crossCount = metadataValue({QStringLiteral("cross count")});
+    if (!crossCount.isEmpty()) {
+        parts << QStringLiteral("Cross: %1").arg(crossCount);
+    }
+
+    const QString criticalPath = metadataValue({QStringLiteral("critical path")});
+    if (!criticalPath.isEmpty()) {
+        parts << QStringLiteral("Critical path: %1").arg(criticalPath);
+    }
+
+    const QString clocks = metadataValue({QStringLiteral("clocks")});
+    if (!clocks.isEmpty()) {
+        parts << QStringLiteral("Clocks: %1").arg(clocks);
+    }
+
+    const QString phaseCount = metadataValue({QStringLiteral("phase count")});
+    if (!phaseCount.isEmpty()) {
+        parts << QStringLiteral("Phase count: %1").arg(phaseCount);
+    }
+
+    const QString runtime = metadataValue({QStringLiteral("run time"),
+                                           QStringLiteral("runtime")});
+    if (!runtime.isEmpty()) {
+        parts << QStringLiteral("Time: %1").arg(runtime);
+    }
+
+    const QString scheme = metadataValue({QStringLiteral("clock scheme")});
+    if (!scheme.isEmpty()) {
+        parts << QStringLiteral("Scheme: %1").arg(scheme);
+    }
+
+    const QString consistency = metadataValue({
+        QStringLiteral("random phase scheme consistency"),
+        QStringLiteral("2ddwave template consistency")
+    });
+    const QString conflicts = metadataValue({
+        QStringLiteral("random phase scheme conflicts"),
+        QStringLiteral("2ddwave template conflicts")
+    });
+    if (!consistency.isEmpty()) {
+        QString clockInfo = QStringLiteral("Clock check: %1").arg(consistency);
+        if (!conflicts.isEmpty()) {
+            clockInfo += QStringLiteral(" (%1 conflicts)").arg(conflicts);
+        }
+        parts << clockInfo;
+    }
+
+    return parts.join(QStringLiteral(", "));
+}
+
+void GateLevelMapping::writeMappingMetricsToFile(qulonglong cellCount, qulonglong crossCount)
+{
+    metadata.insert(QStringLiteral("cell count"), QString::number(cellCount));
+    metadata.insert(QStringLiteral("cross count"), QString::number(crossCount));
+
+    if (currentMappingFilePath.isEmpty()) {
+        return;
+    }
+
+    QFile file(currentMappingFilePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "[GateLevelMapping] Cannot reopen mapping file for metrics:"
+                   << currentMappingFilePath;
+        return;
+    }
+
+    QStringList lines;
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        lines.push_back(in.readLine());
+    }
+    file.close();
+
+    const QString cellLine = QStringLiteral("#cell count: %1").arg(cellCount);
+    const QString crossLine = QStringLiteral("#cross count: %1").arg(crossCount);
+    bool hasCellLine = false;
+    bool hasCrossLine = false;
+    int insertAfter = -1;
+
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString trimmed = lines[i].trimmed().toLower();
+        if (trimmed.startsWith(QStringLiteral("#cell count:"))) {
+            lines[i] = cellLine;
+            hasCellLine = true;
+        } else if (trimmed.startsWith(QStringLiteral("#cross count:"))) {
+            lines[i] = crossLine;
+            hasCrossLine = true;
+        }
+
+        if (trimmed.startsWith(QStringLiteral("#layout area:"))) {
+            insertAfter = i;
+        } else if (insertAfter < 0 && trimmed.startsWith(QStringLiteral("#edges number:"))) {
+            insertAfter = i;
+        }
+    }
+
+    if (!hasCrossLine) {
+        lines.insert(insertAfter + 1, crossLine);
+    }
+    if (!hasCellLine) {
+        lines.insert(insertAfter + 1, cellLine);
+    }
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        qWarning() << "[GateLevelMapping] Cannot write mapping metrics to file:"
+                   << currentMappingFilePath;
+        return;
+    }
+
+    QTextStream out(&file);
+    for (const QString &line : lines) {
+        out << line << '\n';
+    }
 }
 
 void GateLevelMapping::parseNodeLine(const QString &line)
@@ -273,7 +570,7 @@ void GateLevelMapping::parsePhaseLine(const QString &line)
     }
 
     // 格式: (x,y):phase
-    QRegularExpression entry("\\((\\d+),(\\d+)\\)\\s*:\\s*(\\d+)");
+    QRegularExpression entry("\\((-?\\d+),(-?\\d+)\\)\\s*:\\s*(-?\\d+)");
     QRegularExpressionMatchIterator it = entry.globalMatch(line);
 
     while (it.hasNext()) {
@@ -310,6 +607,11 @@ void GateLevelMapping::parsePhaseCodecLine(const QString &line)
 void GateLevelMapping::mappingCellItem(){
     Mapping mapping;
 
+    const auto toPosition = [](const QPoint &point) {
+        return position{static_cast<unsigned int>(point.x()),
+                        static_cast<unsigned int>(point.y())};
+    };
+
     std::map<position, int> positionPhaseMap;
     std::unordered_map<position, QString, MappingPositionHash> nodeNameByPos;
     for (auto it = coordPhaseMap.begin(); it != coordPhaseMap.end(); ++it)
@@ -319,11 +621,6 @@ void GateLevelMapping::mappingCellItem(){
 
         positionPhaseMap[{static_cast<unsigned int>(p.x()), 
                         static_cast<unsigned int>(p.y())}] = phase;
-    }
-    for (auto it = nodes.begin(); it != nodes.end(); ++it)
-    {
-        nodeNameByPos[{static_cast<unsigned int>(it.value().pos.x()),
-                       static_cast<unsigned int>(it.value().pos.y())}] = it.value().name;
     }
 
     std::vector<std::vector<position>> circle_line;
@@ -339,15 +636,45 @@ void GateLevelMapping::mappingCellItem(){
                                         static_cast<unsigned int>(point.y()));
         circle_line.push_back(std::move(convertedRoute));
     }
-
     std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node,type), (扇入，扇出)>
     Nodelink.clear();
 
+    std::unordered_map<int, position> routeEndpointByNode;
+    for (auto it = routes.begin(); it != routes.end(); ++it)
+    {
+        const QPair<int,int>& key = it.key();
+        const QVector<QPoint>& path = it.value();
+        if (path.isEmpty()) {
+            continue;
+        }
+
+        if (nodes.contains(key.first)) {
+            const position sourceEndpoint = toPosition(path.front());
+            const auto inserted = routeEndpointByNode.emplace(key.first, sourceEndpoint);
+            if (!inserted.second && inserted.first->second != sourceEndpoint) {
+                qWarning() << "[GateLevelMapping] Route source endpoint mismatch for node"
+                           << key.first;
+            }
+        }
+        if (nodes.contains(key.second)) {
+            const position sinkEndpoint = toPosition(path.back());
+            const auto inserted = routeEndpointByNode.emplace(key.second, sinkEndpoint);
+            if (!inserted.second && inserted.first->second != sinkEndpoint) {
+                qWarning() << "[GateLevelMapping] Route sink endpoint mismatch for node"
+                           << key.second;
+            }
+        }
+    }
+
     for (auto it = nodes.begin(); it != nodes.end(); ++it)
     {
-        position nodepos{it.value().pos.x(), it.value().pos.y()};
+        const auto endpointIt = routeEndpointByNode.find(it.key());
+        const position nodepos = (endpointIt != routeEndpointByNode.end())
+                                     ? endpointIt->second
+                                     : toPosition(it.value().pos);
         std::string type = it.value().type.toStdString();
         Nodelink.try_emplace({nodepos, type}, std::make_pair(std::vector<position>{}, std::vector<position>{}));
+        nodeNameByPos[nodepos] = it.value().name;
     }
 
 
@@ -397,17 +724,15 @@ void GateLevelMapping::mappingCellItem(){
 
         const NodeInfo& source = nodes[key.first];
         const NodeInfo& sink = nodes[key.second];
-        const auto sourceKey = std::make_pair(position{static_cast<unsigned int>(source.pos.x()),
-                                                       static_cast<unsigned int>(source.pos.y())},
+        const auto sourceKey = std::make_pair(toPosition(path.front()),
                                               source.type.toStdString());
-        const auto sinkKey = std::make_pair(position{static_cast<unsigned int>(sink.pos.x()),
-                                                     static_cast<unsigned int>(sink.pos.y())},
+        const auto sinkKey = std::make_pair(toPosition(path.back()),
                                             sink.type.toStdString());
 
-        Nodelink[sourceKey].second.push_back(position{static_cast<unsigned int>(path[1].x()),
-                                                      static_cast<unsigned int>(path[1].y())});
-        Nodelink[sinkKey].first.push_back(position{static_cast<unsigned int>(path[len - 2].x()),
-                                                   static_cast<unsigned int>(path[len - 2].y())});
+        nodeNameByPos[sourceKey.first] = source.name;
+        nodeNameByPos[sinkKey.first] = sink.name;
+        Nodelink[sourceKey].second.push_back(toPosition(path[1]));
+        Nodelink[sinkKey].first.push_back(toPosition(path[len - 2]));
     }
 
     for (auto &entry : Nodelink)
@@ -522,43 +847,40 @@ void GateLevelMapping::mappingCellItem(){
         }
     }
 
-    //对于线路元胞，交叉点不去重，非交叉点（线路复用）去重
+    // 对于线路元胞，交叉点不去重，非交叉点线路复用时去重。
     std::vector<position> result;
     result.reserve(allroutecells.size());
-    std::unordered_set<position, MappingPositionHash> seen;  // 已出现过的“非交叉”点
+    std::unordered_set<position, MappingPositionHash> seen;
     for (auto &p : allroutecells) {
-        const bool is_cross = allcrosscellsSet.find(p) != allcrosscellsSet.end();
-
-        if (is_cross) {
+        const bool isCross = allcrosscellsSet.find(p) != allcrosscellsSet.end();
+        if (isCross || seen.insert(p).second) {
             result.push_back(p);
-        } else {
-            if (seen.insert(p).second) {
-                result.push_back(p);
-            }
         }
     }
     allroutecells = result;
     std::unordered_set<position, MappingPositionHash> allroutecellsSet(allroutecells.begin(), allroutecells.end());
 
-    size_t total_count = allroutecells.size() + allnodecells.size();
-    QString message = QStringLiteral("Total cells: %1").arg(static_cast<qulonglong>(total_count));
+    std::size_t total_cross = 0;
+    for (const auto &entry : crossexample) 
+    {
+        total_cross += entry.second.size();
+    }
+
+    const size_t total_count = allroutecells.size() + allnodecells.size();
+    writeMappingMetricsToFile(static_cast<qulonglong>(total_count),
+                              static_cast<qulonglong>(total_cross));
+    mainWindow->updateLayoutInfoFromMapping(*this);
+
+    QString message = QStringLiteral("Mapped .ifcn: %1 cells, %2 crossings")
+                          .arg(static_cast<qulonglong>(total_count))
+                          .arg(static_cast<qulonglong>(total_cross));
     mainWindow->printToStatusBar(message);
 
-
-    //Cross线路元胞放置
+    // Cross线路元胞放置
     std::unordered_set<position, MappingPositionHash> crosscellSet;
     std::unordered_set<position, MappingPositionHash> verticalcellSet;
     if(!crossexample.empty())
     {
-        size_t total_cross = 0;
-        for (const auto &entry : crossexample) 
-        {
-            total_cross += entry.second.size();
-        }
-        QString message = QStringLiteral("Total crossline segments: %1").arg(static_cast<qulonglong>(total_cross));
-        mainWindow->printToStatusBar(message);
-        
-        
         for(auto &crossline : crossexample)
         {
             for(auto &cross : crossline.second)
@@ -566,6 +888,7 @@ void GateLevelMapping::mappingCellItem(){
                 crosscellSet.insert(cross.begin(), cross.end());
             }
         }
+
         for(auto &crossline : crossexample)
         {
             for(auto &cross : crossline.second)
@@ -580,44 +903,25 @@ void GateLevelMapping::mappingCellItem(){
                         const auto dir2 = shiftedPosition(base, 0, -1);
                         const auto dir3 = shiftedPosition(base, -1, 0);
                         const auto dir4 = shiftedPosition(base, 1, 0);
-                        if(containsPosition(crosscellSet, dir1))
-                        {
-                            ++count;  
-                        }
-                        if(containsPosition(crosscellSet, dir2))
-                        {
-                            ++count;  
-                        }
-                        if(containsPosition(crosscellSet, dir3))
-                        {
-                            ++count;  
-                        }
-                        if(containsPosition(crosscellSet, dir4))
-                        {
-                            ++count;  
-                        }
+                        count += containsPosition(crosscellSet, dir1) ? 1 : 0;
+                        count += containsPosition(crosscellSet, dir2) ? 1 : 0;
+                        count += containsPosition(crosscellSet, dir3) ? 1 : 0;
+                        count += containsPosition(crosscellSet, dir4) ? 1 : 0;
+
                         if (count >= 2) 
                         {  
-                            position cellpos = *unit;
-                            putCellItem(cellpos, 2, CellType::CrossoverCell, positionPhaseMap);
-                            
+                            putCellItem(*unit, 2, CellType::CrossoverCell, positionPhaseMap);
                         } 
-
-                        if(count < 2) 
+                        else
                         {
-                            //若端点无法直接放置柱点，则跨时钟延伸两个单位元胞
+                            // 若端点无法直接放置柱点，则跨时钟延伸两个单位元胞。
                             if(containsPosition(crosscellSet, dir2)
                             && containsPosition(allroutecellsSet, dir3)
                             && containsPosition(allroutecellsSet, dir4)
                             && dir1.valid)
                             {
-                                position cellpos1 = *unit;
-                                putCellItem(cellpos1, 2, CellType::CrossoverCell, positionPhaseMap);
-
-
-                                position cellpos2 = dir1.pos;
-                                putCellItem(cellpos2, 2, CellType::CrossoverCell, positionPhaseMap);
-
+                                putCellItem(*unit, 2, CellType::CrossoverCell, positionPhaseMap);
+                                putCellItem(dir1.pos, 2, CellType::CrossoverCell, positionPhaseMap);
 
                                 auto cellpos3 = shiftedPosition(dir1.pos, 0, 1);
                                 if (cellpos3.valid) {
@@ -626,8 +930,7 @@ void GateLevelMapping::mappingCellItem(){
                                     putCellItem(cellpos3.pos, 2, CellType::VerticalCell, positionPhaseMap);
                                     verticalcellSet.insert(cellpos3.pos);
 
-
-                                    crosscellSet.insert(cellpos2);
+                                    crosscellSet.insert(dir1.pos);
                                     crosscellSet.insert(cellpos3.pos);
                                 }
                             }
@@ -636,13 +939,8 @@ void GateLevelMapping::mappingCellItem(){
                             && containsPosition(allroutecellsSet, dir2)
                             && dir4.valid)
                             {
-                                position cellpos1 = *unit;
-                                putCellItem(cellpos1, 2, CellType::CrossoverCell, positionPhaseMap);
-
-
-                                position cellpos2 = dir4.pos;
-                                putCellItem(cellpos2, 2, CellType::CrossoverCell, positionPhaseMap);
-
+                                putCellItem(*unit, 2, CellType::CrossoverCell, positionPhaseMap);
+                                putCellItem(dir4.pos, 2, CellType::CrossoverCell, positionPhaseMap);
 
                                 auto cellpos3 = shiftedPosition(dir4.pos, 1, 0);
                                 if (cellpos3.valid) {
@@ -651,34 +949,29 @@ void GateLevelMapping::mappingCellItem(){
                                     putCellItem(cellpos3.pos, 2, CellType::VerticalCell, positionPhaseMap);
                                     verticalcellSet.insert(cellpos3.pos);
 
-                                    crosscellSet.insert(cellpos2);
+                                    crosscellSet.insert(dir4.pos);
                                     crosscellSet.insert(cellpos3.pos);
                                 }
                             }
-                            else//放置交叉线端点三层柱点
+                            else
                             {
-                                position cellpos = *unit;
-                                putCellItem(cellpos, 0, CellType::VerticalCell, positionPhaseMap);
-                                putCellItem(cellpos, 1, CellType::VerticalCell, positionPhaseMap);
-                                putCellItem(cellpos, 2, CellType::VerticalCell, positionPhaseMap);
-                                verticalcellSet.insert(cellpos);
+                                putCellItem(*unit, 0, CellType::VerticalCell, positionPhaseMap);
+                                putCellItem(*unit, 1, CellType::VerticalCell, positionPhaseMap);
+                                putCellItem(*unit, 2, CellType::VerticalCell, positionPhaseMap);
+                                verticalcellSet.insert(*unit);
                             }
                         }
                     }
                     else
                     {
-                        position cellpos = *unit;
-                        putCellItem(cellpos, 2, CellType::CrossoverCell, positionPhaseMap);
-                        
-                        
+                        putCellItem(*unit, 2, CellType::CrossoverCell, positionPhaseMap);
                     }
                 }
             }
-
         }
     }
 
-    //Normal线路元胞放置
+    // Normal线路元胞放置
     if(!routeexample.empty())
     {
         for(auto &line : routeexample)
@@ -690,7 +983,6 @@ void GateLevelMapping::mappingCellItem(){
                     if(crosscellSet.find(pos) == crosscellSet.end())
                     {
                         putCellItem(pos, 0, CellType::NormalCell, positionPhaseMap);
-                        
                     }
                     else
                     {
@@ -714,14 +1006,12 @@ void GateLevelMapping::mappingCellItem(){
                         }
                         if (!isvertical)
                         {
-                            for(auto &pos : tempcross)
+                            for(auto &crossPos : tempcross)
                             {
-                                putCellItem(pos, 0, CellType::NormalCell, positionPhaseMap);
+                                putCellItem(crossPos, 0, CellType::NormalCell, positionPhaseMap);
                             }
                         }
-
                     }
-
                 }
             }
         }

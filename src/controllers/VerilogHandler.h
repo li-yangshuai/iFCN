@@ -27,6 +27,7 @@ public:
     // 公开接口
     void handleParseVerilogFile();
     void handleGraphRender();  // 新增的函数
+    void handleGcnRlLayout();
     void generateSVG();
     void slotForceOrientedAlgorithm();
 

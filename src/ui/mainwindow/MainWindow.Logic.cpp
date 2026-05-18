@@ -609,6 +609,7 @@ void MainWindow::slotAddLayer()
     //     scene->addItem(cellItem);
     // }
     //qDebug() << tr("layer:") << idx << tr(" zValue:") << layers[idx]->zValue();
+    setDirty(true);
 }
 
 void MainWindow::slotAddLayer(std::string layerName)
@@ -645,6 +646,7 @@ void MainWindow::slotDeleteLayer()
     layers.remove(idx);    
 
     updateLayerAndCellZValue();
+    setDirty(true);
     
 }
 

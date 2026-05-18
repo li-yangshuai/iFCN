@@ -241,6 +241,10 @@ void MainWindow::createActions()
     configureAlgorithmButton(graphRenderButton, tr("Run compact graph-based placement and routing"));
     connect(graphRenderButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::handleGraphRender);
 
+    gcnRlLayoutButton = new QPushButton("GCN+RL P&R");
+    configureAlgorithmButton(gcnRlLayoutButton, tr("Run GCN/RL placement and routing"));
+    connect(gcnRlLayoutButton, &QPushButton::clicked, verilogHandler, &VerilogHandler::handleGcnRlLayout);
+
     //gate level mapping
     gateLevelMappingButton = new QPushButton("Gate Mapping");
     gateLevelMappingButton->setCheckable(true);
@@ -366,6 +370,7 @@ void MainWindow::createToolBars()
     verilogTool->setFloatable(false);
     verilogTool->addWidget(verParseButton);
     verilogTool->addWidget(graphRenderButton);
+    verilogTool->addWidget(gcnRlLayoutButton);
     verilogTool->addSeparator();
     verilogTool->addWidget(gateLevelMappingButton);
     verilogTool->addWidget(forceOrientedAlgorithmButton);

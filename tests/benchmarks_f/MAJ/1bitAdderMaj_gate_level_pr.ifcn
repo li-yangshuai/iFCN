@@ -1,6 +1,6 @@
 #circuit name: 1bitAdderMaj.v
 
-#designed by graph render algorithm with encoded 3-phase clock tiles.
+#designed by graph render algorithm with encoded 4-phase clock tiles.
 
 #gate level placement and routing infomation
 #gates number: 9
@@ -8,9 +8,11 @@
 #edges number: 11
 #total layers: 5
 #layout area: width: 5, height: 9, area: 45
+#cell count: 190
+#cross count: 4
 #phase origin: top-left=(4,4), saved coordinates are normalized to (0,0)
-#phase count: 3
-#runtime: 0.907s
+#phase count: 4
+#runtime: 0.817s
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###
@@ -40,12 +42,12 @@
 (8,4): (3,4),(3,5),(3,6),(2,6);
 #paths info
 #phase map
-#phase codec: phase_count=3, block_size=3, encoding=packed_hex_2bit_row_major
-### tile(x,y) : packed_hex for a 3x3 phase block ###
-tile(0,0):0x011a20;
-tile(1,0):0x060000;
-tile(0,1):0x210224;
-tile(1,1):0x010102;
-tile(0,2):0x091020;
-tile(1,2):0x020000;
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0xf30459aa;
+tile(1,0):0x02000000;
+tile(0,1):0xff106930;
+tile(1,1):0x00000000;
+tile(0,2):0x00000000;
+tile(1,2):0x00000000;
 #phase map

@@ -1,0 +1,24 @@
+# 安装虚拟空间
+sudo apt-get install python3-venv
+
+#创建虚拟环境
+python3 -m venv myenv
+
+#激活虚拟环境
+source myenv/bin/activate
+
+# 查看你创建的虚拟环境下的安装包
+pip list
+
+pip install --upgrade pip
+
+# 安装驱动
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+#安装
+pip install torch_geometric
+pip install scikit-learn
+pip install matplotlib
+
+#退出虚拟环境
+deactivate

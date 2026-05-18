@@ -3,6 +3,7 @@ project(FCNX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(IFCN_BUILD_GCN_RL_BINDINGS "Build the bundled GCN/RL Python extension module" OFF)
 
 # Set paths
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR})
@@ -32,4 +33,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 # Sub directories
 add_subdirectory(include/autopr)  # Add autopr subdirectory
 add_subdirectory(include/simon)
+if(IFCN_BUILD_GCN_RL_BINDINGS)
+    add_subdirectory(include/gcn_rl_layout)
+endif()
 add_subdirectory(src)

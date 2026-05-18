@@ -44,8 +44,33 @@ bool QCADView::isHighQualityMode() const
     return highQualityMode;
 }
 
+void QCADView::ensurePanTargetVisible(const QPointF &targetCenter)
+{
+    if (scene() == nullptr || viewport() == nullptr) {
+        return;
+    }
+
+    const QRectF visibleRect = mapToScene(viewport()->rect()).boundingRect();
+    const QPointF currentCenter = mapToScene(viewport()->rect().center());
+    const QRectF targetRect = visibleRect.translated(targetCenter - currentCenter);
+    constexpr qreal kPanMargin = 800.0;
+    const QRectF expandedTarget = targetRect.adjusted(-kPanMargin, -kPanMargin, kPanMargin, kPanMargin);
+    const QRectF currentSceneRect = scene()->sceneRect();
+    if (!currentSceneRect.contains(expandedTarget)) {
+        scene()->setSceneRect(currentSceneRect.united(expandedTarget));
+    }
+}
+
 void QCADView::mousePressEvent(QMouseEvent *event)
 {
+    if (dragMode() == QGraphicsView::ScrollHandDrag && event->button() == Qt::LeftButton) {
+        handPanning = true;
+        lastPanPoint = event->pos();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+
     // qDebug() << event->pos().x() << "====" << event->pos().y() << "\n";
     // qDebug() << map
     // // QStandardItem* item = static_cast<MainWindow *>(parentWindow)->layerComboBox->GetSelItem();  
@@ -83,12 +108,28 @@ void QCADView::mousePressEvent(QMouseEvent *event)
 
 void QCADView::mouseMoveEvent(QMouseEvent *event)
 {
+    if (handPanning) {
+        const QPoint delta = event->pos() - lastPanPoint;
+        const QPoint viewportCenter = viewport()->rect().center();
+        const QPointF targetCenter = mapToScene(viewportCenter - delta);
+        ensurePanTargetVisible(targetCenter);
+        centerOn(targetCenter);
+        lastPanPoint = event->pos();
+        event->accept();
+        return;
+    }
+
     QGraphicsView::mouseMoveEvent(event);
     // event->accept();
 }
 
 void QCADView::wheelEvent(QWheelEvent *event)
 {
+    if (viewport() == nullptr) {
+        event->ignore();
+        return;
+    }
+
     const QPoint angleDelta = event->angleDelta();
     const QPoint pixelDelta = event->pixelDelta();
 
@@ -96,7 +137,7 @@ void QCADView::wheelEvent(QWheelEvent *event)
     if (!angleDelta.isNull()) {
         zoomSteps = angleDelta.y() / 120.0;
     } else if (!pixelDelta.isNull()) {
-        zoomSteps = pixelDelta.y() / 90.0;
+        zoomSteps = pixelDelta.y() / 120.0;
     }
 
     if (qFuzzyIsNull(zoomSteps)) {
@@ -104,17 +145,31 @@ void QCADView::wheelEvent(QWheelEvent *event)
         return;
     }
 
-    constexpr qreal kZoomBase = 1.12;
+    constexpr qreal kZoomBase = 1.08;
     constexpr qreal kMinScale = 0.05;
     constexpr qreal kMaxScale = 48.0;
 
     const qreal currentScale = transform().m11();
+    zoomSteps = std::clamp(zoomSteps, -3.0, 3.0);
     const qreal requestedScale = currentScale * std::pow(kZoomBase, zoomSteps);
     const qreal clampedScale = std::clamp(requestedScale, kMinScale, kMaxScale);
 
     if (!qFuzzyCompare(currentScale, clampedScale)) {
+        const QPoint viewportPos = event->pos();
+        const QPoint viewportCenter = viewport()->rect().center();
+        const QPointF scenePosBefore = mapToScene(viewportPos);
+        const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
         const qreal factor = clampedScale / currentScale;
+
+        setTransformationAnchor(QGraphicsView::NoAnchor);
         scale(factor, factor);
+
+        const QPointF scenePosAfter = mapToScene(viewportPos);
+        const QPointF centerAfter = mapToScene(viewportCenter);
+        const QPointF targetCenter = centerAfter + (scenePosBefore - scenePosAfter);
+        ensurePanTargetVisible(targetCenter);
+        centerOn(targetCenter);
+        setTransformationAnchor(oldAnchor);
     }
 
     event->accept();
@@ -122,5 +177,12 @@ void QCADView::wheelEvent(QWheelEvent *event)
 
 
 void QCADView::mouseReleaseEvent(QMouseEvent *event){
+    if (handPanning && event->button() == Qt::LeftButton) {
+        handPanning = false;
+        setCursor(Qt::OpenHandCursor);
+        event->accept();
+        return;
+    }
+
     QGraphicsView::mouseReleaseEvent(event);
 }

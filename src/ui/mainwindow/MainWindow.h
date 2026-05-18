@@ -29,6 +29,7 @@
 #include "ui/widgets/waveformwindow.h"
 #include "controllers/SimulationManager.h"
 #include <QPainter>
+#include <QPair>
 #include "controllers/VerilogHandler.h"
 #include "controllers/GateLevelMapping.h"
 #include "ui/widgets/CustomStatusBar.h"
@@ -58,6 +59,8 @@ public:
         void setHighQualityMode(bool on);
         void setTabHost(TabbedMainWindow *host);
         void pushUndoSnapshot();
+        void updateLayoutInfoFromMapping(const GateLevelMapping &mapping);
+        void refreshLayoutInfoPanel();
 
 public:
         void printToStatusBar(const QString &message);
@@ -74,6 +77,8 @@ private:
         QWidget* createCellWidget(const QString &text, CellType type);
         QWidget* createClockSchemeWidget(const QString &text, const QString &image);
         void setEditMode(EditMode mode);
+        void setLayoutInfoRows(const QVector<QPair<QString, QString>> &rows);
+        qulonglong currentSceneCellCount() const;
 
 protected:
         void updateLayerAndCellZValue();
@@ -97,14 +102,17 @@ public:
         //verilog parse and three type P&R algorithm
         QPushButton *verParseButton;
         QPushButton *graphRenderButton;
+        QPushButton *gcnRlLayoutButton;
         QPushButton *forceOrientedAlgorithmButton; 
 
         //gate level mapping
         QPushButton *gateLevelMappingButton;
         QPushButton *phaseCodecEncodeButton;
+        QPushButton *phaseCodecCancelButton;
         QComboBox *phaseCodecModeComboBox;
         QTableWidget *phaseCodecTable;
         QLabel *phaseCodecStatusLabel;
+        QTableWidget *layoutInfoTable = nullptr;
 
         //view & scene
         QCADView *view;
@@ -306,6 +314,7 @@ private slots:
         void buttonGroupClicked(int);
         void slotClockSchemeGroupClicked(QAbstractButton * button);
         void slotEncodeClockRegions();
+        void slotCancelPhaseCodecEncoding();
         void slotPhaseCodecModeChanged(int idx);
         void slotPhaseCodecTileActivated(int row, int column);
 

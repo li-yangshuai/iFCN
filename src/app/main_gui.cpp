@@ -242,7 +242,7 @@ int main(int argc,char *argv[])
         "  border-radius: 10px;"
         "  min-height: 120px;"
         "}"
-        "QTextEdit#statusMessage {"
+        "QLabel#statusMessage {"
         "  background: transparent;"
         "  border: none;"
         "  padding: 3px 8px;"

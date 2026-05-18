@@ -1,6 +1,699 @@
 #include"mapping.h"
 
+#include <limits>
+#include <numeric>
+#include <queue>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
+
 namespace fcngraph{
+namespace {
+
+struct ShiftedPosition {
+    position pos{0, 0};
+    bool valid = false;
+};
+
+ShiftedPosition shiftedCell(const position& base, int dx, int dy)
+{
+    const auto x = static_cast<long long>(base.first) + dx;
+    const auto y = static_cast<long long>(base.second) + dy;
+    const auto maxCoord = static_cast<long long>(std::numeric_limits<unsigned int>::max());
+    if (x < 0 || y < 0 || x > maxCoord || y > maxCoord) {
+        return {};
+    }
+    return {{static_cast<unsigned int>(x), static_cast<unsigned int>(y)}, true};
+}
+
+bool routeBoundaryCell(const position& cell,
+                       const position& gatePos,
+                       const position& neighborGate,
+                       bool neighborIsNode)
+{
+    const unsigned int baseX = gatePos.first * 5;
+    const unsigned int baseY = gatePos.second * 5;
+
+    if (neighborGate.first < gatePos.first && neighborGate.second == gatePos.second) {
+        return cell.first == baseX && (!neighborIsNode || cell.second == baseY + 2);
+    }
+    if (neighborGate.first > gatePos.first && neighborGate.second == gatePos.second) {
+        return cell.first == baseX + 4 && (!neighborIsNode || cell.second == baseY + 2);
+    }
+    if (neighborGate.second < gatePos.second && neighborGate.first == gatePos.first) {
+        return cell.second == baseY && (!neighborIsNode || cell.first == baseX + 2);
+    }
+    if (neighborGate.second > gatePos.second && neighborGate.first == gatePos.first) {
+        return cell.second == baseY + 4 && (!neighborIsNode || cell.first == baseX + 2);
+    }
+    return false;
+}
+
+ShiftedPosition nodeBoundaryCell(const position& gatePos, const position& neighborGate)
+{
+    const unsigned int baseX = gatePos.first * 5;
+    const unsigned int baseY = gatePos.second * 5;
+
+    if (neighborGate.first < gatePos.first && neighborGate.second == gatePos.second) {
+        return {{baseX, baseY + 2}, true};
+    }
+    if (neighborGate.first > gatePos.first && neighborGate.second == gatePos.second) {
+        return {{baseX + 4, baseY + 2}, true};
+    }
+    if (neighborGate.second < gatePos.second && neighborGate.first == gatePos.first) {
+        return {{baseX + 2, baseY}, true};
+    }
+    if (neighborGate.second > gatePos.second && neighborGate.first == gatePos.first) {
+        return {{baseX + 2, baseY + 4}, true};
+    }
+    return {};
+}
+
+unsigned int manhattanDistance(const position& left, const position& right)
+{
+    const unsigned int dx = left.first > right.first
+                                ? left.first - right.first
+                                : right.first - left.first;
+    const unsigned int dy = left.second > right.second
+                                ? left.second - right.second
+                                : right.second - left.second;
+    return dx + dy;
+}
+
+std::vector<position> bridgeBetween(position start, const position& target)
+{
+    std::vector<position> bridge;
+    bridge.push_back(start);
+    while (start.first != target.first) {
+        if (start.first < target.first) {
+            ++start.first;
+        } else {
+            --start.first;
+        }
+        if (bridge.back() != start) {
+            bridge.push_back(start);
+        }
+    }
+    while (start.second != target.second) {
+        if (start.second < target.second) {
+            ++start.second;
+        } else {
+            --start.second;
+        }
+        if (bridge.back() != start) {
+            bridge.push_back(start);
+        }
+    }
+    return bridge;
+}
+
+void connectUnitMappingToNodeBoundary(std::vector<position>& unitMapping,
+                                      const position& gatePos,
+                                      const position& neighborGate,
+                                      bool prepend)
+{
+    const auto boundary = nodeBoundaryCell(gatePos, neighborGate);
+    if (!boundary.valid || unitMapping.empty()) {
+        return;
+    }
+
+    if (std::find(unitMapping.begin(), unitMapping.end(), boundary.pos) != unitMapping.end()) {
+        return;
+    }
+
+    auto nearestIt = unitMapping.begin();
+    unsigned int bestDistance = manhattanDistance(*nearestIt, boundary.pos);
+    for (auto it = std::next(unitMapping.begin()); it != unitMapping.end(); ++it) {
+        const unsigned int distance = manhattanDistance(*it, boundary.pos);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            nearestIt = it;
+        }
+    }
+
+    std::vector<position> bridge = prepend
+                                       ? bridgeBetween(boundary.pos, *nearestIt)
+                                       : bridgeBetween(*nearestIt, boundary.pos);
+    if (bridge.empty()) {
+        return;
+    }
+
+    if (prepend) {
+        if (bridge.back() == *nearestIt) {
+            bridge.pop_back();
+        }
+        unitMapping.insert(unitMapping.begin(), bridge.begin(), bridge.end());
+    } else {
+        if (bridge.front() == *nearestIt) {
+            bridge.erase(bridge.begin());
+        }
+        unitMapping.insert(unitMapping.end(), bridge.begin(), bridge.end());
+    }
+}
+
+void connectSegmentToBoundary(std::vector<position>& segment,
+                              const position& boundary,
+                              bool prepend)
+{
+    if (segment.empty() ||
+        std::find(segment.begin(), segment.end(), boundary) != segment.end()) {
+        return;
+    }
+
+    auto nearestIt = segment.begin();
+    unsigned int bestDistance = manhattanDistance(*nearestIt, boundary);
+    for (auto it = std::next(segment.begin()); it != segment.end(); ++it) {
+        const unsigned int distance = manhattanDistance(*it, boundary);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            nearestIt = it;
+        }
+    }
+
+    std::vector<position> bridge = prepend
+                                       ? bridgeBetween(boundary, *nearestIt)
+                                       : bridgeBetween(*nearestIt, boundary);
+    if (bridge.empty()) {
+        return;
+    }
+
+    if (prepend) {
+        if (bridge.back() == *nearestIt) {
+            bridge.pop_back();
+        }
+        segment.insert(segment.begin(), bridge.begin(), bridge.end());
+    } else {
+        if (bridge.front() == *nearestIt) {
+            bridge.erase(bridge.begin());
+        }
+        segment.insert(segment.end(), bridge.begin(), bridge.end());
+    }
+}
+
+void connectRouteMappingsToOriginalEndpoints(
+    std::map<std::pair<position, position>, std::vector<std::vector<position>>>& routeMappings,
+    const std::vector<std::vector<position>>& routes)
+{
+    for (const auto& route : routes) {
+        if (route.size() < 2) {
+            continue;
+        }
+
+        auto mappingIt = routeMappings.find({route.front(), route.back()});
+        if (mappingIt == routeMappings.end()) {
+            continue;
+        }
+
+        if (route.size() == 2 && mappingIt->second.empty()) {
+            const auto startBoundary = nodeBoundaryCell(route.front(), route.back());
+            const auto endBoundary = nodeBoundaryCell(route.back(), route.front());
+            if (startBoundary.valid && endBoundary.valid) {
+                auto bridge = bridgeBetween(startBoundary.pos, endBoundary.pos);
+                if (!bridge.empty()) {
+                    mappingIt->second.push_back(std::move(bridge));
+                }
+            }
+            continue;
+        }
+
+        if (mappingIt->second.empty()) {
+            continue;
+        }
+
+        const auto startBoundary = nodeBoundaryCell(route[1], route.front());
+        if (startBoundary.valid) {
+            connectSegmentToBoundary(mappingIt->second.front(), startBoundary.pos, true);
+        }
+
+        const auto endBoundary = nodeBoundaryCell(route[route.size() - 2], route.back());
+        if (endBoundary.valid) {
+            connectSegmentToBoundary(mappingIt->second.back(), endBoundary.pos, false);
+        }
+    }
+}
+
+void appendUniqueCell(std::vector<position>& cells, const position& cell)
+{
+    if (std::find(cells.begin(), cells.end(), cell) == cells.end()) {
+        cells.push_back(cell);
+    }
+}
+
+bool fallbackLogicGateMapping(
+    std::map<std::string, std::vector<position>>& nodeCells,
+    const position& gatePos,
+    const std::vector<position>& inputs,
+    const std::vector<position>& outputs,
+    const std::string& fixedBucket)
+{
+    const position center{gatePos.first * 5 + 2, gatePos.second * 5 + 2};
+    std::vector<position> usedBoundaries;
+
+    const auto addNormalArm = [&](const position& boundary) {
+        appendUniqueCell(usedBoundaries, boundary);
+        for (const position& cell : bridgeBetween(boundary, center)) {
+            appendUniqueCell(nodeCells["normal"], cell);
+        }
+    };
+
+    bool hasTerminal = false;
+    for (const position& input : inputs) {
+        const auto boundary = nodeBoundaryCell(gatePos, input);
+        if (boundary.valid) {
+            addNormalArm(boundary.pos);
+            hasTerminal = true;
+        }
+    }
+    for (const position& output : outputs) {
+        const auto boundary = nodeBoundaryCell(gatePos, output);
+        if (boundary.valid) {
+            addNormalArm(boundary.pos);
+            hasTerminal = true;
+        }
+    }
+
+    if (!hasTerminal) {
+        return false;
+    }
+
+    const unsigned int baseX = gatePos.first * 5;
+    const unsigned int baseY = gatePos.second * 5;
+    const std::vector<position> fixedCandidates{
+        {baseX + 2, baseY},
+        {baseX + 4, baseY + 2},
+        {baseX + 2, baseY + 4},
+        {baseX, baseY + 2},
+    };
+
+    for (const position& fixedBoundary : fixedCandidates) {
+        if (std::find(usedBoundaries.begin(), usedBoundaries.end(), fixedBoundary) != usedBoundaries.end()) {
+            continue;
+        }
+        appendUniqueCell(nodeCells[fixedBucket], fixedBoundary);
+        const auto bridge = bridgeBetween(fixedBoundary, center);
+        for (std::size_t index = 1; index < bridge.size(); ++index) {
+            appendUniqueCell(nodeCells["normal"], bridge[index]);
+        }
+        return true;
+    }
+
+    return true;
+}
+
+std::vector<position> shortestUnitPath(const std::vector<position>& unitMapping,
+                                       const position& gatePos,
+                                       const position& prevGate,
+                                       const position& nextGate,
+                                       bool prevIsNode,
+                                       bool nextIsNode)
+{
+    if (unitMapping.size() <= 2 || (!prevIsNode && !nextIsNode)) {
+        return unitMapping;
+    }
+
+    std::unordered_set<position, MappingPositionHash> unitCells(unitMapping.begin(), unitMapping.end());
+    std::vector<position> starts;
+    std::unordered_set<position, MappingPositionHash> ends;
+    starts.reserve(unitMapping.size());
+
+    if (prevIsNode) {
+        for (const position& cell : unitMapping) {
+            if (routeBoundaryCell(cell, gatePos, prevGate, true)) {
+                starts.push_back(cell);
+            }
+        }
+    } else {
+        starts.push_back(unitMapping.front());
+    }
+
+    if (nextIsNode) {
+        for (const position& cell : unitMapping) {
+            if (routeBoundaryCell(cell, gatePos, nextGate, true)) {
+                ends.insert(cell);
+            }
+        }
+    } else {
+        ends.insert(unitMapping.back());
+    }
+
+    if (starts.empty() || ends.empty()) {
+        return unitMapping;
+    }
+
+    std::queue<position> pending;
+    std::unordered_set<position, MappingPositionHash> visited;
+    std::unordered_map<position, position, MappingPositionHash> parent;
+
+    for (const position& start : starts) {
+        if (visited.insert(start).second) {
+            pending.push(start);
+        }
+    }
+
+    position reached{};
+    bool found = false;
+    const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    while (!pending.empty() && !found) {
+        const position current = pending.front();
+        pending.pop();
+
+        if (ends.find(current) != ends.end()) {
+            reached = current;
+            found = true;
+            break;
+        }
+
+        for (const auto& dir : dirs) {
+            const auto next = shiftedCell(current, dir[0], dir[1]);
+            if (!next.valid || unitCells.find(next.pos) == unitCells.end()) {
+                continue;
+            }
+            if (visited.insert(next.pos).second) {
+                parent[next.pos] = current;
+                pending.push(next.pos);
+            }
+        }
+    }
+
+    if (!found) {
+        return unitMapping;
+    }
+
+    std::vector<position> path;
+    position current = reached;
+    path.push_back(current);
+    while (parent.find(current) != parent.end()) {
+        current = parent[current];
+        path.push_back(current);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
+bool unitSegmentsTouch(const std::vector<position>& first,
+                       const std::vector<position>& second)
+{
+    for (const position& left : first) {
+        for (const position& right : second) {
+            const unsigned int dx = left.first > right.first
+                                        ? left.first - right.first
+                                        : right.first - left.first;
+            const unsigned int dy = left.second > right.second
+                                        ? left.second - right.second
+                                        : right.second - left.second;
+            if (dx + dy <= 1) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void appendStepToward(std::vector<position>& segment,
+                      position& current,
+                      const position& target,
+                      bool stepX)
+{
+    if (stepX) {
+        if (current.first < target.first) {
+            ++current.first;
+        } else if (current.first > target.first) {
+            --current.first;
+        }
+    } else {
+        if (current.second < target.second) {
+            ++current.second;
+        } else if (current.second > target.second) {
+            --current.second;
+        }
+    }
+
+    if (segment.empty() || segment.back() != current) {
+        segment.push_back(current);
+    }
+}
+
+void bridgeUnitSegments(std::vector<position>& first,
+                        const std::vector<position>& second)
+{
+    if (first.empty() || second.empty() || unitSegmentsTouch(first, second)) {
+        return;
+    }
+
+    position start = first.front();
+    position target = second.front();
+    unsigned int bestDistance = std::numeric_limits<unsigned int>::max();
+    for (const position& left : first) {
+        for (const position& right : second) {
+            const unsigned int dx = left.first > right.first
+                                        ? left.first - right.first
+                                        : right.first - left.first;
+            const unsigned int dy = left.second > right.second
+                                        ? left.second - right.second
+                                        : right.second - left.second;
+            const unsigned int distance = dx + dy;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                start = left;
+                target = right;
+            }
+        }
+    }
+
+    if (bestDistance <= 1) {
+        return;
+    }
+
+    position current = start;
+    const unsigned int dx = current.first > target.first
+                                ? current.first - target.first
+                                : target.first - current.first;
+    const unsigned int dy = current.second > target.second
+                                ? current.second - target.second
+                                : target.second - current.second;
+    const bool stepYFirst = dx <= 1 && dy > 1;
+
+    if (stepYFirst) {
+        while (current.second != target.second) {
+            appendStepToward(first, current, target, false);
+        }
+        while (current.first != target.first) {
+            appendStepToward(first, current, target, true);
+        }
+    } else {
+        while (current.first != target.first) {
+            appendStepToward(first, current, target, true);
+        }
+        while (current.second != target.second) {
+            appendStepToward(first, current, target, false);
+        }
+    }
+}
+
+void stitchRouteMapping(std::vector<std::vector<position>>& routeMapping)
+{
+    for (std::size_t index = 1; index < routeMapping.size(); ++index) {
+        bridgeUnitSegments(routeMapping[index - 1], routeMapping[index]);
+    }
+}
+
+std::vector<std::vector<std::size_t>> buildRouteOrderCandidates(const std::vector<std::vector<position>>& routes)
+{
+    std::vector<std::vector<std::size_t>> candidates;
+    if (routes.empty()) {
+        return candidates;
+    }
+
+    std::vector<std::size_t> original(routes.size());
+    std::iota(original.begin(), original.end(), 0);
+
+    std::set<std::vector<std::size_t>> seenOrders;
+    const auto addCandidate = [&](std::vector<std::size_t> order) {
+        if (seenOrders.insert(order).second) {
+            candidates.push_back(std::move(order));
+        }
+    };
+
+    std::vector<std::unordered_set<position, MappingPositionHash>> routePositions;
+    routePositions.reserve(routes.size());
+    std::unordered_map<position, std::size_t, MappingPositionHash> positionFrequency;
+    for (const auto& route : routes) {
+        auto& cells = routePositions.emplace_back();
+        if (route.size() <= 2) {
+            continue;
+        }
+        for (std::size_t index = 1; index + 1 < route.size(); ++index) {
+            cells.insert(route[index]);
+        }
+        for (const position& cell : cells) {
+            ++positionFrequency[cell];
+        }
+    }
+
+    std::vector<std::size_t> conflictWeight(routes.size(), 0);
+    for (std::size_t routeIndex = 0; routeIndex < routePositions.size(); ++routeIndex) {
+        for (const position& cell : routePositions[routeIndex]) {
+            const auto freqIt = positionFrequency.find(cell);
+            if (freqIt != positionFrequency.end() && freqIt->second > 1) {
+                conflictWeight[routeIndex] += freqIt->second - 1;
+            }
+        }
+    }
+
+    const auto routeStart = [&](std::size_t index) -> position {
+        return routes[index].empty() ? position{0, 0} : routes[index].front();
+    };
+    const auto routeSecond = [&](std::size_t index) -> position {
+        return routes[index].size() > 1 ? routes[index][1] : routeStart(index);
+    };
+    const auto routeEnd = [&](std::size_t index) -> position {
+        return routes[index].empty() ? position{0, 0} : routes[index].back();
+    };
+    const auto routeAbsDx = [&](std::size_t index) -> unsigned int {
+        const position start = routeStart(index);
+        const position end = routeEnd(index);
+        return start.first > end.first ? start.first - end.first : end.first - start.first;
+    };
+    const auto routeAbsDy = [&](std::size_t index) -> unsigned int {
+        const position start = routeStart(index);
+        const position end = routeEnd(index);
+        return start.second > end.second ? start.second - end.second : end.second - start.second;
+    };
+    const auto minFirst = [&](std::size_t index) -> unsigned int {
+        return std::min(routeStart(index).first, routeEnd(index).first);
+    };
+    const auto maxFirst = [&](std::size_t index) -> unsigned int {
+        return std::max(routeStart(index).first, routeEnd(index).first);
+    };
+    const auto minSecond = [&](std::size_t index) -> unsigned int {
+        return std::min(routeStart(index).second, routeEnd(index).second);
+    };
+    const auto maxSecond = [&](std::size_t index) -> unsigned int {
+        return std::max(routeStart(index).second, routeEnd(index).second);
+    };
+    const auto addOuterLaneCandidate = [&](bool topToDown) {
+        auto laneOrder = original;
+        std::stable_sort(laneOrder.begin(), laneOrder.end(), [&](std::size_t left, std::size_t right) {
+            const bool leftMatches = topToDown ? (routeAbsDy(left) >= routeAbsDx(left))
+                                               : (routeAbsDx(left) > routeAbsDy(left));
+            const bool rightMatches = topToDown ? (routeAbsDy(right) >= routeAbsDx(right))
+                                                : (routeAbsDx(right) > routeAbsDy(right));
+            if (leftMatches != rightMatches) return leftMatches > rightMatches;
+
+            if (topToDown) {
+                if (minSecond(left) != minSecond(right)) return minSecond(left) < minSecond(right);
+                if (maxSecond(left) != maxSecond(right)) return maxSecond(left) < maxSecond(right);
+                if (minFirst(left) != minFirst(right)) return minFirst(left) < minFirst(right);
+                if (maxFirst(left) != maxFirst(right)) return maxFirst(left) < maxFirst(right);
+            } else {
+                if (minFirst(left) != minFirst(right)) return minFirst(left) < minFirst(right);
+                if (maxFirst(left) != maxFirst(right)) return maxFirst(left) < maxFirst(right);
+                if (minSecond(left) != minSecond(right)) return minSecond(left) < minSecond(right);
+                if (maxSecond(left) != maxSecond(right)) return maxSecond(left) < maxSecond(right);
+            }
+
+            if (conflictWeight[left] != conflictWeight[right]) return conflictWeight[left] > conflictWeight[right];
+            if (routes[left].size() != routes[right].size()) return routes[left].size() > routes[right].size();
+            return left < right;
+        });
+        addCandidate(laneOrder);
+    };
+
+    addCandidate(original);
+    addOuterLaneCandidate(true);
+    addOuterLaneCandidate(false);
+
+    auto order = original;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right) {
+        if (routeStart(left) != routeStart(right)) return routeStart(left) < routeStart(right);
+        if (routeSecond(left) != routeSecond(right)) return routeSecond(left) < routeSecond(right);
+        if (routes[left].size() != routes[right].size()) return routes[left].size() > routes[right].size();
+        if (conflictWeight[left] != conflictWeight[right]) return conflictWeight[left] > conflictWeight[right];
+        return left < right;
+    });
+    addCandidate(order);
+
+    order = original;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right) {
+        if (routeStart(left) != routeStart(right)) return routeStart(left) < routeStart(right);
+        if (routeSecond(left) != routeSecond(right)) return routeSecond(left) < routeSecond(right);
+        if (routes[left].size() != routes[right].size()) return routes[left].size() < routes[right].size();
+        if (routeEnd(left) != routeEnd(right)) return routeEnd(left) < routeEnd(right);
+        return left < right;
+    });
+    addCandidate(order);
+
+    order = original;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right) {
+        if (conflictWeight[left] != conflictWeight[right]) return conflictWeight[left] > conflictWeight[right];
+        if (routes[left].size() != routes[right].size()) return routes[left].size() > routes[right].size();
+        if (routeStart(left) != routeStart(right)) return routeStart(left) < routeStart(right);
+        if (routeEnd(left) != routeEnd(right)) return routeEnd(left) < routeEnd(right);
+        return left < right;
+    });
+    addCandidate(order);
+
+    order = original;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right) {
+        if (conflictWeight[left] != conflictWeight[right]) return conflictWeight[left] < conflictWeight[right];
+        if (routes[left].size() != routes[right].size()) return routes[left].size() > routes[right].size();
+        if (routeStart(left) != routeStart(right)) return routeStart(left) < routeStart(right);
+        if (routeEnd(left) != routeEnd(right)) return routeEnd(left) < routeEnd(right);
+        return left < right;
+    });
+    addCandidate(order);
+
+    order = original;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right) {
+        if (routes[left].size() != routes[right].size()) return routes[left].size() > routes[right].size();
+        if (conflictWeight[left] != conflictWeight[right]) return conflictWeight[left] > conflictWeight[right];
+        if (routeStart(left) != routeStart(right)) return routeStart(left) < routeStart(right);
+        if (routeEnd(left) != routeEnd(right)) return routeEnd(left) < routeEnd(right);
+        return left < right;
+    });
+    addCandidate(order);
+
+    order = original;
+    std::reverse(order.begin(), order.end());
+    addCandidate(order);
+
+    return candidates;
+}
+
+std::unordered_set<position, MappingPositionHash> buildRequiredCrossPositions(
+    const std::vector<std::vector<position>>& routes)
+{
+    std::unordered_map<position, std::set<position>, MappingPositionHash> routeStartsByPosition;
+    for (const auto& route : routes) {
+        if (route.size() <= 2) {
+            continue;
+        }
+        const position routeStart = route.front();
+        for (std::size_t index = 1; index + 1 < route.size(); ++index) {
+            routeStartsByPosition[route[index]].insert(routeStart);
+        }
+    }
+
+    std::unordered_set<position, MappingPositionHash> requiredPositions;
+    for (const auto& [gatePos, starts] : routeStartsByPosition) {
+        if (starts.size() > 1) {
+            requiredPositions.insert(gatePos);
+        }
+    }
+    return requiredPositions;
+}
+
+} // namespace
+
+struct MappingOrderScore
+{
+    std::size_t missingRequiredCrossPositions = 0;
+    std::size_t crossSegments = 0;
+    std::size_t uniqueCrossCells = 0;
+    std::size_t totalCrossCells = 0;
+    std::size_t totalRouteCells = 0;
+};
+
 std::uint16_t Mapping::deviateTypeMask(const std::string& type)
 {
     if (type == "XMIDDLE") return 1u << 0;
@@ -36,18 +729,119 @@ void Mapping::updateDeviateLookup(const std::pair<position, position>& route_key
 
     //门级->元胞级坐标映射
 std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapping::mapping_line(std::vector<std::vector<position>>& _example){
-    deviate_list.clear();
-    deviatemapping_list.clear();
-    crossline_list.clear();
-    deviate_lookup.clear();
-    
-    for (auto &oneroute : _example)//此处是头文件中的存放的坐标形式的多条线路，含有起始点std::vector<std::vector<position>> routepos_list;
-    {
-        routepos_Deviate(oneroute);
+    const auto resetMappingState = [&]() {
+        deviate_list.clear();
+        deviatemapping_list.clear();
+        crossline_list.clear();
+        deviate_lookup.clear();
+    };
+
+    const auto requiredCrossPositions = buildRequiredCrossPositions(_example);
+    std::unordered_set<position, MappingPositionHash> mustKeepCrossPositions;
+
+    const auto currentCoveredCrossBlocks = [&]() {
+        std::unordered_set<position, MappingPositionHash> coveredCrossBlocks;
+        for (const auto& crossline : crossline_list) {
+            for (const auto& segment : crossline.second) {
+                for (const position& cell : segment) {
+                    coveredCrossBlocks.insert({cell.first / 5, cell.second / 5});
+                }
+            }
+        }
+        return coveredCrossBlocks;
+    };
+
+    const auto currentScore = [&]() {
+        MappingOrderScore score;
+        std::unordered_set<position, MappingPositionHash> uniqueCrossCells;
+        std::unordered_set<position, MappingPositionHash> coveredCrossBlocks;
+        for (const auto& crossline : crossline_list) {
+            score.crossSegments += crossline.second.size();
+            for (const auto& segment : crossline.second) {
+                score.totalCrossCells += segment.size();
+                for (const position& cell : segment) {
+                    uniqueCrossCells.insert(cell);
+                    coveredCrossBlocks.insert({cell.first / 5, cell.second / 5});
+                }
+            }
+        }
+        score.uniqueCrossCells = uniqueCrossCells.size();
+        for (const position& requiredPos : mustKeepCrossPositions) {
+            if (coveredCrossBlocks.find(requiredPos) == coveredCrossBlocks.end()) {
+                ++score.missingRequiredCrossPositions;
+            }
+        }
+        for (const auto& route : deviatemapping_list) {
+            for (const auto& segment : route.second) {
+                score.totalRouteCells += segment.size();
+            }
+        }
+        return score;
+    };
+
+    const auto betterScore = [](const MappingOrderScore& left, const MappingOrderScore& right) {
+        if (left.missingRequiredCrossPositions != right.missingRequiredCrossPositions) {
+            return left.missingRequiredCrossPositions < right.missingRequiredCrossPositions;
+        }
+        if (left.crossSegments != right.crossSegments) return left.crossSegments < right.crossSegments;
+        if (left.uniqueCrossCells != right.uniqueCrossCells) return left.uniqueCrossCells < right.uniqueCrossCells;
+        if (left.totalCrossCells != right.totalCrossCells) return left.totalCrossCells < right.totalCrossCells;
+        return left.totalRouteCells < right.totalRouteCells;
+    };
+
+    const auto orderedRoutes = [&](const std::vector<std::size_t>& order) {
+        std::vector<std::vector<position>> routes;
+        routes.reserve(order.size());
+        for (const std::size_t index : order) {
+            routes.push_back(_example[index]);
+        }
+        return routes;
+    };
+
+    const auto runMappingWithOrder = [&](const std::vector<std::size_t>& order) {
+        resetMappingState();
+        auto routes = orderedRoutes(order);
+        for (auto &oneroute : routes)//此处是头文件中的存放的坐标形式的多条线路，含有起始点std::vector<std::vector<position>> routepos_list;
+        {
+            routepos_Deviate(oneroute);
+        }
+        deviate_mapping(deviate_list);
+        connectRouteMappingsToOriginalEndpoints(deviatemapping_list, routes);
+        crossline_mapping(routes);
+        return currentScore();
+    };
+
+    auto candidates = buildRouteOrderCandidates(_example);
+    if (_example.size() > 256 && candidates.size() > 3) {
+        candidates.resize(3);
     }
-    deviate_mapping(deviate_list);
-    
-    crossline_mapping(_example);
+
+    if (candidates.empty()) {
+        resetMappingState();
+        return deviatemapping_list;
+    }
+
+    runMappingWithOrder(candidates.front());
+    const auto originalCoveredCrossBlocks = currentCoveredCrossBlocks();
+    for (const position& requiredPos : requiredCrossPositions) {
+        if (originalCoveredCrossBlocks.find(requiredPos) != originalCoveredCrossBlocks.end()) {
+            mustKeepCrossPositions.insert(requiredPos);
+        }
+    }
+
+    std::vector<std::size_t> bestOrder = candidates.front();
+    MappingOrderScore bestScore;
+    bool hasBestScore = false;
+    for (const auto& candidate : candidates) {
+        const MappingOrderScore score = runMappingWithOrder(candidate);
+        if (!hasBestScore || betterScore(score, bestScore)) {
+            bestScore = score;
+            bestOrder = candidate;
+            hasBestScore = true;
+        }
+    }
+
+    runMappingWithOrder(bestOrder);
 
     return deviatemapping_list;
 }
@@ -574,7 +1368,7 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
             
             
         }
-        if (!RouteDeviate_list.empty()) {
+        if (!RouteDeviate_list.empty() && RouteDeviate_list.back().first == endpos) {
             RouteDeviate_list.pop_back();
         }
         const auto route_key = std::make_pair(startpos, endpos);
@@ -2359,8 +3153,25 @@ void Mapping::deviate_mapping(std::map<std::pair<position, position>, std::vecto
                         }
                     }
                 }
+                if (!unit_mapping.empty()) {
+                    if (!has_prev) {
+                        connectUnitMappingToNodeBoundary(unit_mapping, itpos, startpos, true);
+                    }
+                    if (!has_next) {
+                        connectUnitMappingToNodeBoundary(unit_mapping, itpos, endpos, false);
+                    }
+                    unit_mapping = shortestUnitPath(
+                        unit_mapping,
+                        itpos,
+                        has_prev ? prevpos : startpos,
+                        has_next ? nextpos : endpos,
+                        !has_prev,
+                        !has_next
+                    );
+                }
                 route_mapping.push_back(unit_mapping);
             }
+            stitchRouteMapping(route_mapping);
             if(!route_mapping.empty()){
                 deviatemapping_list.insert({{startpos, endpos}, route_mapping});
             }
@@ -2400,13 +3211,22 @@ bool Mapping::isfindpostype(std::map<std::pair<position, position>, std::vector<
 void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_list){
     std::vector<std::pair<std::pair<std::pair<position, position>, std::pair<position, position>>, position>> temppos_list;
     std::vector<std::pair<std::pair<position, position>, position>> oneroutepos_list;
-    std::unordered_set<position, MappingPositionHash> recordedCrossPositions;
+    using RouteKey = std::pair<position, position>;
+    using RoutePair = std::pair<RouteKey, RouteKey>;
+    std::set<std::pair<RoutePair, position>> tempposKeys;
+    std::unordered_set<position, MappingPositionHash> onerouteposPositions;
     std::vector<std::unordered_set<position, MappingPositionHash>> routePositionSets;
     routePositionSets.reserve(_routepos_list.size());
     for (const auto& route : _routepos_list)
     {
         routePositionSets.emplace_back(route.begin(), route.end());
     }
+    const auto addTempCross = [&](const RoutePair& routePair, const position& crossPos) {
+        if (tempposKeys.insert(std::make_pair(routePair, crossPos)).second)
+        {
+            temppos_list.emplace_back(std::make_pair(routePair, crossPos));
+        }
+    };
 
     // for (auto it = _routepos_list.begin(); it != _routepos_list.end(); it++)
     // {
@@ -2529,7 +3349,7 @@ void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_li
             {  
                 if (oneroute[i1] == oneroute[j1]) 
                 {  
-                    if (recordedCrossPositions.insert(oneroute[i1]).second)
+                    if (onerouteposPositions.insert(oneroute[i1]).second)
                     {
                         oneroutepos_list.emplace_back(std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), oneroute[i1]));
                     }
@@ -2555,10 +3375,11 @@ void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_li
                         for (auto &pos1 : temppart)
                         {
                             const bool existsInSuffix = itpartSet.find(pos1) != itpartSet.end();
-                            if (existsInSuffix && pos1 != itpart.back() && pos1 != temppart.back() &&
-                                recordedCrossPositions.insert(pos1).second)
+                            if (existsInSuffix && pos1 != itpart.back() && pos1 != temppart.back())
                             {
-                                temppos_list.emplace_back(std::make_pair((std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), std::make_pair(_routepos_list[j].front(), _routepos_list[j].back()))), pos1));
+                                addTempCross(std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()),
+                                                            std::make_pair(_routepos_list[j].front(), _routepos_list[j].back())),
+                                             pos1);
                             }
                         }
                         
@@ -2573,10 +3394,11 @@ void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_li
                 {
                     if (routePositionSets[i].find(pos2) != routePositionSets[i].end() &&
                         pos2 != _routepos_list[i].back() &&
-                        pos2 != _routepos_list[j].back() &&
-                        recordedCrossPositions.insert(pos2).second)
+                        pos2 != _routepos_list[j].back())
                     {
-                        temppos_list.emplace_back(std::make_pair((std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), std::make_pair(_routepos_list[j].front(), _routepos_list[j].back()))), pos2));
+                        addTempCross(std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()),
+                                                    std::make_pair(_routepos_list[j].front(), _routepos_list[j].back())),
+                                     pos2);
                     }
                     
                 }
@@ -3374,6 +4196,10 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         }
         else if (node.first.second == "and")
         {
+            const auto normalBefore = nodecell_list["normal"].size();
+            const auto fix0Before = nodecell_list["fix0"].size();
+            const auto fix1Before = nodecell_list["fix1"].size();
+            const auto outputBefore = nodecell_list["output"].size();
             if (node.second.first.size() == 2)
             {
                 if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
@@ -3552,13 +4378,20 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     }
                 }
             }
-            else
+            if (nodecell_list["normal"].size() == normalBefore &&
+                nodecell_list["fix0"].size() == fix0Before &&
+                nodecell_list["fix1"].size() == fix1Before &&
+                nodecell_list["output"].size() == outputBefore)
             {
-                continue;
+                fallbackLogicGateMapping(nodecell_list, temppos, node.second.first, node.second.second, "fix0");
             }
         }
         else if (node.first.second == "or")
         {
+            const auto normalBefore = nodecell_list["normal"].size();
+            const auto fix0Before = nodecell_list["fix0"].size();
+            const auto fix1Before = nodecell_list["fix1"].size();
+            const auto outputBefore = nodecell_list["output"].size();
             if (node.second.first.size() == 2)
             {
                 if (((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second)&&(node.second.first.back().first == temppos.first)&&(node.second.first.back().second < temppos.second))
@@ -3737,9 +4570,12 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
                     }
                 }
             }
-            else
+            if (nodecell_list["normal"].size() == normalBefore &&
+                nodecell_list["fix0"].size() == fix0Before &&
+                nodecell_list["fix1"].size() == fix1Before &&
+                nodecell_list["output"].size() == outputBefore)
             {
-                continue;
+                fallbackLogicGateMapping(nodecell_list, temppos, node.second.first, node.second.second, "fix1");
             }
         }
         else if (node.first.second == "not")
@@ -4370,6 +5206,16 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
 void Mapping::not_check(std::vector<std::vector<position>> &_routepos_list){
     std::vector<std::pair<std::pair<std::pair<position, position>, std::pair<position, position>>, position>> temppos_list;
     std::vector<std::pair<std::pair<position, position>, position>> oneroutepos_list;
+    using RouteKey = std::pair<position, position>;
+    using RoutePair = std::pair<RouteKey, RouteKey>;
+    std::set<std::pair<RoutePair, position>> tempposKeys;
+    std::unordered_set<position, MappingPositionHash> onerouteposPositions;
+    const auto addTempCross = [&](const RoutePair& routePair, const position& crossPos) {
+        if (tempposKeys.insert(std::make_pair(routePair, crossPos)).second)
+        {
+            temppos_list.emplace_back(std::make_pair(routePair, crossPos));
+        }
+    };
 
     for (size_t i = 0; i < _routepos_list.size(); i++)
     {
@@ -4380,16 +5226,7 @@ void Mapping::not_check(std::vector<std::vector<position>> &_routepos_list){
             {  
                 if (oneroute[i1] == oneroute[j1]) 
                 {  
-                    std::vector<position> existpos_list;
-                    if(!temppos_list.empty())
-                    {
-                        for (auto &v: temppos_list)
-                        {
-                            existpos_list.push_back(v.second);
-                        }
-                    }
-                    auto exitpos = std::find(existpos_list.begin(), existpos_list.end(), oneroute[i1]); 
-                    if (exitpos == existpos_list.end())
+                    if (onerouteposPositions.insert(oneroute[i1]).second)
                     {
                         oneroutepos_list.emplace_back(std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), oneroute[i1]));
                     }
@@ -4414,20 +5251,12 @@ void Mapping::not_check(std::vector<std::vector<position>> &_routepos_list){
                         for (auto &pos1 : temppart)
                         {
                             auto temppos = std::find(itpart.begin(), itpart.end(), pos1);
-                            
-                            std::vector<position> existpos_list;
-                            if(!temppos_list.empty())
-                            {
-                                for (auto &v: temppos_list)
-                                {
-                                    existpos_list.push_back(v.second);
-                                }
-                            }
-                            auto exitpos = std::find(existpos_list.begin(), existpos_list.end(), pos1); 
 
-                            if (temppos != itpart.end() && (*temppos) != itpart.back() && (*temppos) != temppart.back() && exitpos == existpos_list.end())
+                            if (temppos != itpart.end() && (*temppos) != itpart.back() && (*temppos) != temppart.back())
                             {
-                                temppos_list.emplace_back(std::make_pair((std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), std::make_pair(_routepos_list[j].front(), _routepos_list[j].back()))), pos1));
+                                addTempCross(std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()),
+                                                            std::make_pair(_routepos_list[j].front(), _routepos_list[j].back())),
+                                             pos1);
                             }
                         }
                         
@@ -4442,20 +5271,11 @@ void Mapping::not_check(std::vector<std::vector<position>> &_routepos_list){
                 {
                     auto temppos = std::find(_routepos_list[i].begin(), _routepos_list[i].end(), pos2);
 
-                    //避免重复检查其他线与扇出前的重合线导致重复输出交叉点
-                    std::vector<position> existpos_list;
-                    if(!temppos_list.empty())
+                    if (temppos != _routepos_list[i].end() && (*temppos) != _routepos_list[i].back() && (*temppos) != _routepos_list[j].back())
                     {
-                        for (auto &v: temppos_list)
-                        {
-                            existpos_list.push_back(v.second);
-                        }
-                    }
-                    auto exitpos = std::find(existpos_list.begin(), existpos_list.end(), pos2); 
-
-                    if (temppos != _routepos_list[i].end() && (*temppos) != _routepos_list[i].back() && (*temppos) != _routepos_list[j].back() && exitpos == existpos_list.end())
-                    {
-                        temppos_list.emplace_back(std::make_pair((std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()), std::make_pair(_routepos_list[j].front(), _routepos_list[j].back()))), pos2));
+                        addTempCross(std::make_pair(std::make_pair(_routepos_list[i].front(), _routepos_list[i].back()),
+                                                    std::make_pair(_routepos_list[j].front(), _routepos_list[j].back())),
+                                     pos2);
                     }
                     
                 }

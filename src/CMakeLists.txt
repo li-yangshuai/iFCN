@@ -48,3 +48,13 @@ add_executable(
     
 target_link_libraries(fcnx_gui PRIVATE autopr simon  ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg 
                        ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
+
+target_compile_definitions(fcnx_gui PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+add_executable(ifcn_mapping_metrics app/ifcn_mapping_metrics.cpp)
+target_link_libraries(ifcn_mapping_metrics PRIVATE autopr)
+target_compile_definitions(ifcn_mapping_metrics PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+add_executable(ifcn_energy_analysis app/ifcn_energy_analysis.cpp)
+target_link_libraries(ifcn_energy_analysis PRIVATE autopr simon)
+target_compile_definitions(ifcn_energy_analysis PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

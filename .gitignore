@@ -45,3 +45,5 @@ cmake-build-debug/
 cmake-build-release/
 docs/
 experiments/
+include/gcn_rl_layout/results/
+*_gcn_rl_layout/

@@ -8,9 +8,11 @@
 #edges number: 8
 #total layers: 4
 #layout area: width: 3, height: 4, area: 12
+#cell count: 80
+#cross count: 1
 #phase origin: top-left=(4,4), saved coordinates are normalized to (0,0)
 #phase count: 4
-#runtime: 0.347s
+#runtime: 0.391s
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###

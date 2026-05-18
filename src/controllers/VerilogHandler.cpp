@@ -10,10 +10,17 @@
 #include <QPainter>
 #include <QTextStream>
 #include <QComboBox>
+#include <QCheckBox>
+#include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QTemporaryDir>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QRegularExpression>
+#include <QStandardPaths>
 #include <autopr/algorithms/phase_codec.h>
 #include "ui/widgets/GaChessboardInputDialog.h"
 #include <QElapsedTimer>
@@ -26,6 +33,48 @@ namespace {
 struct GraphRenderSettings {
     int phaseCount = 4;
     int maxAttempts = 320;
+};
+
+struct GcnRlSettings {
+    QString device = "auto";
+    QString startStrategy = "gcn";
+    QString startOrientation = "auto";
+    QString trainEvalMode = "auto";
+    QString parseMode = "auto";
+    int phaseCycle = 4;
+    int xSpacing = 2;
+    int ySpacing = 2;
+    int routingPadding = 1;
+    int maxSamePhase = 4;
+    int runs = 2;
+    int workers = 2;
+    int baseSeed = 7;
+    int gcnEpochs = 120;
+    int episodes = 80;
+    int stepsPerEpisode = 8;
+    int ppoEpochs = 4;
+    int minibatchSize = 32;
+    int finalExactCandidates = 12;
+    int exactTimeoutSeconds = 45;
+    int legalRepairCandidates = 24;
+    int legalRepairMaxPadding = 8;
+    int localRefineRounds = 8;
+    int localMaxEvaluations = 240;
+    int postPrimaryPackRounds = 6;
+    int postAreaPackRounds = 10;
+    int postPackMaxEvaluations = 320;
+    int postPhaseStripPackRounds = 3;
+    int postPhaseStripPackMaxEvaluations = 160;
+    double areaRewardWeight = 3.0;
+    double areaRegressionWeight = 250.0;
+    double maxSpanWeight = 8.0;
+    double legalRepairTimeoutMultiplier = 4.0;
+    bool useLayoutMemory = true;
+    bool useActionMemory = true;
+    bool finalExactValidation = true;
+    bool strictMemoryUpdates = false;
+    bool writeTrainingPlots = true;
+    bool memoryOnlyInference = false;
 };
 
 struct LayoutAttempt {
@@ -92,6 +141,312 @@ bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
 
     settings.phaseCount = phaseCombo->currentData().toInt();
     settings.maxAttempts = attemptSpin->value();
+    return true;
+}
+
+QString environmentValueOrDefault(const char *name, const QString &defaultValue)
+{
+    const QString value = QString::fromLocal8Bit(qgetenv(name)).trimmed();
+    return value.isEmpty() ? defaultValue : value;
+}
+
+int environmentIntOrDefault(const char *name, int defaultValue)
+{
+    bool ok = false;
+    const int value = QString::fromLocal8Bit(qgetenv(name)).trimmed().toInt(&ok);
+    return ok ? value : defaultValue;
+}
+
+double environmentDoubleOrDefault(const char *name, double defaultValue)
+{
+    bool ok = false;
+    const double value = QString::fromLocal8Bit(qgetenv(name)).trimmed().toDouble(&ok);
+    return ok ? value : defaultValue;
+}
+
+bool environmentBoolOrDefault(const char *name, bool defaultValue)
+{
+    const QString value = QString::fromLocal8Bit(qgetenv(name)).trimmed().toLower();
+    if (value.isEmpty()) {
+        return defaultValue;
+    }
+    if (value == "1" || value == "true" || value == "yes" || value == "on") {
+        return true;
+    }
+    if (value == "0" || value == "false" || value == "no" || value == "off") {
+        return false;
+    }
+    return defaultValue;
+}
+
+void setComboByData(QComboBox *combo, const QString &value)
+{
+    const int index = combo->findData(value);
+    if (index >= 0) {
+        combo->setCurrentIndex(index);
+    }
+}
+
+bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
+{
+    settings.device = environmentValueOrDefault("IFCN_GCN_RL_DEVICE", settings.device);
+    settings.startStrategy = environmentValueOrDefault("IFCN_GCN_RL_START_STRATEGY", settings.startStrategy);
+    settings.startOrientation = environmentValueOrDefault("IFCN_GCN_RL_START_ORIENTATION", settings.startOrientation);
+    settings.trainEvalMode = environmentValueOrDefault("IFCN_GCN_RL_TRAIN_EVAL_MODE", settings.trainEvalMode);
+    settings.parseMode = environmentValueOrDefault("IFCN_GCN_RL_PARSE_MODE", settings.parseMode);
+    settings.phaseCycle = environmentIntOrDefault("IFCN_GCN_RL_PHASE_CYCLE", settings.phaseCycle);
+    settings.xSpacing = environmentIntOrDefault("IFCN_GCN_RL_X_SPACING", settings.xSpacing);
+    settings.ySpacing = environmentIntOrDefault("IFCN_GCN_RL_Y_SPACING", settings.ySpacing);
+    settings.routingPadding = environmentIntOrDefault("IFCN_GCN_RL_PADDING", settings.routingPadding);
+    settings.maxSamePhase = environmentIntOrDefault("IFCN_GCN_RL_MAX_SAME_PHASE", settings.maxSamePhase);
+    settings.runs = environmentIntOrDefault("IFCN_GCN_RL_RUNS", settings.runs);
+    settings.workers = environmentIntOrDefault("IFCN_GCN_RL_WORKERS", std::max(1, settings.runs));
+    settings.baseSeed = environmentIntOrDefault("IFCN_GCN_RL_BASE_SEED", settings.baseSeed);
+    settings.gcnEpochs = environmentIntOrDefault("IFCN_GCN_EPOCHS", settings.gcnEpochs);
+    settings.episodes = environmentIntOrDefault("IFCN_GCN_RL_EPISODES", settings.episodes);
+    settings.stepsPerEpisode = environmentIntOrDefault("IFCN_GCN_RL_STEPS", settings.stepsPerEpisode);
+    settings.ppoEpochs = environmentIntOrDefault("IFCN_GCN_RL_PPO_EPOCHS", settings.ppoEpochs);
+    settings.minibatchSize = environmentIntOrDefault("IFCN_GCN_RL_MINIBATCH", settings.minibatchSize);
+    settings.finalExactCandidates = environmentIntOrDefault("IFCN_GCN_RL_FINAL_EXACT_CANDIDATES", settings.finalExactCandidates);
+    settings.exactTimeoutSeconds = environmentIntOrDefault("IFCN_GCN_RL_EXACT_TIMEOUT", settings.exactTimeoutSeconds);
+    settings.legalRepairCandidates = environmentIntOrDefault("IFCN_GCN_RL_LEGAL_REPAIR_CANDIDATES", settings.legalRepairCandidates);
+    settings.legalRepairMaxPadding = environmentIntOrDefault("IFCN_GCN_RL_LEGAL_REPAIR_MAX_PADDING", settings.legalRepairMaxPadding);
+    settings.localRefineRounds = environmentIntOrDefault("IFCN_GCN_RL_LOCAL_REFINE_ROUNDS", settings.localRefineRounds);
+    settings.localMaxEvaluations = environmentIntOrDefault("IFCN_GCN_RL_LOCAL_MAX_EVALUATIONS", settings.localMaxEvaluations);
+    settings.postPrimaryPackRounds = environmentIntOrDefault("IFCN_GCN_RL_POST_PRIMARY_PACK_ROUNDS", settings.postPrimaryPackRounds);
+    settings.postAreaPackRounds = environmentIntOrDefault("IFCN_GCN_RL_POST_AREA_PACK_ROUNDS", settings.postAreaPackRounds);
+    settings.postPackMaxEvaluations = environmentIntOrDefault("IFCN_GCN_RL_POST_PACK_MAX_EVALUATIONS", settings.postPackMaxEvaluations);
+    settings.postPhaseStripPackRounds = environmentIntOrDefault("IFCN_GCN_RL_POST_PHASE_STRIP_PACK_ROUNDS", settings.postPhaseStripPackRounds);
+    settings.postPhaseStripPackMaxEvaluations = environmentIntOrDefault("IFCN_GCN_RL_POST_PHASE_STRIP_PACK_MAX_EVALUATIONS", settings.postPhaseStripPackMaxEvaluations);
+    settings.areaRewardWeight = environmentDoubleOrDefault("IFCN_GCN_RL_AREA_REWARD_WEIGHT", settings.areaRewardWeight);
+    settings.areaRegressionWeight = environmentDoubleOrDefault("IFCN_GCN_RL_AREA_REGRESSION_WEIGHT", settings.areaRegressionWeight);
+    settings.maxSpanWeight = environmentDoubleOrDefault("IFCN_GCN_RL_MAX_SPAN_WEIGHT", settings.maxSpanWeight);
+    settings.legalRepairTimeoutMultiplier = environmentDoubleOrDefault("IFCN_GCN_RL_LEGAL_REPAIR_TIMEOUT_MULTIPLIER", settings.legalRepairTimeoutMultiplier);
+    settings.useLayoutMemory = environmentBoolOrDefault("IFCN_GCN_RL_USE_LAYOUT_MEMORY", settings.useLayoutMemory);
+    settings.useActionMemory = environmentBoolOrDefault("IFCN_GCN_RL_USE_ACTION_MEMORY", settings.useActionMemory);
+    settings.finalExactValidation = environmentBoolOrDefault("IFCN_GCN_RL_FINAL_EXACT_VALIDATION", settings.finalExactValidation);
+    settings.strictMemoryUpdates = environmentBoolOrDefault("IFCN_GCN_RL_STRICT_MEMORY_UPDATES", settings.strictMemoryUpdates);
+    settings.writeTrainingPlots = environmentBoolOrDefault("IFCN_GCN_RL_TRAINING_PLOTS", settings.writeTrainingPlots);
+    settings.memoryOnlyInference = environmentBoolOrDefault("IFCN_GCN_RL_MEMORY_ONLY", settings.memoryOnlyInference);
+
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QObject::tr("GCN+RL P&R Options"));
+
+    auto *deviceCombo = new QComboBox(&dialog);
+    deviceCombo->addItem(QObject::tr("Auto (CUDA first)"), "auto");
+    deviceCombo->addItem(QObject::tr("CUDA / GPU"), "cuda");
+    deviceCombo->addItem(QObject::tr("CPU"), "cpu");
+    setComboByData(deviceCombo, settings.device);
+
+    auto *phaseCombo = new QComboBox(&dialog);
+    phaseCombo->addItem(QObject::tr("4-phase"), 4);
+    phaseCombo->addItem(QObject::tr("3-phase"), 3);
+    const int phaseIndex = phaseCombo->findData(settings.phaseCycle);
+    if (phaseIndex >= 0) {
+        phaseCombo->setCurrentIndex(phaseIndex);
+    }
+
+    auto *strategyCombo = new QComboBox(&dialog);
+    strategyCombo->addItem(QObject::tr("GCN"), "gcn");
+    strategyCombo->addItem(QObject::tr("Auto"), "auto");
+    strategyCombo->addItem(QObject::tr("Adaptive"), "adaptive");
+    strategyCombo->addItem(QObject::tr("Fixed"), "fixed");
+    strategyCombo->addItem(QObject::tr("Shifted"), "shifted");
+    setComboByData(strategyCombo, settings.startStrategy);
+
+    auto *orientationCombo = new QComboBox(&dialog);
+    orientationCombo->addItem(QObject::tr("Auto"), "auto");
+    orientationCombo->addItem(QObject::tr("Left to right"), "left-right");
+    orientationCombo->addItem(QObject::tr("Top down"), "top-down");
+    setComboByData(orientationCombo, settings.startOrientation);
+
+    auto *evalCombo = new QComboBox(&dialog);
+    evalCombo->addItem(QObject::tr("Auto"), "auto");
+    evalCombo->addItem(QObject::tr("Placement fast eval"), "placement");
+    evalCombo->addItem(QObject::tr("Exact routing eval"), "exact");
+    setComboByData(evalCombo, settings.trainEvalMode);
+
+    auto *parseModeCombo = new QComboBox(&dialog);
+    parseModeCombo->addItem(QObject::tr("Auto (dynamic compact/layered)"), "auto");
+    parseModeCombo->addItem(QObject::tr("Layered, no cross-layer routes"), "layered");
+    parseModeCombo->addItem(QObject::tr("Compact, fewer nodes"), "compact");
+    setComboByData(parseModeCombo, settings.parseMode);
+
+    auto createSpin = [&dialog](int minValue, int maxValue, int value, int step = 1) {
+        auto *spin = new QSpinBox(&dialog);
+        spin->setRange(minValue, maxValue);
+        spin->setValue(qBound(minValue, value, maxValue));
+        spin->setSingleStep(step);
+        return spin;
+    };
+    auto createDoubleSpin = [&dialog](double minValue, double maxValue, double value, double step = 0.25) {
+        auto *spin = new QDoubleSpinBox(&dialog);
+        spin->setRange(minValue, maxValue);
+        spin->setDecimals(2);
+        spin->setValue(qBound(minValue, value, maxValue));
+        spin->setSingleStep(step);
+        return spin;
+    };
+
+    auto *runsSpin = createSpin(1, 16, settings.runs);
+    auto *workersSpin = createSpin(1, 16, settings.workers);
+    auto *seedSpin = createSpin(0, 1000000, settings.baseSeed);
+    auto *xSpacingSpin = createSpin(1, 32, settings.xSpacing);
+    auto *ySpacingSpin = createSpin(1, 32, settings.ySpacing);
+    auto *paddingSpin = createSpin(0, 16, settings.routingPadding);
+    auto *maxSamePhaseSpin = createSpin(0, 32, settings.maxSamePhase);
+    auto *gcnEpochSpin = createSpin(1, 1000, settings.gcnEpochs, 10);
+    auto *episodesSpin = createSpin(1, 10000, settings.episodes);
+    auto *stepsSpin = createSpin(1, 1000, settings.stepsPerEpisode);
+    auto *ppoEpochsSpin = createSpin(1, 1000, settings.ppoEpochs);
+    auto *minibatchSpin = createSpin(1, 4096, settings.minibatchSize);
+    auto *exactCandidateSpin = createSpin(0, 64, settings.finalExactCandidates);
+    auto *exactTimeoutSpin = createSpin(1, 3600, settings.exactTimeoutSeconds);
+    auto *legalRepairCandidateSpin = createSpin(0, 128, settings.legalRepairCandidates);
+    auto *legalRepairPaddingSpin = createSpin(0, 64, settings.legalRepairMaxPadding);
+    auto *localRefineSpin = createSpin(0, 1000, settings.localRefineRounds);
+    auto *localEvalSpin = createSpin(0, 100000, settings.localMaxEvaluations);
+    auto *postPrimaryPackSpin = createSpin(0, 1000, settings.postPrimaryPackRounds);
+    auto *postPackSpin = createSpin(0, 1000, settings.postAreaPackRounds);
+    auto *postEvalSpin = createSpin(0, 100000, settings.postPackMaxEvaluations);
+    auto *postStripPackSpin = createSpin(0, 1000, settings.postPhaseStripPackRounds);
+    auto *postStripEvalSpin = createSpin(0, 100000, settings.postPhaseStripPackMaxEvaluations);
+    auto *areaRewardSpin = createDoubleSpin(0.0, 20.0, settings.areaRewardWeight);
+    auto *areaRegressionSpin = createDoubleSpin(0.0, 5000.0, settings.areaRegressionWeight, 25.0);
+    auto *maxSpanSpin = createDoubleSpin(0.0, 100.0, settings.maxSpanWeight, 1.0);
+    auto *legalRepairTimeoutSpin = createDoubleSpin(1.0, 20.0, settings.legalRepairTimeoutMultiplier, 0.5);
+
+    auto *layoutMemoryCheck = new QCheckBox(QObject::tr("Use layout memory"), &dialog);
+    layoutMemoryCheck->setChecked(settings.useLayoutMemory);
+    auto *actionMemoryCheck = new QCheckBox(QObject::tr("Use shared RL action memory"), &dialog);
+    actionMemoryCheck->setChecked(settings.useActionMemory);
+    auto *finalExactCheck = new QCheckBox(QObject::tr("Run final exact validation (required for legal export)"), &dialog);
+    finalExactCheck->setChecked(settings.finalExactValidation);
+    auto *strictMemoryCheck = new QCheckBox(QObject::tr("Only update action memory on strict improvement"), &dialog);
+    strictMemoryCheck->setChecked(settings.strictMemoryUpdates);
+    auto *trainingPlotsCheck = new QCheckBox(QObject::tr("Write reward curve SVG"), &dialog);
+    trainingPlotsCheck->setChecked(settings.writeTrainingPlots);
+    auto *memoryOnlyCheck = new QCheckBox(QObject::tr("Memory only (no training)"), &dialog);
+    memoryOnlyCheck->setChecked(settings.memoryOnlyInference);
+
+    auto *form = new QFormLayout(&dialog);
+    form->addRow(QObject::tr("Device:"), deviceCombo);
+    form->addRow(QObject::tr("Phase cycle:"), phaseCombo);
+    form->addRow(QObject::tr("Parallel runs:"), runsSpin);
+    form->addRow(QObject::tr("Workers:"), workersSpin);
+    form->addRow(QObject::tr("Base seed:"), seedSpin);
+    form->addRow(QObject::tr("Initial X spacing:"), xSpacingSpin);
+    form->addRow(QObject::tr("Initial Y spacing:"), ySpacingSpin);
+    form->addRow(QObject::tr("Routing padding:"), paddingSpin);
+    form->addRow(QObject::tr("Max same phase:"), maxSamePhaseSpin);
+    form->addRow(QObject::tr("GCN epochs:"), gcnEpochSpin);
+    form->addRow(QObject::tr("Start strategy:"), strategyCombo);
+    form->addRow(QObject::tr("Orientation:"), orientationCombo);
+    form->addRow(QObject::tr("Train eval:"), evalCombo);
+    form->addRow(QObject::tr("Parse mode:"), parseModeCombo);
+    form->addRow(QObject::tr("RL episodes:"), episodesSpin);
+    form->addRow(QObject::tr("Steps / episode:"), stepsSpin);
+    form->addRow(QObject::tr("PPO epochs:"), ppoEpochsSpin);
+    form->addRow(QObject::tr("Minibatch:"), minibatchSpin);
+    form->addRow(QObject::tr("Final exact candidates:"), exactCandidateSpin);
+    form->addRow(QObject::tr("Exact timeout (s):"), exactTimeoutSpin);
+    form->addRow(QObject::tr("Legal repair candidates:"), legalRepairCandidateSpin);
+    form->addRow(QObject::tr("Legal repair max padding:"), legalRepairPaddingSpin);
+    form->addRow(QObject::tr("Legal repair timeout x:"), legalRepairTimeoutSpin);
+    form->addRow(QObject::tr("Local refine rounds:"), localRefineSpin);
+    form->addRow(QObject::tr("Local eval budget:"), localEvalSpin);
+    form->addRow(QObject::tr("Primary-pack rounds:"), postPrimaryPackSpin);
+    form->addRow(QObject::tr("Post-pack rounds:"), postPackSpin);
+    form->addRow(QObject::tr("Post-pack eval budget:"), postEvalSpin);
+    form->addRow(QObject::tr("Phase-strip pack rounds:"), postStripPackSpin);
+    form->addRow(QObject::tr("Phase-strip eval budget:"), postStripEvalSpin);
+    form->addRow(QObject::tr("Area reward weight:"), areaRewardSpin);
+    form->addRow(QObject::tr("Area regression penalty:"), areaRegressionSpin);
+    form->addRow(QObject::tr("Max span penalty:"), maxSpanSpin);
+    form->addRow(layoutMemoryCheck);
+    form->addRow(actionMemoryCheck);
+    form->addRow(finalExactCheck);
+    form->addRow(strictMemoryCheck);
+    form->addRow(trainingPlotsCheck);
+    form->addRow(memoryOnlyCheck);
+
+    QObject::connect(runsSpin, QOverload<int>::of(&QSpinBox::valueChanged), workersSpin, [workersSpin](int runs) {
+        if (workersSpin->value() > runs) {
+            workersSpin->setValue(runs);
+        }
+        workersSpin->setMaximum(std::max(1, runs));
+    });
+    workersSpin->setMaximum(std::max(1, runsSpin->value()));
+    const auto applyMemoryOnlyState = [=](bool checked) {
+        runsSpin->setEnabled(!checked);
+        workersSpin->setEnabled(!checked);
+        gcnEpochSpin->setEnabled(!checked);
+        episodesSpin->setEnabled(!checked);
+        stepsSpin->setEnabled(!checked);
+        ppoEpochsSpin->setEnabled(!checked);
+        minibatchSpin->setEnabled(!checked);
+        actionMemoryCheck->setEnabled(!checked);
+        trainingPlotsCheck->setEnabled(!checked);
+        if (checked) {
+            layoutMemoryCheck->setChecked(true);
+        }
+        layoutMemoryCheck->setEnabled(!checked);
+    };
+    QObject::connect(memoryOnlyCheck, &QCheckBox::toggled, &dialog, applyMemoryOnlyState);
+    applyMemoryOnlyState(memoryOnlyCheck->isChecked());
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    form->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    settings.device = deviceCombo->currentData().toString();
+    settings.phaseCycle = phaseCombo->currentData().toInt();
+    settings.startStrategy = strategyCombo->currentData().toString();
+    settings.startOrientation = orientationCombo->currentData().toString();
+    settings.trainEvalMode = evalCombo->currentData().toString();
+    settings.parseMode = parseModeCombo->currentData().toString();
+    settings.runs = runsSpin->value();
+    settings.workers = workersSpin->value();
+    settings.baseSeed = seedSpin->value();
+    settings.xSpacing = xSpacingSpin->value();
+    settings.ySpacing = ySpacingSpin->value();
+    settings.routingPadding = paddingSpin->value();
+    settings.maxSamePhase = maxSamePhaseSpin->value();
+    settings.gcnEpochs = gcnEpochSpin->value();
+    settings.episodes = episodesSpin->value();
+    settings.stepsPerEpisode = stepsSpin->value();
+    settings.ppoEpochs = ppoEpochsSpin->value();
+    settings.minibatchSize = minibatchSpin->value();
+    settings.finalExactCandidates = exactCandidateSpin->value();
+    settings.exactTimeoutSeconds = exactTimeoutSpin->value();
+    settings.legalRepairCandidates = legalRepairCandidateSpin->value();
+    settings.legalRepairMaxPadding = legalRepairPaddingSpin->value();
+    settings.legalRepairTimeoutMultiplier = legalRepairTimeoutSpin->value();
+    settings.localRefineRounds = localRefineSpin->value();
+    settings.localMaxEvaluations = localEvalSpin->value();
+    settings.postPrimaryPackRounds = postPrimaryPackSpin->value();
+    settings.postAreaPackRounds = postPackSpin->value();
+    settings.postPackMaxEvaluations = postEvalSpin->value();
+    settings.postPhaseStripPackRounds = postStripPackSpin->value();
+    settings.postPhaseStripPackMaxEvaluations = postStripEvalSpin->value();
+    settings.areaRewardWeight = areaRewardSpin->value();
+    settings.areaRegressionWeight = areaRegressionSpin->value();
+    settings.maxSpanWeight = maxSpanSpin->value();
+    settings.useLayoutMemory = layoutMemoryCheck->isChecked();
+    settings.useActionMemory = actionMemoryCheck->isChecked();
+    settings.finalExactValidation = finalExactCheck->isChecked();
+    settings.strictMemoryUpdates = strictMemoryCheck->isChecked();
+    settings.writeTrainingPlots = trainingPlotsCheck->isChecked();
+    settings.memoryOnlyInference = memoryOnlyCheck->isChecked();
+    if (settings.memoryOnlyInference) {
+        settings.useLayoutMemory = true;
+        settings.useActionMemory = false;
+    }
     return true;
 }
 
@@ -283,6 +638,286 @@ bool sceneCoordinates(const fcngraph::position &cellPos, int &xCoord, int &yCoor
     yCoord = static_cast<int>(cellPos.second * kPitch + kOrigin);
     return true;
 }
+
+QString projectSourceDir()
+{
+#ifdef IFCN_PROJECT_SOURCE_DIR
+    return QString::fromUtf8(IFCN_PROJECT_SOURCE_DIR);
+#else
+    return QString();
+#endif
+}
+
+bool hasGcnRlScript(const QString &rootPath)
+{
+    if (rootPath.isEmpty()) {
+        return false;
+    }
+    return QFileInfo(QDir(rootPath).filePath("src/algorithm/main/train_layout_ppo.py")).isFile();
+}
+
+bool hasGcnRlModule(const QString &rootPath)
+{
+    if (rootPath.isEmpty()) {
+        return false;
+    }
+
+    QDir libDir(QDir(rootPath).filePath("src/algorithm/lib"));
+    if (!libDir.exists()) {
+        return false;
+    }
+
+    return !libDir.entryList(QStringList() << "iFCN_Lab*.so" << "iFCN_Lab*.pyd" << "iFCN_Lab*.dll",
+                             QDir::Files).isEmpty();
+}
+
+QString legacyGcnRlRoot()
+{
+    return QStringLiteral("/home/lys/projects/github/no_phase_layout_project");
+}
+
+QString bundledGcnRlRoot()
+{
+    const QString sourceDir = projectSourceDir();
+    if (sourceDir.isEmpty()) {
+        return QString();
+    }
+    return QDir(sourceDir).filePath("include/gcn_rl_layout");
+}
+
+QString findGcnRlRoot()
+{
+    const QString envRoot = QString::fromLocal8Bit(qgetenv("IFCN_GCN_RL_ROOT"));
+    if (hasGcnRlScript(envRoot)) {
+        return QDir(envRoot).absolutePath();
+    }
+
+    const QStringList candidates = {
+        bundledGcnRlRoot(),
+        legacyGcnRlRoot()
+    };
+
+    for (const QString &candidate : candidates) {
+        if (hasGcnRlScript(candidate) && hasGcnRlModule(candidate)) {
+            return QDir(candidate).absolutePath();
+        }
+    }
+    for (const QString &candidate : candidates) {
+        if (hasGcnRlScript(candidate)) {
+            return QDir(candidate).absolutePath();
+        }
+    }
+    return QString();
+}
+
+QString findGcnRlPython(const QString &rootPath)
+{
+    const QString envPython = QString::fromLocal8Bit(qgetenv("IFCN_GCN_RL_PYTHON"));
+    if (!envPython.isEmpty()) {
+        return envPython;
+    }
+
+    const QStringList candidates = {
+        QDir(rootPath).filePath("myenv/bin/python"),
+        QDir(legacyGcnRlRoot()).filePath("myenv/bin/python"),
+        QStandardPaths::findExecutable("python3"),
+        QStandardPaths::findExecutable("python")
+    };
+
+    for (const QString &candidate : candidates) {
+        if (!candidate.isEmpty() && QFileInfo(candidate).isExecutable()) {
+            return candidate;
+        }
+    }
+    return QStringLiteral("python3");
+}
+
+QString pythonPathSeparator()
+{
+#ifdef Q_OS_WIN
+    return QStringLiteral(";");
+#else
+    return QStringLiteral(":");
+#endif
+}
+
+void prependPythonPath(QProcessEnvironment &environment, const QString &path)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+
+    const QString existing = environment.value(QStringLiteral("PYTHONPATH"));
+    environment.insert(QStringLiteral("PYTHONPATH"),
+                       existing.isEmpty() ? path : path + pythonPathSeparator() + existing);
+}
+
+QString processTail(const QString &text, int maxChars = 6000)
+{
+    if (text.size() <= maxChars) {
+        return text.trimmed();
+    }
+    return text.right(maxChars).trimmed();
+}
+
+QString lastOutputLine(const QString &chunk)
+{
+    const QStringList lines = chunk.split(QRegularExpression(QStringLiteral("[\r\n]+")),
+                                          Qt::SkipEmptyParts);
+    if (lines.isEmpty()) {
+        return QString();
+    }
+    return lines.last().trimmed();
+}
+
+QString locateGcnRlIfcn(const QString &outputDirPath, const QString &sourceBaseName)
+{
+    const QDir outputDir(outputDirPath);
+    const QString rlExpected = outputDir.filePath(sourceBaseName + QStringLiteral("_rl_layout.ifcn"));
+    if (QFileInfo(rlExpected).isFile()) {
+        return rlExpected;
+    }
+
+    const QString expected = outputDir.filePath(sourceBaseName + QStringLiteral("_phase_layout.ifcn"));
+    if (QFileInfo(expected).isFile()) {
+        return expected;
+    }
+
+    const QStringList candidates = outputDir.entryList(QStringList() << "*_rl_layout.ifcn" << "*_phase_layout.ifcn",
+                                                       QDir::Files,
+                                                       QDir::Time);
+    if (!candidates.isEmpty()) {
+        return outputDir.filePath(candidates.first());
+    }
+    return QString();
+}
+
+QString findIfcnMetricsExecutable()
+{
+    const QString envPath = QString::fromLocal8Bit(qgetenv("IFCN_MAPPING_METRICS_EXE"));
+    if (!envPath.isEmpty() && QFileInfo(envPath).isExecutable()) {
+        return envPath;
+    }
+
+    const QString sourceDir = projectSourceDir();
+    if (sourceDir.isEmpty()) {
+        return QString();
+    }
+
+    const QStringList candidates = {
+        QDir(sourceDir).filePath("build/ifcn_mapping_metrics"),
+        QDir(sourceDir).filePath("build/src/ifcn_mapping_metrics")
+    };
+    for (const QString &candidate : candidates) {
+        if (QFileInfo(candidate).isExecutable()) {
+            return candidate;
+        }
+    }
+    return QString();
+}
+
+bool writeMappingMetricsToIfcn(const QString &ifcnPath)
+{
+    if (!QFileInfo(ifcnPath).isFile()) {
+        return false;
+    }
+
+    const QString executable = findIfcnMetricsExecutable();
+    if (executable.isEmpty()) {
+        qWarning() << "[GCN+RL] ifcn_mapping_metrics executable was not found.";
+        return false;
+    }
+
+    QProcess process;
+    process.setProgram(executable);
+    process.setArguments(QStringList() << ifcnPath);
+    process.start();
+    if (!process.waitForStarted(3000) || !process.waitForFinished(120000)) {
+        qWarning() << "[GCN+RL] ifcn_mapping_metrics timed out for" << ifcnPath;
+        process.kill();
+        return false;
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        qWarning() << "[GCN+RL] ifcn_mapping_metrics failed for" << ifcnPath
+                   << QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+        return false;
+    }
+
+    const QString output = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+    const QStringList parts = output.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    if (parts.size() < 2) {
+        qWarning() << "[GCN+RL] ifcn_mapping_metrics returned invalid output:" << output;
+        return false;
+    }
+
+    bool okCell = false;
+    bool okCross = false;
+    const qulonglong cellCount = parts[0].toULongLong(&okCell);
+    const qulonglong crossCount = parts[1].toULongLong(&okCross);
+    if (!okCell || !okCross) {
+        qWarning() << "[GCN+RL] ifcn_mapping_metrics returned non-numeric output:" << output;
+        return false;
+    }
+
+    QFile file(ifcnPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+
+    QStringList lines;
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        const QString line = in.readLine();
+        const QString trimmed = line.trimmed().toLower();
+        if (trimmed.startsWith(QStringLiteral("#cell count:")) ||
+            trimmed.startsWith(QStringLiteral("#cross count:")) ||
+            trimmed.startsWith(QStringLiteral("#phase cycle:"))) {
+            continue;
+        }
+        lines.push_back(line);
+    }
+    file.close();
+
+    int insertAfter = -1;
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString trimmed = lines[i].trimmed().toLower();
+        if (trimmed.startsWith(QStringLiteral("#layout area:"))) {
+            insertAfter = i;
+            break;
+        }
+        if (insertAfter < 0 &&
+            (trimmed.startsWith(QStringLiteral("#total layers:")) ||
+             trimmed.startsWith(QStringLiteral("#edges number:")))) {
+            insertAfter = i;
+        }
+    }
+    if (insertAfter < 0) {
+        insertAfter = 0;
+    }
+
+    lines.insert(insertAfter + 1, QStringLiteral("#cross count: %1").arg(crossCount));
+    lines.insert(insertAfter + 1, QStringLiteral("#cell count: %1").arg(cellCount));
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return false;
+    }
+    QTextStream out(&file);
+    for (const QString &line : lines) {
+        out << line << '\n';
+    }
+    return true;
+}
+
+void writeMappingMetricsToGcnRlArtifacts(const QString &ifcnPath)
+{
+    writeMappingMetricsToIfcn(ifcnPath);
+
+    const QFileInfo info(ifcnPath);
+    const QString encodedPath = info.absoluteDir().filePath(info.completeBaseName() + QStringLiteral("_encoded.ifcn"));
+    if (QFileInfo(encodedPath).isFile()) {
+        writeMappingMetricsToIfcn(encodedPath);
+    }
+}
 }
 
 
@@ -291,6 +926,226 @@ VerilogHandler::VerilogHandler(MainWindow *parent)
     : QObject(parent), mainWindow(parent)
 {
 
+}
+
+void VerilogHandler::handleGcnRlLayout()
+{
+    const QString filePath = QFileDialog::getOpenFileName(
+        mainWindow,
+        tr("Open Verilog File"),
+        projectSourceDir().isEmpty() ? QDir::currentPath() : projectSourceDir(),
+        tr("Verilog files (*.v);;All file (*)"));
+
+    if (filePath.isEmpty()) {
+        mainWindow->printToStatusBar(tr("GCN+RL placement and routing cancelled."));
+        return;
+    }
+
+    const QString rootPath = findGcnRlRoot();
+    if (rootPath.isEmpty()) {
+        emit operationFailed(tr("GCN+RL backend not found. Expected include/gcn_rl_layout or set IFCN_GCN_RL_ROOT."));
+        return;
+    }
+
+    const QString python = findGcnRlPython(rootPath);
+    if (python.isEmpty()) {
+        emit operationFailed(tr("Python interpreter for GCN+RL backend was not found."));
+        return;
+    }
+
+    if (!hasGcnRlModule(rootPath)) {
+        emit operationProgress(
+            tr("GCN+RL Python module was not found under %1; Python will report details if import fails.")
+                .arg(QDir::toNativeSeparators(rootPath)),
+            0,
+            0);
+    }
+
+    GcnRlSettings settings;
+    if (!readGcnRlSettings(mainWindow, settings)) {
+        mainWindow->printToStatusBar(tr("GCN+RL placement and routing cancelled."));
+        return;
+    }
+
+    const QFileInfo sourceInfo(filePath);
+    QDir sourceDir = sourceInfo.absoluteDir();
+    const QString outputDirPath = sourceDir.filePath(sourceInfo.completeBaseName() + QStringLiteral("_gcn_rl_layout"));
+    if (!QDir().mkpath(outputDirPath)) {
+        emit operationFailed(tr("Cannot create GCN+RL output directory: %1")
+                                 .arg(QDir::toNativeSeparators(outputDirPath)));
+        return;
+    }
+
+    const QString experiencePath = QDir(rootPath).filePath("results/layout_memory/rl_action_experience.json");
+    QStringList trainArguments;
+    trainArguments << QStringLiteral("--device") << settings.device
+                   << QStringLiteral("--phase-cycle") << QString::number(settings.phaseCycle)
+                   << QStringLiteral("--x-spacing") << QString::number(settings.xSpacing)
+                   << QStringLiteral("--y-spacing") << QString::number(settings.ySpacing)
+                   << QStringLiteral("--padding") << QString::number(settings.routingPadding)
+                   << QStringLiteral("--max-same-phase") << QString::number(settings.maxSamePhase)
+                   << QStringLiteral("--start-layout-strategy") << settings.startStrategy
+                   << QStringLiteral("--start-layout-orientation") << settings.startOrientation
+                   << QStringLiteral("--parse-mode") << settings.parseMode
+                   << QStringLiteral("--episodes") << QString::number(settings.episodes)
+                   << QStringLiteral("--steps-per-episode") << QString::number(settings.stepsPerEpisode)
+                   << QStringLiteral("--ppo-epochs") << QString::number(settings.ppoEpochs)
+                   << QStringLiteral("--minibatch-size") << QString::number(settings.minibatchSize)
+	                   << QStringLiteral("--train-eval-mode") << settings.trainEvalMode
+	                   << QStringLiteral("--final-exact-validation-candidates") << QString::number(settings.finalExactCandidates)
+	                   << QStringLiteral("--exact-eval-timeout-sec") << QString::number(settings.exactTimeoutSeconds)
+	                   << QStringLiteral("--require-legal-final")
+	                   << QStringLiteral("--legal-repair-candidates") << QString::number(settings.legalRepairCandidates)
+	                   << QStringLiteral("--legal-repair-max-padding") << QString::number(settings.legalRepairMaxPadding)
+	                   << QStringLiteral("--legal-repair-timeout-multiplier") << QString::number(settings.legalRepairTimeoutMultiplier, 'f', 2)
+	                   << QStringLiteral("--local-refine-rounds") << QString::number(settings.localRefineRounds)
+                   << QStringLiteral("--local-max-evaluations") << QString::number(settings.localMaxEvaluations)
+                   << QStringLiteral("--post-primary-pack-rounds") << QString::number(settings.postPrimaryPackRounds)
+                   << QStringLiteral("--post-area-pack-rounds") << QString::number(settings.postAreaPackRounds)
+                   << QStringLiteral("--post-pack-max-evaluations") << QString::number(settings.postPackMaxEvaluations)
+                   << QStringLiteral("--post-phase-strip-pack-rounds") << QString::number(settings.postPhaseStripPackRounds)
+                   << QStringLiteral("--post-phase-strip-pack-max-evaluations") << QString::number(settings.postPhaseStripPackMaxEvaluations)
+                   << QStringLiteral("--best-selection-mode") << QStringLiteral("legal-area")
+                   << QStringLiteral("--area-reward-weight") << QString::number(settings.areaRewardWeight, 'f', 2)
+                   << QStringLiteral("--area-regression-weight") << QString::number(settings.areaRegressionWeight, 'f', 2)
+                   << QStringLiteral("--max-span-weight") << QString::number(settings.maxSpanWeight, 'f', 2)
+                   << QStringLiteral("--log-interval") << QStringLiteral("2")
+                   << QStringLiteral("--disable-step-log");
+
+    if (!settings.writeTrainingPlots) {
+        trainArguments << QStringLiteral("--disable-training-plots");
+    }
+    if (settings.memoryOnlyInference) {
+        trainArguments << QStringLiteral("--memory-only-inference");
+    }
+
+    if (!settings.useLayoutMemory) {
+        trainArguments << QStringLiteral("--disable-layout-memory");
+    }
+    if (!settings.useActionMemory) {
+        trainArguments << QStringLiteral("--disable-rl-experience");
+    }
+    trainArguments << (settings.finalExactValidation
+        ? QStringLiteral("--final-exact-validation")
+        : QStringLiteral("--no-final-exact-validation"));
+    trainArguments << (settings.strictMemoryUpdates
+        ? QStringLiteral("--strict-memory-updates")
+        : QStringLiteral("--no-strict-memory-updates"));
+
+    const QString runnerPath = QDir(rootPath).filePath("scripts/gui_gcn_rl_runner.py");
+    const bool useRunner = QFileInfo(runnerPath).isFile() && !settings.memoryOnlyInference;
+    const QString scriptPath = useRunner
+        ? runnerPath
+        : QDir(rootPath).filePath("src/algorithm/main/train_layout_ppo.py");
+    QStringList arguments;
+    if (useRunner) {
+        const QString runCount = QString::number(settings.runs);
+        arguments << scriptPath
+                  << QStringLiteral("--benchmark") << filePath
+                  << QStringLiteral("--output-dir") << outputDirPath
+                  << QStringLiteral("--runs") << runCount
+                  << QStringLiteral("--max-workers") << QString::number(settings.workers)
+                  << QStringLiteral("--base-seed") << QString::number(settings.baseSeed)
+                  << QStringLiteral("--rl-experience-path") << experiencePath
+                  << QStringLiteral("--");
+        arguments << trainArguments;
+    } else {
+        arguments << scriptPath
+                  << QStringLiteral("--benchmark") << filePath
+                  << QStringLiteral("--output-dir") << outputDirPath
+                  << QStringLiteral("--seed") << QString::number(settings.baseSeed)
+                  << QStringLiteral("--rl-experience-path") << experiencePath;
+        arguments << trainArguments;
+    }
+
+    emit operationStarted(tr("GCN+RL placement and routing"),
+                          settings.memoryOnlyInference
+                              ? tr("Loading stored layout memory for %1").arg(QDir::toNativeSeparators(filePath))
+                              : tr("Running PPO-refined layout for %1").arg(QDir::toNativeSeparators(filePath)));
+    emit operationProgress(tr("Backend: %1").arg(QDir::toNativeSeparators(rootPath)), 0, 0);
+    QCoreApplication::processEvents();
+
+    QProcess process;
+    process.setProgram(python);
+    process.setArguments(arguments);
+    process.setWorkingDirectory(rootPath);
+
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    prependPythonPath(environment, QDir(rootPath).filePath("src/algorithm"));
+    environment.insert(QStringLiteral("IFCN_GCN_EPOCHS"), QString::number(settings.gcnEpochs));
+    environment.insert(QStringLiteral("MPLBACKEND"), QStringLiteral("Agg"));
+    process.setProcessEnvironment(environment);
+
+    QString combinedOutput;
+    auto drainOutput = [&]() {
+        const QString stdOut = QString::fromLocal8Bit(process.readAllStandardOutput());
+        const QString stdErr = QString::fromLocal8Bit(process.readAllStandardError());
+        if (!stdOut.isEmpty()) {
+            combinedOutput += stdOut;
+            const QString progress = lastOutputLine(stdOut);
+            if (!progress.isEmpty()) {
+                emit operationProgress(progress, 0, 0);
+            }
+        }
+        if (!stdErr.isEmpty()) {
+            combinedOutput += stdErr;
+            const QString progress = lastOutputLine(stdErr);
+            if (!progress.isEmpty()) {
+                emit operationProgress(progress, 0, 0);
+            }
+        }
+        if (combinedOutput.size() > 20000) {
+            combinedOutput = combinedOutput.right(12000);
+        }
+        QCoreApplication::processEvents();
+    };
+
+    process.start();
+    if (!process.waitForStarted(5000)) {
+        emit operationFailed(tr("Failed to start GCN+RL backend with Python: %1")
+                                 .arg(QDir::toNativeSeparators(python)));
+        return;
+    }
+
+    while (process.state() != QProcess::NotRunning) {
+        process.waitForReadyRead(250);
+        drainOutput();
+    }
+    drainOutput();
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        const QString detail = processTail(combinedOutput);
+        emit operationFailed(tr("GCN+RL placement and routing failed with exit code %1.%2%3")
+                                 .arg(process.exitCode())
+                                 .arg(detail.isEmpty() ? QString() : QStringLiteral("\n"))
+                                 .arg(detail));
+        return;
+    }
+
+    const QString ifcnPath = locateGcnRlIfcn(outputDirPath, sourceInfo.completeBaseName());
+    if (ifcnPath.isEmpty()) {
+        emit operationFailed(tr("GCN+RL completed, but no generated layout .ifcn was found in %1.")
+                                 .arg(QDir::toNativeSeparators(outputDirPath)));
+        return;
+    }
+
+    writeMappingMetricsToGcnRlArtifacts(ifcnPath);
+    mainWindow->mapIfcnFile(ifcnPath);
+
+    const QDir outputDir(outputDirPath);
+    QString svgPath = outputDir.filePath(sourceInfo.completeBaseName() + QStringLiteral("_rl_layout.svg"));
+    if (!QFileInfo(svgPath).isFile()) {
+        svgPath = outputDir.filePath(sourceInfo.completeBaseName() + QStringLiteral("_phase_layout.svg"));
+    }
+    QString message = tr("GCN+RL layout loaded: %1").arg(QDir::toNativeSeparators(ifcnPath));
+    if (QFileInfo(svgPath).isFile()) {
+        message += tr("; SVG: %1").arg(QDir::toNativeSeparators(svgPath));
+    }
+    const QString curvePath = outputDir.filePath(sourceInfo.completeBaseName() + QStringLiteral("_rl_training_curves.svg"));
+    if (QFileInfo(curvePath).isFile()) {
+        message += tr("; Reward curve: %1").arg(QDir::toNativeSeparators(curvePath));
+    }
+    emit operationFinished(message);
 }
 
 void VerilogHandler::handleParseVerilogFile()

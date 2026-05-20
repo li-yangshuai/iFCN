@@ -41,6 +41,7 @@ public:
     QString circuitName;                              // 电路名
     QMap<int, NodeInfo> nodes;                        // 节点信息
     QMap<QPair<int,int>, QVector<QPoint>> routes;     // 节点对 → 路径
+    QMap<QPair<int,int>, QVector<QPoint>> mappedRouteCells; // 节点对 → 映射后的线路元胞坐标
     QHash<QPoint, int> coordPhaseMap;                 // 坐标 → 相位
     QMap<QString, QString> metadata;                  // .ifcn header metadata
     QString currentMappingFilePath;                   // 当前映射文件路径

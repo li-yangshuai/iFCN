@@ -40,6 +40,11 @@ using namespace fcngraph;
 
 class TabbedMainWindow;
 class QTextStream;
+class CircuitSchematicView;
+class LayeredStructure3DView;
+class QDockWidget;
+class QDialog;
+class QPlainTextEdit;
 
 class MainWindow : public QMainWindow
 {
@@ -61,6 +66,14 @@ public:
         void pushUndoSnapshot();
         void updateLayoutInfoFromMapping(const GateLevelMapping &mapping);
         void refreshLayoutInfoPanel();
+        void updateCircuitSchematicFromMapping(const GateLevelMapping &mapping);
+        void updateCircuitSchematicFromRawData(const QString &circuitName,
+                                               QMap<int, GateLevelMapping::NodeInfo> nodes,
+                                               QMap<QPair<int,int>, QVector<QPoint>> routes,
+                                               QHash<QPoint, int> coordPhaseMap,
+                                               QMap<QPair<int,int>, QVector<QPoint>> mappedRouteCells,
+                                               QMap<QString, QString> metadata = {});
+        void updateVerilogSourceFile(const QString &fileName);
 
 public:
         void printToStatusBar(const QString &message);
@@ -74,11 +87,25 @@ private:
         void createViewAndScene();
         void createToolBox();
         QWidget* createPhaseCodecPanel();
+        QWidget* createLayoutInfoPanel();
+        void createCircuitSchematicDock();
+        void createVerilogSourceDock();
+        void createPhaseCodecDock();
+        void createLayoutInfoDock();
+        void createStructure3DDock();
+        void floatDockContent(QDockWidget *dock,
+                              QDialog **floatWindowPtr,
+                              const QString &title,
+                              const QSize &size);
+        void restoreDockContent(QDockWidget *dock, QDialog **floatWindowPtr);
+        void closeDockContent(QDockWidget *dock, QDialog **floatWindowPtr);
         QWidget* createCellWidget(const QString &text, CellType type);
         QWidget* createClockSchemeWidget(const QString &text, const QString &image);
         void setEditMode(EditMode mode);
         void setLayoutInfoRows(const QVector<QPair<QString, QString>> &rows);
         qulonglong currentSceneCellCount() const;
+        void exportCircuitSchematicSvg();
+        void exportStructure3DGraphic();
 
 protected:
         void updateLayerAndCellZValue();
@@ -92,6 +119,7 @@ public:
         QSplitter *splitter;
         QWidget* centralWidget;
         QWidget* phaseCodecPanel;
+        QWidget* layoutInfoPanel = nullptr;
         //view select mode
         QLabel *viewLabel;
         QButtonGroup *viewModeButtonGroup;
@@ -107,12 +135,27 @@ public:
 
         //gate level mapping
         QPushButton *gateLevelMappingButton;
-        QPushButton *phaseCodecEncodeButton;
-        QPushButton *phaseCodecCancelButton;
+        QToolButton *phaseCodecEncodeButton;
+        QToolButton *phaseCodecCancelButton;
+        QToolButton *phaseCodecShowAllButton;
+        QToolButton *phaseCodec3DButton;
         QComboBox *phaseCodecModeComboBox;
         QTableWidget *phaseCodecTable;
         QLabel *phaseCodecStatusLabel;
         QTableWidget *layoutInfoTable = nullptr;
+        QDockWidget *circuitSchematicDock = nullptr;
+        QDockWidget *verilogSourceDock = nullptr;
+        QDockWidget *phaseCodecDock = nullptr;
+        QDockWidget *layoutInfoDock = nullptr;
+        QDockWidget *structure3DDock = nullptr;
+        QDialog *circuitSchematicFloatWindow = nullptr;
+        QDialog *verilogSourceFloatWindow = nullptr;
+        QDialog *phaseCodecFloatWindow = nullptr;
+        QDialog *layoutInfoFloatWindow = nullptr;
+        QDialog *structure3DFloatWindow = nullptr;
+        CircuitSchematicView *circuitSchematicView = nullptr;
+        LayeredStructure3DView *structure3DView = nullptr;
+        QPlainTextEdit *verilogSourceEditor = nullptr;
 
         //view & scene
         QCADView *view;
@@ -251,6 +294,7 @@ private:
         int phaseCodecBlockSize = 4;
         bool phaseCodecPreviewActive = false;
         QVector<QGraphicsItem*> phaseCodecHighlightItems;
+        QVector<QGraphicsItem*> circuitNodeHighlightItems;
 
         QVector<ClipboardCell> selectedCellsForClipboard() const;
         DesignSnapshot captureDesignSnapshot() const;
@@ -266,9 +310,17 @@ private:
         void addCellToScene(QCADCellItem *cellItem, int layerIndex);
         int selectedPhaseCodecCount(const QVector<QCADScene::ClockRegionRecord> &regions) const;
         QPoint clockRegionGridCoord(const QCADScene::ClockRegionRecord &region) const;
+        QRectF phaseCodecTileSceneRect(const PhaseCodecTilePreview &tile) const;
         void updatePhaseCodecPreview();
+        void updateStructure3DView();
+        void showStructure3DView();
         void clearPhaseCodecHighlight();
         void highlightPhaseCodecTile(const PhaseCodecTilePreview &tile);
+        void highlightAllPhaseCodecTiles();
+        void clearCircuitNodeHighlight();
+        void highlightCircuitNode(int nodeIndex);
+        void highlightCircuitEdge(int sourceNodeIndex, int sinkNodeIndex);
+        QRectF circuitNodeSceneBlock(const GateLevelMapping::NodeInfo &node) const;
 
 protected:
         void closeEvent(QCloseEvent *event) override;   //重载关闭事件
@@ -317,6 +369,9 @@ private slots:
         void slotCancelPhaseCodecEncoding();
         void slotPhaseCodecModeChanged(int idx);
         void slotPhaseCodecTileActivated(int row, int column);
+        void slotCircuitNodeActivated(int nodeIndex);
+        void slotCircuitEdgeActivated(int sourceNodeIndex, int sinkNodeIndex);
+        void slotClearCircuitSelection();
 
         //scene add cell item
         void slotCellItemInserted(QCADCellItem *cellItem);

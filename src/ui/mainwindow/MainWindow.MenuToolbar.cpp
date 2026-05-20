@@ -1,5 +1,6 @@
 #include "ui/mainwindow/MainWindow.h"
 #include <QMenuBar>
+#include <QDockWidget>
 #include <QDir>
 #include <QKeySequence>
 #include <QSizePolicy>
@@ -258,7 +259,7 @@ void MainWindow::createActions()
 
     // cell-level layout graph generation
     generateCellLevelLayoutGraph = new QAction(QIcon(QDir::toNativeSeparators(":/cameraColor.png")), tr("Save cell-level layout"), this);
-    generateCellLevelLayoutGraph->setStatusTip(tr("Save cell-level layout"));
+    generateCellLevelLayoutGraph->setStatusTip(tr("Save cell-level layout as SVG or cropped PDF"));
     connect(generateCellLevelLayoutGraph, &QAction::triggered, verilogHandler, &VerilogHandler::generateSVG);
 
     // force oriented algorithm
@@ -304,6 +305,27 @@ void MainWindow::createMenus()
 
     /******** "工具"菜单 *********/
     toolsMenu = menuBar()->addMenu("&Tools");
+    if (verilogSourceDock != nullptr ||
+        circuitSchematicDock != nullptr ||
+        phaseCodecDock != nullptr ||
+        layoutInfoDock != nullptr ||
+        structure3DDock != nullptr) {
+        if (verilogSourceDock != nullptr) {
+            toolsMenu->addAction(verilogSourceDock->toggleViewAction());
+        }
+        if (circuitSchematicDock != nullptr) {
+            toolsMenu->addAction(circuitSchematicDock->toggleViewAction());
+        }
+        if (phaseCodecDock != nullptr) {
+            toolsMenu->addAction(phaseCodecDock->toggleViewAction());
+        }
+        if (layoutInfoDock != nullptr) {
+            toolsMenu->addAction(layoutInfoDock->toggleViewAction());
+        }
+        if (structure3DDock != nullptr) {
+            toolsMenu->addAction(structure3DDock->toggleViewAction());
+        }
+    }
 
     /******** "仿真"菜单 *********/
     simulationMenu = menuBar()->addMenu("&Simulation");

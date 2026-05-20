@@ -497,6 +497,560 @@ void stitchRouteMapping(std::vector<std::vector<position>>& routeMapping)
     }
 }
 
+using RouteMappingKey = std::pair<position, position>;
+using RouteMappingList = std::map<RouteMappingKey, std::vector<std::vector<position>>>;
+
+enum class RouteDirection {
+    None,
+    Left,
+    Right,
+    Up,
+    Down,
+};
+
+bool sameAxis(const position& left, const position& right)
+{
+    return left.first == right.first || left.second == right.second;
+}
+
+RouteDirection routeDirection(const position& from, const position& to)
+{
+    if (from.second == to.second) {
+        if (to.first < from.first) return RouteDirection::Left;
+        if (to.first > from.first) return RouteDirection::Right;
+    }
+    if (from.first == to.first) {
+        if (to.second < from.second) return RouteDirection::Up;
+        if (to.second > from.second) return RouteDirection::Down;
+    }
+    return RouteDirection::None;
+}
+
+bool horizontalDirection(RouteDirection direction)
+{
+    return direction == RouteDirection::Left || direction == RouteDirection::Right;
+}
+
+bool verticalDirection(RouteDirection direction)
+{
+    return direction == RouteDirection::Up || direction == RouteDirection::Down;
+}
+
+bool sameDirectionAxis(RouteDirection left, RouteDirection right)
+{
+    return (horizontalDirection(left) && horizontalDirection(right)) ||
+           (verticalDirection(left) && verticalDirection(right));
+}
+
+bool oppositeDirections(RouteDirection left, RouteDirection right)
+{
+    return (left == RouteDirection::Left && right == RouteDirection::Right) ||
+           (left == RouteDirection::Right && right == RouteDirection::Left) ||
+           (left == RouteDirection::Up && right == RouteDirection::Down) ||
+           (left == RouteDirection::Down && right == RouteDirection::Up);
+}
+
+void appendBridgePath(std::vector<position>& cells, const std::vector<position>& bridge)
+{
+    for (const position& cell : bridge) {
+        if (cells.empty() || cells.back() != cell) {
+            cells.push_back(cell);
+        }
+    }
+}
+
+std::vector<position> centerlineUnitMapping(const position& gatePos,
+                                            const position& prevGate,
+                                            const position& nextGate)
+{
+    if (!sameAxis(gatePos, prevGate) || !sameAxis(gatePos, nextGate)) {
+        return {};
+    }
+
+    const auto inputBoundary = nodeBoundaryCell(gatePos, prevGate);
+    const auto outputBoundary = nodeBoundaryCell(gatePos, nextGate);
+    if (!inputBoundary.valid || !outputBoundary.valid) {
+        return {};
+    }
+
+    const position center{gatePos.first * 5 + 2, gatePos.second * 5 + 2};
+    std::vector<position> cells;
+    appendBridgePath(cells, bridgeBetween(inputBoundary.pos, center));
+    appendBridgePath(cells, bridgeBetween(center, outputBoundary.pos));
+    return cells;
+}
+
+std::vector<std::vector<position>> centerlineRouteMapping(const std::vector<position>& route)
+{
+    if (route.size() < 2) {
+        return {};
+    }
+
+    if (route.size() == 2) {
+        if (!sameAxis(route.front(), route.back())) {
+            return {};
+        }
+        const auto startBoundary = nodeBoundaryCell(route.front(), route.back());
+        const auto endBoundary = nodeBoundaryCell(route.back(), route.front());
+        if (!startBoundary.valid || !endBoundary.valid) {
+            return {};
+        }
+        return {bridgeBetween(startBoundary.pos, endBoundary.pos)};
+    }
+
+    std::vector<std::vector<position>> routeMapping;
+    routeMapping.reserve(route.size() - 2);
+    for (std::size_t index = 1; index + 1 < route.size(); ++index) {
+        auto unitMapping = centerlineUnitMapping(route[index], route[index - 1], route[index + 1]);
+        if (unitMapping.empty()) {
+            return {};
+        }
+        routeMapping.push_back(std::move(unitMapping));
+    }
+    stitchRouteMapping(routeMapping);
+    return routeMapping;
+}
+
+std::size_t uniqueCellCount(const std::vector<std::vector<position>>& routeMapping)
+{
+    std::unordered_set<position, MappingPositionHash> cells;
+    for (const auto& segment : routeMapping) {
+        cells.insert(segment.begin(), segment.end());
+    }
+    return cells.size();
+}
+
+std::size_t sharedPrefixLength(const std::vector<position>& first,
+                               const std::vector<position>& second)
+{
+    const std::size_t limit = std::min(first.size(), second.size());
+    std::size_t length = 0;
+    while (length < limit && first[length] == second[length]) {
+        ++length;
+    }
+    return length;
+}
+
+bool routeHasUnexpectedOverlap(const std::vector<std::vector<position>>& routes,
+                               std::size_t routeIndex)
+{
+    const auto& route = routes[routeIndex];
+    if (route.size() <= 2) {
+        return false;
+    }
+
+    std::unordered_set<position, MappingPositionHash> selfPositions;
+    for (std::size_t index = 1; index + 1 < route.size(); ++index) {
+        if (!selfPositions.insert(route[index]).second) {
+            return true;
+        }
+    }
+
+    for (std::size_t otherIndex = 0; otherIndex < routes.size(); ++otherIndex) {
+        if (otherIndex == routeIndex) {
+            continue;
+        }
+
+        const auto& other = routes[otherIndex];
+        if (other.size() <= 2) {
+            continue;
+        }
+
+        const bool sameStart = route.front() == other.front();
+        const std::size_t commonPrefix = sameStart ? sharedPrefixLength(route, other) : 0;
+        for (std::size_t index = 1; index + 1 < route.size(); ++index) {
+            for (std::size_t otherPos = 1; otherPos + 1 < other.size(); ++otherPos) {
+                if (route[index] != other[otherPos]) {
+                    continue;
+                }
+
+                const bool allowedSharedTrunk =
+                    sameStart && index < commonPrefix && otherPos < commonPrefix;
+                if (!allowedSharedTrunk) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+std::unordered_set<position, MappingPositionHash> crossCellsForRoute(
+    const RouteMappingList& crossMappings,
+    const RouteMappingKey& routeKey)
+{
+    std::unordered_set<position, MappingPositionHash> cells;
+    const auto crossIt = crossMappings.find(routeKey);
+    if (crossIt == crossMappings.end()) {
+        return cells;
+    }
+
+    for (const auto& segment : crossIt->second) {
+        cells.insert(segment.begin(), segment.end());
+    }
+    return cells;
+}
+
+bool segmentTouchesAnyCell(const std::vector<position>& segment,
+                           const std::unordered_set<position, MappingPositionHash>& cells)
+{
+    if (cells.empty()) {
+        return false;
+    }
+
+    for (const position& cell : segment) {
+        if (cells.find(cell) != cells.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t uniqueCellCount(const std::vector<position>& segment)
+{
+    std::unordered_set<position, MappingPositionHash> cells(segment.begin(), segment.end());
+    return cells.size();
+}
+
+void insertRouteCells(std::unordered_set<position, MappingPositionHash>& cells,
+                      const std::vector<std::vector<position>>& routeMapping)
+{
+    for (const auto& segment : routeMapping) {
+        cells.insert(segment.begin(), segment.end());
+    }
+}
+
+bool replaceRoutePointWithCenterline(RouteMappingList& routeMappings,
+                                     const RouteMappingList& crossMappings,
+                                     const std::vector<std::vector<position>>& routes,
+                                     std::size_t routeIndex,
+                                     std::size_t routePoint)
+{
+    if (routeIndex >= routes.size()) {
+        return false;
+    }
+
+    const auto& route = routes[routeIndex];
+    if (routePoint == 0 || routePoint + 1 >= route.size()) {
+        return false;
+    }
+
+    const RouteMappingKey routeKey{route.front(), route.back()};
+    auto routeIt = routeMappings.find(routeKey);
+    if (routeIt == routeMappings.end() || routeIt->second.size() != route.size() - 2) {
+        return false;
+    }
+
+    const std::size_t segmentIndex = routePoint - 1;
+    if (segmentIndex >= routeIt->second.size()) {
+        return false;
+    }
+
+    auto centerlineMapping = centerlineUnitMapping(route[routePoint],
+                                                   route[routePoint - 1],
+                                                   route[routePoint + 1]);
+    if (centerlineMapping.empty()) {
+        return false;
+    }
+
+    const auto crossCells = crossCellsForRoute(crossMappings, routeKey);
+    if (segmentTouchesAnyCell(routeIt->second[segmentIndex], crossCells) ||
+        segmentTouchesAnyCell(centerlineMapping, crossCells) ||
+        uniqueCellCount(centerlineMapping) > uniqueCellCount(routeIt->second[segmentIndex])) {
+        return false;
+    }
+
+    routeIt->second[segmentIndex] = std::move(centerlineMapping);
+    return true;
+}
+
+void preferOppositeFanoutBranchSegments(RouteMappingList& routeMappings,
+                                        const RouteMappingList& crossMappings,
+                                        const std::vector<std::vector<position>>& routes)
+{
+    std::unordered_map<std::size_t, std::set<std::size_t>> routePointsByRoute;
+    for (std::size_t left = 0; left < routes.size(); ++left) {
+        if (routes[left].size() <= 2) {
+            continue;
+        }
+
+        for (std::size_t right = left + 1; right < routes.size(); ++right) {
+            if (routes[right].size() <= 2 || routes[left].front() != routes[right].front()) {
+                continue;
+            }
+
+            const std::size_t commonPrefix = sharedPrefixLength(routes[left], routes[right]);
+            const std::size_t minLength = std::min(routes[left].size(), routes[right].size());
+            if (commonPrefix < 2 || commonPrefix >= minLength) {
+                continue;
+            }
+
+            const std::size_t branchPoint = commonPrefix - 1;
+            if (branchPoint == 0 ||
+                branchPoint + 1 >= routes[left].size() ||
+                branchPoint + 1 >= routes[right].size()) {
+                continue;
+            }
+
+            const position& prev = routes[left][branchPoint - 1];
+            const position& branch = routes[left][branchPoint];
+            const position& leftNext = routes[left][branchPoint + 1];
+            const position& rightNext = routes[right][branchPoint + 1];
+            if (branch != routes[right][branchPoint] ||
+                prev != routes[right][branchPoint - 1]) {
+                continue;
+            }
+
+            const RouteDirection trunkDirection = routeDirection(prev, branch);
+            const RouteDirection leftBranchDirection = routeDirection(branch, leftNext);
+            const RouteDirection rightBranchDirection = routeDirection(branch, rightNext);
+            if (trunkDirection == RouteDirection::None ||
+                !oppositeDirections(leftBranchDirection, rightBranchDirection) ||
+                sameDirectionAxis(trunkDirection, leftBranchDirection)) {
+                continue;
+            }
+
+            routePointsByRoute[left].insert(branchPoint);
+            routePointsByRoute[right].insert(branchPoint);
+
+            const auto addStraightContinuation = [&](std::size_t routeIndex) {
+                const auto& route = routes[routeIndex];
+                if (branchPoint + 2 >= route.size()) {
+                    return;
+                }
+
+                const RouteDirection firstDirection =
+                    routeDirection(route[branchPoint], route[branchPoint + 1]);
+                const RouteDirection continuationDirection =
+                    routeDirection(route[branchPoint + 1], route[branchPoint + 2]);
+                if (firstDirection != RouteDirection::None &&
+                    firstDirection == continuationDirection) {
+                    routePointsByRoute[routeIndex].insert(branchPoint + 1);
+                }
+            };
+
+            addStraightContinuation(left);
+            addStraightContinuation(right);
+        }
+    }
+
+    for (const auto& entry : routePointsByRoute) {
+        bool changed = false;
+        for (const std::size_t routePoint : entry.second) {
+            changed = replaceRoutePointWithCenterline(routeMappings,
+                                                      crossMappings,
+                                                      routes,
+                                                      entry.first,
+                                                      routePoint) || changed;
+        }
+
+        if (!changed) {
+            continue;
+        }
+
+        const auto& route = routes[entry.first];
+        const RouteMappingKey routeKey{route.front(), route.back()};
+        auto routeIt = routeMappings.find(routeKey);
+        if (routeIt != routeMappings.end()) {
+            stitchRouteMapping(routeIt->second);
+        }
+    }
+}
+
+void preferSharedFanoutCenterlineGroups(RouteMappingList& routeMappings,
+                                        const std::vector<std::vector<position>>& routes)
+{
+    std::unordered_map<position, std::vector<std::size_t>, MappingPositionHash> routesByStart;
+    for (std::size_t routeIndex = 0; routeIndex < routes.size(); ++routeIndex) {
+        if (routes[routeIndex].size() > 2) {
+            routesByStart[routes[routeIndex].front()].push_back(routeIndex);
+        }
+    }
+
+    for (const auto& startEntry : routesByStart) {
+        const auto& routeIndices = startEntry.second;
+        if (routeIndices.size() < 2) {
+            continue;
+        }
+
+        std::set<std::size_t> fanoutRouteIndices;
+        for (std::size_t leftPos = 0; leftPos < routeIndices.size(); ++leftPos) {
+            const std::size_t left = routeIndices[leftPos];
+            for (std::size_t rightPos = leftPos + 1; rightPos < routeIndices.size(); ++rightPos) {
+                const std::size_t right = routeIndices[rightPos];
+                const std::size_t commonPrefix = sharedPrefixLength(routes[left], routes[right]);
+                const std::size_t minLength = std::min(routes[left].size(), routes[right].size());
+                if (commonPrefix >= 2 && commonPrefix < minLength) {
+                    fanoutRouteIndices.insert(left);
+                    fanoutRouteIndices.insert(right);
+                }
+            }
+        }
+
+        if (fanoutRouteIndices.size() < 2) {
+            continue;
+        }
+
+        std::map<std::size_t, std::vector<std::vector<position>>> centerlineMappings;
+        std::unordered_set<position, MappingPositionHash> originalCells;
+        std::unordered_set<position, MappingPositionHash> centerlineCells;
+        bool canUseCenterlineGroup = true;
+
+        for (const std::size_t routeIndex : fanoutRouteIndices) {
+            const auto& route = routes[routeIndex];
+            const RouteMappingKey routeKey{route.front(), route.back()};
+            const auto routeIt = routeMappings.find(routeKey);
+            if (routeIt == routeMappings.end()) {
+                canUseCenterlineGroup = false;
+                break;
+            }
+
+            auto centerlineMapping = centerlineRouteMapping(route);
+            if (centerlineMapping.empty()) {
+                canUseCenterlineGroup = false;
+                break;
+            }
+
+            insertRouteCells(originalCells, routeIt->second);
+            insertRouteCells(centerlineCells, centerlineMapping);
+            centerlineMappings.emplace(routeIndex, std::move(centerlineMapping));
+        }
+
+        if (!canUseCenterlineGroup || centerlineCells.size() > originalCells.size()) {
+            continue;
+        }
+
+        for (auto& centerlineEntry : centerlineMappings) {
+            const auto& route = routes[centerlineEntry.first];
+            const RouteMappingKey routeKey{route.front(), route.back()};
+            routeMappings[routeKey] = std::move(centerlineEntry.second);
+        }
+    }
+}
+
+void preferSharedFanoutTrunkSegments(RouteMappingList& routeMappings,
+                                     const RouteMappingList& crossMappings,
+                                     const std::vector<std::vector<position>>& routes)
+{
+    std::unordered_map<std::size_t, std::set<std::size_t>> routeTrunkIndices;
+    for (std::size_t left = 0; left < routes.size(); ++left) {
+        if (routes[left].size() <= 2) {
+            continue;
+        }
+        for (std::size_t right = left + 1; right < routes.size(); ++right) {
+            if (routes[right].size() <= 2 || routes[left].front() != routes[right].front()) {
+                continue;
+            }
+
+            const std::size_t commonPrefix = sharedPrefixLength(routes[left], routes[right]);
+            const std::size_t minLength = std::min(routes[left].size(), routes[right].size());
+            if (commonPrefix < 2 || commonPrefix >= minLength) {
+                continue;
+            }
+
+            for (std::size_t routePoint = 1; routePoint < commonPrefix; ++routePoint) {
+                routeTrunkIndices[left].insert(routePoint);
+                routeTrunkIndices[right].insert(routePoint);
+            }
+        }
+    }
+
+    for (const auto& entry : routeTrunkIndices) {
+        const std::size_t routeIndex = entry.first;
+        const auto& route = routes[routeIndex];
+        if (route.size() <= 2) {
+            continue;
+        }
+
+        const RouteMappingKey routeKey{route.front(), route.back()};
+        auto routeIt = routeMappings.find(routeKey);
+        if (routeIt == routeMappings.end() || routeIt->second.size() != route.size() - 2) {
+            continue;
+        }
+
+        const auto crossCells = crossCellsForRoute(crossMappings, routeKey);
+        bool changed = false;
+        for (const std::size_t routePoint : entry.second) {
+            if (routePoint == 0 || routePoint + 1 >= route.size()) {
+                continue;
+            }
+
+            const std::size_t segmentIndex = routePoint - 1;
+            if (segmentIndex >= routeIt->second.size()) {
+                continue;
+            }
+
+            auto centerlineMapping = centerlineUnitMapping(route[routePoint],
+                                                           route[routePoint - 1],
+                                                           route[routePoint + 1]);
+            if (centerlineMapping.empty() ||
+                segmentTouchesAnyCell(routeIt->second[segmentIndex], crossCells) ||
+                segmentTouchesAnyCell(centerlineMapping, crossCells) ||
+                uniqueCellCount({centerlineMapping}) > uniqueCellCount({routeIt->second[segmentIndex]})) {
+                continue;
+            }
+
+            routeIt->second[segmentIndex] = std::move(centerlineMapping);
+            changed = true;
+        }
+
+        if (changed) {
+            stitchRouteMapping(routeIt->second);
+        }
+    }
+}
+
+void preferSharedFanoutCenterlines(RouteMappingList& routeMappings,
+                                   const RouteMappingList& crossMappings,
+                                   const std::vector<std::vector<position>>& routes)
+{
+    std::unordered_set<std::size_t> fanoutRoutes;
+    for (std::size_t left = 0; left < routes.size(); ++left) {
+        if (routes[left].size() <= 2) {
+            continue;
+        }
+        for (std::size_t right = left + 1; right < routes.size(); ++right) {
+            if (routes[right].size() <= 2 || routes[left].front() != routes[right].front()) {
+                continue;
+            }
+
+            const std::size_t commonPrefix = sharedPrefixLength(routes[left], routes[right]);
+            const std::size_t minLength = std::min(routes[left].size(), routes[right].size());
+            if (commonPrefix >= 2 && commonPrefix < minLength) {
+                fanoutRoutes.insert(left);
+                fanoutRoutes.insert(right);
+            }
+        }
+    }
+
+    for (const std::size_t routeIndex : fanoutRoutes) {
+        if (routeHasUnexpectedOverlap(routes, routeIndex)) {
+            continue;
+        }
+
+        const auto& route = routes[routeIndex];
+        const RouteMappingKey routeKey{route.front(), route.back()};
+        if (crossMappings.find(routeKey) != crossMappings.end()) {
+            continue;
+        }
+
+        auto routeIt = routeMappings.find(routeKey);
+        if (routeIt == routeMappings.end()) {
+            continue;
+        }
+
+        auto centerlineMapping = centerlineRouteMapping(route);
+        if (centerlineMapping.empty()) {
+            continue;
+        }
+
+        if (uniqueCellCount(centerlineMapping) <= uniqueCellCount(routeIt->second)) {
+            routeIt->second = std::move(centerlineMapping);
+        }
+    }
+}
+
 std::vector<std::vector<std::size_t>> buildRouteOrderCandidates(const std::vector<std::vector<position>>& routes)
 {
     std::vector<std::vector<std::size_t>> candidates;
@@ -694,6 +1248,35 @@ struct MappingOrderScore
     std::size_t totalRouteCells = 0;
 };
 
+bool shouldUseFanoutOptimizedMapping(const MappingOrderScore& optimized,
+                                     const MappingOrderScore& baseline)
+{
+    if (optimized.missingRequiredCrossPositions > baseline.missingRequiredCrossPositions) {
+        return false;
+    }
+
+    if (optimized.crossSegments <= baseline.crossSegments &&
+        optimized.uniqueCrossCells <= baseline.uniqueCrossCells &&
+        optimized.totalRouteCells <= baseline.totalRouteCells) {
+        return optimized.crossSegments < baseline.crossSegments ||
+               optimized.uniqueCrossCells < baseline.uniqueCrossCells ||
+               optimized.totalRouteCells < baseline.totalRouteCells;
+    }
+
+    if (optimized.totalRouteCells >= baseline.totalRouteCells) {
+        return false;
+    }
+
+    const std::size_t routeSavings = baseline.totalRouteCells - optimized.totalRouteCells;
+    const std::size_t crossIncrease = optimized.crossSegments > baseline.crossSegments
+                                          ? optimized.crossSegments - baseline.crossSegments
+                                          : 0;
+    const std::size_t crossCellIncrease = optimized.uniqueCrossCells > baseline.uniqueCrossCells
+                                              ? optimized.uniqueCrossCells - baseline.uniqueCrossCells
+                                              : 0;
+    return crossIncrease <= routeSavings && crossCellIncrease <= routeSavings * 5;
+}
+
 std::uint16_t Mapping::deviateTypeMask(const std::string& type)
 {
     if (type == "XMIDDLE") return 1u << 0;
@@ -807,8 +1390,30 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
         }
         deviate_mapping(deviate_list);
         connectRouteMappingsToOriginalEndpoints(deviatemapping_list, routes);
+        const auto rawBaselineRouteMappings = deviatemapping_list;
         crossline_mapping(routes);
-        return currentScore();
+        preferOppositeFanoutBranchSegments(deviatemapping_list, crossline_list, routes);
+        const auto baselineRouteMappings = deviatemapping_list;
+        const auto baselineCrossMappings = crossline_list;
+        const MappingOrderScore baselineScore = currentScore();
+
+        deviatemapping_list = rawBaselineRouteMappings;
+        crossline_list.clear();
+        preferSharedFanoutCenterlineGroups(deviatemapping_list, routes);
+        const RouteMappingList noCrossMappings;
+        preferSharedFanoutTrunkSegments(deviatemapping_list, noCrossMappings, routes);
+        crossline_mapping(routes);
+        preferOppositeFanoutBranchSegments(deviatemapping_list, crossline_list, routes);
+        preferSharedFanoutCenterlines(deviatemapping_list, crossline_list, routes);
+        const MappingOrderScore optimizedScore = currentScore();
+
+        if (!shouldUseFanoutOptimizedMapping(optimizedScore, baselineScore)) {
+            deviatemapping_list = baselineRouteMappings;
+            crossline_list = baselineCrossMappings;
+            return baselineScore;
+        }
+
+        return optimizedScore;
     };
 
     auto candidates = buildRouteOrderCandidates(_example);

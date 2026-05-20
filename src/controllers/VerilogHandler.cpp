@@ -7,7 +7,10 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QImage>
+#include <QPageLayout>
+#include <QPageSize>
 #include <QPainter>
+#include <QPdfWriter>
 #include <QTextStream>
 #include <QComboBox>
 #include <QCheckBox>
@@ -28,6 +31,7 @@
 #include <limits>
 #include <optional>
 #include <tuple>
+#include <unordered_set>
 
 namespace {
 struct GraphRenderSettings {
@@ -110,6 +114,61 @@ struct LayoutSearchResult {
     std::map<std::pair<unsigned int, unsigned int>, std::vector<fcngraph::position>> routes;
     std::unordered_map<fcngraph::position, fcngraph::GridCell, fcngraph::PositionHash> gridCells;
 };
+
+QPoint toPoint(const fcngraph::position &pos)
+{
+    return QPoint(static_cast<int>(pos.first), static_cast<int>(pos.second));
+}
+
+QMap<QPair<int, int>, QVector<QPoint>> buildMappedRouteCellsForSchematic(
+    const std::map<std::pair<unsigned int, unsigned int>, std::vector<fcngraph::position>> &routes)
+{
+    std::vector<std::vector<fcngraph::position>> circleLine;
+    circleLine.reserve(routes.size());
+    for (const auto &route : routes) {
+        if (route.second.size() >= 2) {
+            circleLine.push_back(route.second);
+        }
+    }
+
+    if (circleLine.empty()) {
+        return {};
+    }
+
+    fcngraph::Mapping mapping;
+    auto mappedRoutesByEndpoint = mapping.mapping_line(circleLine);
+
+    QMap<QPair<int, int>, QVector<QPoint>> mappedRouteCells;
+    for (const auto &route : routes) {
+        if (route.second.size() < 2) {
+            continue;
+        }
+
+        const auto endpointKey = std::make_pair(route.second.front(), route.second.back());
+        const auto mappedIt = mappedRoutesByEndpoint.find(endpointKey);
+        if (mappedIt == mappedRoutesByEndpoint.end()) {
+            continue;
+        }
+
+        QVector<QPoint> cells;
+        std::unordered_set<fcngraph::position, fcngraph::MappingPositionHash> seenCells;
+        for (const auto &segment : mappedIt->second) {
+            for (const auto &cell : segment) {
+                if (seenCells.insert(cell).second) {
+                    cells.push_back(toPoint(cell));
+                }
+            }
+        }
+
+        if (!cells.isEmpty()) {
+            mappedRouteCells.insert(QPair<int, int>(static_cast<int>(route.first.first),
+                                                    static_cast<int>(route.first.second)),
+                                    cells);
+        }
+    }
+
+    return mappedRouteCells;
+}
 
 bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
 {
@@ -940,6 +999,7 @@ void VerilogHandler::handleGcnRlLayout()
         mainWindow->printToStatusBar(tr("GCN+RL placement and routing cancelled."));
         return;
     }
+    mainWindow->updateVerilogSourceFile(filePath);
 
     const QString rootPath = findGcnRlRoot();
     if (rootPath.isEmpty()) {
@@ -1164,6 +1224,7 @@ void VerilogHandler::handleParseVerilogFile()
         mainWindow->customStatusBar->addMessage(message);
         QCoreApplication::processEvents();
     }                                                 
+    mainWindow->updateVerilogSourceFile(filePath);
 
     std::string file = filePath.toStdString();
 
@@ -1325,6 +1386,7 @@ void VerilogHandler::handleGraphRender()
         mainWindow->customStatusBar->addMessage(message);
         QCoreApplication::processEvents();
     }
+    mainWindow->updateVerilogSourceFile(filePath);
 
     GraphRenderSettings settings;
     if (!readGraphRenderSettings(mainWindow, settings)) {
@@ -1590,6 +1652,64 @@ void VerilogHandler::handleGraphRender()
 
         mappingCellItem(node_pos_trans, routes_trans, parse, pos_phase);
         putClock(pos_phase);
+        QMap<int, GateLevelMapping::NodeInfo> schematicNodes;
+        for (const auto &entry : node_pos_trans) {
+            const int nodeIndex = static_cast<int>(entry.first);
+            GateLevelMapping::NodeInfo node;
+            node.index = nodeIndex;
+            node.name = QString::fromStdString(parse.getNodeName(nodeIndex));
+            node.type = QString::fromStdString(parse.getNodeType(nodeIndex));
+            node.pos = toPoint(entry.second);
+            schematicNodes.insert(node.index, node);
+        }
+
+        QMap<QPair<int, int>, QVector<QPoint>> schematicRoutes;
+        for (const auto &entry : routes_trans) {
+            QVector<QPoint> path;
+            path.reserve(static_cast<int>(entry.second.size()));
+            for (const position &pos : entry.second) {
+                path.push_back(toPoint(pos));
+            }
+            schematicRoutes.insert(QPair<int, int>(static_cast<int>(entry.first.first),
+                                                   static_cast<int>(entry.first.second)),
+                                   path);
+        }
+
+        QHash<QPoint, int> schematicPhaseMap;
+        for (const auto &entry : gridCells) {
+            if (entry.second.getPhase() < 1) {
+                continue;
+            }
+            schematicPhaseMap.insert(toPoint(coordtrans(entry.first, scale)),
+                                     entry.second.getPhase() - 1);
+        }
+
+        QMap<QString, QString> schematicMetadata;
+        schematicMetadata.insert(QStringLiteral("gates number"), QString::number(gateNum));
+        schematicMetadata.insert(QStringLiteral("input/output"),
+                                 QStringLiteral("%1 / %2").arg(inputNum).arg(outputNum));
+        schematicMetadata.insert(QStringLiteral("edges number"), QString::number(wireNum));
+        schematicMetadata.insert(QStringLiteral("total layers"),
+                                 QString::number(static_cast<int>(parse.getlayerNodeDivVec().size())));
+        schematicMetadata.insert(QStringLiteral("layout area"),
+                                 QStringLiteral("width: %1, height: %2, area: %3")
+                                     .arg(width)
+                                     .arg(height)
+                                     .arg(width * height));
+        schematicMetadata.insert(QStringLiteral("phase count"), QString::number(settings.phaseCount));
+        schematicMetadata.insert(QStringLiteral("runtime"),
+                                 QStringLiteral("%1s").arg(QString::number(elapsedSeconds, 'f', 3)));
+
+        const QFileInfo graphSourceInfo(filePath);
+        const QString circuitName = graphSourceInfo.fileName().isEmpty()
+            ? QString::fromStdString(parse.get_moduleName())
+            : graphSourceInfo.fileName();
+        mainWindow->updateCircuitSchematicFromRawData(circuitName,
+                                                      schematicNodes,
+                                                      schematicRoutes,
+                                                      schematicPhaseMap,
+                                                      buildMappedRouteCellsForSchematic(routes_trans),
+                                                      schematicMetadata);
         mainWindow->endSceneBatchUpdate(true);
     } catch (const std::exception &ex) {
         mainWindow->endSceneBatchUpdate(false);
@@ -2711,9 +2831,6 @@ void VerilogHandler::putClock(std::map<position, int>& _pos_phase)
 
 void VerilogHandler::generateSVG()
 {
-    constexpr qreal kPreferredExportScale = 4.0;
-    constexpr int kMaxExportDimension = 20000;
-
     // 获取所有Item的联合边界矩形
     QRectF itemsBoundingRect = mainWindow->scene->itemsBoundingRect();
     if (mainWindow->scene->hasFastRender()) {
@@ -2727,19 +2844,7 @@ void VerilogHandler::generateSVG()
         return;
     }
 
-    // 定义输出图像的大小，这里根据实际内容调整大小
-    qreal exportScale = kPreferredExportScale;
-    const qreal widthAtPreferredScale = std::ceil(itemsBoundingRect.width() * exportScale);
-    const qreal heightAtPreferredScale = std::ceil(itemsBoundingRect.height() * exportScale);
-    const qreal maxDimension = qMax(widthAtPreferredScale, heightAtPreferredScale);
-    if (maxDimension > kMaxExportDimension) {
-        exportScale *= (static_cast<qreal>(kMaxExportDimension) / maxDimension);
-    }
-
-    const QSize svgSize(
-        qMax(1, static_cast<int>(std::ceil(itemsBoundingRect.width() * exportScale))),
-        qMax(1, static_cast<int>(std::ceil(itemsBoundingRect.height() * exportScale)))
-    );
+    itemsBoundingRect = itemsBoundingRect.adjusted(-20.0, -20.0, 20.0, 20.0);
 
     const QFileInfo currentFileInfo(mainWindow->currentFilePath());
     const QString circuitName = currentFileInfo.completeBaseName().isEmpty()
@@ -2748,7 +2853,67 @@ void VerilogHandler::generateSVG()
     const QDir outputDir = currentFileInfo.absoluteDir().exists()
         ? currentFileInfo.absoluteDir()
         : QDir::current();
-    const QString outputPath = outputDir.absoluteFilePath(circuitName + "_cell_level_layout.svg");
+    QString selectedFilter;
+    QString outputPath = QFileDialog::getSaveFileName(mainWindow,
+                                                      QObject::tr("Save Cell-Level Layout"),
+                                                      outputDir.absoluteFilePath(circuitName + "_cell_level_layout.pdf"),
+                                                      QObject::tr("PDF files (*.pdf);;SVG files (*.svg)"),
+                                                      &selectedFilter);
+    if (outputPath.isEmpty()) {
+        return;
+    }
+
+    QFileInfo outputInfo(outputPath);
+    QString suffix = outputInfo.suffix().toLower();
+    if (suffix.isEmpty()) {
+        suffix = selectedFilter.contains(QStringLiteral("SVG"), Qt::CaseInsensitive)
+            ? QStringLiteral("svg")
+            : QStringLiteral("pdf");
+        outputPath += QLatin1Char('.') + suffix;
+    } else if (suffix != QStringLiteral("svg") && suffix != QStringLiteral("pdf")) {
+        suffix = selectedFilter.contains(QStringLiteral("SVG"), Qt::CaseInsensitive)
+            ? QStringLiteral("svg")
+            : QStringLiteral("pdf");
+        outputPath += QLatin1Char('.') + suffix;
+    }
+
+    const QSizeF figureSize(qMax<qreal>(1.0, std::ceil(itemsBoundingRect.width())),
+                            qMax<qreal>(1.0, std::ceil(itemsBoundingRect.height())));
+
+    if (suffix == QStringLiteral("pdf")) {
+        QPdfWriter pdfWriter(outputPath);
+        pdfWriter.setResolution(72);
+        pdfWriter.setTitle(QStringLiteral("iFCN cell-level layout"));
+        pdfWriter.setCreator(QStringLiteral("iFCN"));
+        pdfWriter.setPageSize(QPageSize(figureSize,
+                                        QPageSize::Point,
+                                        QStringLiteral("iFCN cell-level layout")));
+        pdfWriter.setPageMargins(QMarginsF(0.0, 0.0, 0.0, 0.0), QPageLayout::Point);
+
+        QPainter painter(&pdfWriter);
+        if (!painter.isActive()) {
+            QString message = "Failed to save cell-level layout: " + QDir::toNativeSeparators(outputPath);
+            mainWindow->printToStatusBar(message);
+            return;
+        }
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::TextAntialiasing);
+        mainWindow->scene->render(&painter,
+                                  QRectF(QPointF(0.0, 0.0), figureSize),
+                                  itemsBoundingRect,
+                                  Qt::IgnoreAspectRatio);
+        painter.end();
+
+        QString message = QString("Cell-level layout saved as cropped PDF: %1 (%2x%3 pt)")
+            .arg(QDir::toNativeSeparators(outputPath))
+            .arg(qRound(figureSize.width()))
+            .arg(qRound(figureSize.height()));
+        mainWindow->printToStatusBar(message);
+        return;
+    }
+
+    const QSize svgSize(qMax(1, static_cast<int>(figureSize.width())),
+                        qMax(1, static_cast<int>(figureSize.height())));
 
     QSvgGenerator svgGenerator;
     svgGenerator.setFileName(outputPath);
@@ -2766,13 +2931,15 @@ void VerilogHandler::generateSVG()
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::TextAntialiasing);
 
-    mainWindow->scene->render(&painter, QRectF(QPointF(0, 0), QSizeF(svgSize)), itemsBoundingRect);
+    mainWindow->scene->render(&painter,
+                              QRectF(QPointF(0, 0), QSizeF(svgSize)),
+                              itemsBoundingRect,
+                              Qt::IgnoreAspectRatio);
     painter.end();
 
     //打印信息
-    QString message = QString("Cell-level layout saved as SVG: %1 (%2x, %3x%4)")
+    QString message = QString("Cell-level layout saved as SVG: %1 (%2x%3)")
         .arg(QDir::toNativeSeparators(outputPath))
-        .arg(QString::number(exportScale, 'f', 2))
         .arg(svgSize.width())
         .arg(svgSize.height());
     mainWindow->printToStatusBar(message);

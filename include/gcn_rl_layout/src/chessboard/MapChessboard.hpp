@@ -438,12 +438,21 @@ public:
         // 绘制网格
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
-                int val = mapChessboard.getPhase({x, y});
-                if (val < 0) {
-                    val = mapChessboard.getTDDPhaseAtCoord({x, y});
-                }
                 const int drawX = x - offsetX;
                 const int drawY = gridHeight - (y - offsetY) - 1;
+
+                const std::pair<int, int> coord{x, y};
+                const auto cellIt = mapChessboard.gridMap.find(coord);
+                const bool isUsedCell = cellIt != mapChessboard.gridMap.end() && !cellIt->second.isEmpty();
+                if (!isUsedCell) {
+                    texFile << "\\node[c-1] at (" << drawX << "," << drawY << "){\\phasecell{null}};\n";
+                    continue;
+                }
+
+                int val = mapChessboard.getPhase(coord);
+                if (val < 0) {
+                    val = mapChessboard.getTDDPhaseAtCoord(coord);
+                }
                 texFile << "\\node[c" << val << "] at (" << drawX << "," << drawY << "){\\phasecell{" << val << "}};\n";
             }
         }

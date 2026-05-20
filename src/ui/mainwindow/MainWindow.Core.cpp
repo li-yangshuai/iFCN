@@ -1,5 +1,6 @@
 #include "ui/mainwindow/MainWindow.h"
 #include "ui/mainwindow/MainWindow.Constants.h"
+#include <QDockWidget>
 #include <QSettings>
 #include <QTimer>
 
@@ -21,6 +22,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     connect(scene, &QCADScene::clockRegionsChanged, this, [this]() {
         if (phaseCodecPreviewActive) {
             updatePhaseCodecPreview();
+        }
+        if (structure3DDock != nullptr && structure3DDock->isVisible()) {
+            updateStructure3DView();
+        }
+    });
+    connect(gateLevelMapping, &GateLevelMapping::mappingLoaded, this, [this]() {
+        updateCircuitSchematicFromMapping(*gateLevelMapping);
+        if (structure3DDock != nullptr && structure3DDock->isVisible()) {
+            updateStructure3DView();
         }
     });
     // connect(scene, SIGNAL(clockPhaseInserted(QCADClockScheme *)), this, SLOT(slotQCADClockScheme(QCADClockScheme *)));

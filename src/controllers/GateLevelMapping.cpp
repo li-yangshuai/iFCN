@@ -183,6 +183,7 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
     QTextStream in(&file);
     nodes.clear();
     routes.clear();
+    mappedRouteCells.clear();
     coordPhaseMap.clear();
     metadata.clear();
     currentMappingFilePath = filePath;
@@ -818,6 +819,37 @@ void GateLevelMapping::mappingCellItem(){
     auto routeexample = mapping.mapping_line(circle_line);
     auto crossexample = mapping.crossline_list;
     auto nodeexample2 = mapping.nodecell_list;
+
+    mappedRouteCells.clear();
+    for (auto it = routes.begin(); it != routes.end(); ++it)
+    {
+        const QVector<QPoint>& path = it.value();
+        if (path.size() < 2) {
+            continue;
+        }
+
+        const auto routeKey = std::make_pair(toPosition(path.front()),
+                                             toPosition(path.back()));
+        const auto routeIt = routeexample.find(routeKey);
+        if (routeIt == routeexample.end()) {
+            continue;
+        }
+
+        QVector<QPoint> mappedCells;
+        std::unordered_set<position, MappingPositionHash> seenMappedCells;
+        for (const auto &segment : routeIt->second) {
+            for (const auto &cellPos : segment) {
+                if (seenMappedCells.insert(cellPos).second) {
+                    mappedCells.push_back(QPoint(static_cast<int>(cellPos.first),
+                                                 static_cast<int>(cellPos.second)));
+                }
+            }
+        }
+
+        if (!mappedCells.isEmpty()) {
+            mappedRouteCells.insert(it.key(), mappedCells);
+        }
+    }
 
     std::vector<position> allroutecells;
     for (auto &pair : routeexample)

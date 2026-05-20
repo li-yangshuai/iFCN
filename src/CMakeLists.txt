@@ -27,6 +27,7 @@ add_executable(
     ui/mainwindow/MainWindow.Core.cpp
     ui/mainwindow/MainWindow.MenuToolbar.cpp
     ui/mainwindow/MainWindow.ViewScene.cpp
+    ui/mainwindow/MainWindow.Circuit.cpp
     ui/mainwindow/MainWindow.Status.cpp
     ui/mainwindow/MainWindow.Logic.cpp
     ui/items/QCADCellItem.cpp 
@@ -38,6 +39,9 @@ add_executable(
     controllers/GateLevelMapping.cpp
     controllers/MappingExecutor.cpp
     ui/widgets/LayerComboBox.cpp             
+    ui/widgets/CircuitSchematicView.cpp
+    ui/widgets/LayeredStructure3DView.h
+    ui/widgets/LayeredStructure3DView.cpp
     ui/widgets/CustomStatusBar.cpp
     ui/widgets/plotWidget.cpp
     ui/widgets/qcustomplot.cpp

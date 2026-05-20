@@ -1,6 +1,7 @@
 #include "ui/mainwindow/MainWindow.h"
 #include "ui/mainwindow/MainWindow.Constants.h"
 #include "ui/mainwindow/TabbedMainWindow.h"
+#include "ui/widgets/CircuitSchematicView.h"
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDialog>
@@ -45,6 +46,11 @@ void MainWindow::loadFile(const QString &fileName)
     if (suffix == "ifcn" && shouldMapIfcnFile(fileName)) {
         mapIfcnFile(fileName);
         return;
+    }
+
+    clearCircuitNodeHighlight();
+    if (circuitSchematicView != nullptr) {
+        circuitSchematicView->clearCircuit();
     }
 
     QCADesign design;
@@ -144,6 +150,7 @@ bool MainWindow::shouldMapIfcnFile(const QString &fileName) const
 void MainWindow::mapIfcnFile(const QString &fileName)
 {
     scene->clearFastRender();
+    clearCircuitNodeHighlight();
     gateLevelMapping->parseGateLevelMappingFile(fileName);
     setCurrentFile(fileName);
     setDirty(true);

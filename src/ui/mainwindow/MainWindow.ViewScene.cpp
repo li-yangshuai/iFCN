@@ -1,13 +1,27 @@
 #include "ui/mainwindow/MainWindow.h"
+#include "ui/widgets/CircuitSchematicView.h"
+#include "ui/widgets/LayeredStructure3DView.h"
 #include <autopr/algorithms/phase_codec.h>
+#include <QDir>
 #include <QGraphicsRectItem>
 #include <QGraphicsSimpleTextItem>
+#include <QDockWidget>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QHeaderView>
+#include <QDialog>
+#include <QFile>
+#include <QFontDatabase>
+#include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QTableWidgetItem>
+#include <QTextCursor>
+#include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QtGlobal>
 #include <algorithm>
@@ -15,6 +29,31 @@
 #include <exception>
 #include <limits>
 #include <map>
+
+namespace {
+QString dockChromeStyle(const QString &objectName)
+{
+    return QStringLiteral(
+        "QDockWidget#%1 {"
+        "  color: #172033;"
+        "  font-weight: 600;"
+        "}"
+    ).arg(objectName);
+}
+
+QToolButton *createDockToolButton(QWidget *parent,
+                                  const QString &text,
+                                  const QString &toolTip,
+                                  int minWidth = 48)
+{
+    auto *button = new QToolButton(parent);
+    button->setText(text);
+    button->setToolTip(toolTip);
+    button->setAutoRaise(true);
+    button->setMinimumSize(minWidth, 28);
+    return button;
+}
+} // namespace
 
 void MainWindow::createViewAndScene()
 {
@@ -33,18 +72,22 @@ void MainWindow::createViewAndScene()
     view = new QCADView(this);
     view->setScene(scene);
     view->resize(800,600);
-    phaseCodecPanel = createPhaseCodecPanel();
 
     splitter->addWidget(toolBox);
     splitter->addWidget(view);
-    splitter->addWidget(phaseCodecPanel);
-    splitter->setStretchFactor(0, 0);
-    splitter->setStretchFactor(1, 1);
-    splitter->setStretchFactor(2, 0);
     verticalLayout->setContentsMargins(12, 12, 12, 8);
     verticalLayout->setSpacing(10);
     verticalLayout->addWidget(splitter);
     this->setCentralWidget(centralWidget);
+    createVerilogSourceDock();
+    splitter->setStretchFactor(0, 0);
+    splitter->setStretchFactor(1, 0);
+    splitter->setStretchFactor(2, 1);
+    splitter->setSizes(QList<int>() << 260 << 380 << 1040);
+    createCircuitSchematicDock();
+    createPhaseCodecDock();
+    createLayoutInfoDock();
+    createStructure3DDock();
     view->centerOn(scene->sceneRect().center());
 
     customStatusBar = new CustomStatusBar(this);
@@ -54,34 +97,74 @@ void MainWindow::createViewAndScene()
 
 QWidget* MainWindow::createPhaseCodecPanel()
 {
-    QWidget *panel = new QWidget(splitter);
+    QWidget *panel = new QWidget;
     panel->setMinimumWidth(300);
-    panel->setMaximumWidth(420);
     panel->setObjectName(QStringLiteral("phaseCodecPanel"));
 
     QVBoxLayout *layout = new QVBoxLayout(panel);
     layout->setContentsMargins(12, 10, 12, 10);
     layout->setSpacing(10);
 
-    QLabel *titleLabel = new QLabel(tr("Phase Codec"), panel);
-    titleLabel->setObjectName(QStringLiteral("phaseCodecTitle"));
-    QFont titleFont = titleLabel->font();
-    titleFont.setBold(true);
-    titleLabel->setFont(titleFont);
+    auto *toolbarLayout = new QHBoxLayout;
+    toolbarLayout->setContentsMargins(0, 0, 0, 0);
+    toolbarLayout->setSpacing(6);
+
+    auto *closeButton = createDockToolButton(panel,
+                                             tr("Close"),
+                                             tr("Close Phase Codec"),
+                                             54);
+
+    auto *dockButton = createDockToolButton(panel,
+                                            tr("Dock"),
+                                            tr("Dock Phase Codec back into the main window"));
+
+    auto *floatButton = createDockToolButton(panel,
+                                             tr("Float"),
+                                             tr("Float Phase Codec as a standalone window"),
+                                             52);
+
+    phaseCodecEncodeButton = createDockToolButton(panel,
+                                                  tr("Encode"),
+                                                  tr("Encode clock regions"),
+                                                  58);
+    phaseCodecEncodeButton->setObjectName(QStringLiteral("phaseCodecEncodeButton"));
+
+    phaseCodecCancelButton = createDockToolButton(panel,
+                                                  tr("Clear"),
+                                                  tr("Clear phase encoding preview"),
+                                                  50);
+    phaseCodecCancelButton->setObjectName(QStringLiteral("phaseCodecCancelButton"));
+
+    phaseCodecShowAllButton = createDockToolButton(panel,
+                                                   tr("All"),
+                                                   tr("Show all encoded tiles on the cell-level layout"),
+                                                   42);
+    phaseCodecShowAllButton->setObjectName(QStringLiteral("phaseCodecShowAllButton"));
+    phaseCodecShowAllButton->setCheckable(true);
+
+    phaseCodec3DButton = createDockToolButton(panel,
+                                              tr("3D"),
+                                              tr("Show layered 3D clock and cell structure"),
+                                              42);
+    phaseCodec3DButton->setObjectName(QStringLiteral("phaseCodec3DButton"));
 
     phaseCodecModeComboBox = new QComboBox(panel);
     phaseCodecModeComboBox->setMinimumHeight(30);
+    phaseCodecModeComboBox->setMinimumWidth(120);
     phaseCodecModeComboBox->addItem(tr("Auto phase"), 0);
     phaseCodecModeComboBox->addItem(tr("4-phase / 4x4"), 4);
     phaseCodecModeComboBox->addItem(tr("3-phase / 3x3"), 3);
 
-    phaseCodecEncodeButton = new QPushButton(tr("Encode Clock Regions"), panel);
-    phaseCodecEncodeButton->setObjectName(QStringLiteral("phaseCodecEncodeButton"));
-    phaseCodecEncodeButton->setMinimumHeight(34);
-
-    phaseCodecCancelButton = new QPushButton(tr("Cancel Encoding"), panel);
-    phaseCodecCancelButton->setObjectName(QStringLiteral("phaseCodecCancelButton"));
-    phaseCodecCancelButton->setMinimumHeight(34);
+    toolbarLayout->addWidget(closeButton);
+    toolbarLayout->addWidget(dockButton);
+    toolbarLayout->addWidget(floatButton);
+    toolbarLayout->addSpacing(8);
+    toolbarLayout->addWidget(phaseCodecEncodeButton);
+    toolbarLayout->addWidget(phaseCodecCancelButton);
+    toolbarLayout->addWidget(phaseCodecShowAllButton);
+    toolbarLayout->addWidget(phaseCodec3DButton);
+    toolbarLayout->addWidget(phaseCodecModeComboBox);
+    toolbarLayout->addStretch(1);
 
     phaseCodecTable = new QTableWidget(panel);
     phaseCodecTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -103,62 +186,52 @@ QWidget* MainWindow::createPhaseCodecPanel()
     phaseCodecStatusLabel->setObjectName(QStringLiteral("phaseCodecStatusLabel"));
     phaseCodecStatusLabel->setWordWrap(true);
 
-    QLabel *layoutInfoTitleLabel = new QLabel(tr("Layout Info"), panel);
-    layoutInfoTitleLabel->setObjectName(QStringLiteral("layoutInfoTitle"));
-    QFont layoutInfoTitleFont = layoutInfoTitleLabel->font();
-    layoutInfoTitleFont.setBold(true);
-    layoutInfoTitleLabel->setFont(layoutInfoTitleFont);
-
-    layoutInfoTable = new QTableWidget(panel);
-    layoutInfoTable->setColumnCount(2);
-    layoutInfoTable->setHorizontalHeaderLabels(QStringList() << tr("Metric") << tr("Value"));
-    layoutInfoTable->verticalHeader()->hide();
-    layoutInfoTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    layoutInfoTable->setSelectionMode(QAbstractItemView::NoSelection);
-    layoutInfoTable->setFocusPolicy(Qt::NoFocus);
-    layoutInfoTable->setShowGrid(false);
-    layoutInfoTable->setWordWrap(true);
-    layoutInfoTable->setAlternatingRowColors(true);
-    layoutInfoTable->setCornerButtonEnabled(false);
-    layoutInfoTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    layoutInfoTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    layoutInfoTable->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    layoutInfoTable->setMinimumHeight(180);
-
-    layout->addWidget(titleLabel);
-    layout->addWidget(phaseCodecModeComboBox);
-    layout->addWidget(phaseCodecEncodeButton);
-    layout->addWidget(phaseCodecCancelButton);
+    layout->addLayout(toolbarLayout);
     layout->addWidget(phaseCodecTable, 1);
     layout->addWidget(phaseCodecStatusLabel);
-    layout->addSpacing(6);
-    layout->addWidget(layoutInfoTitleLabel);
-    layout->addWidget(layoutInfoTable, 1);
 
-    connect(phaseCodecEncodeButton, &QPushButton::clicked,
+    connect(closeButton, &QToolButton::clicked, this, [this]() {
+        closeDockContent(phaseCodecDock, &phaseCodecFloatWindow);
+    });
+    connect(dockButton, &QToolButton::clicked, this, [this]() {
+        restoreDockContent(phaseCodecDock, &phaseCodecFloatWindow);
+    });
+    connect(floatButton, &QToolButton::clicked, this, [this]() {
+        floatDockContent(phaseCodecDock,
+                         &phaseCodecFloatWindow,
+                         tr("Phase Codec"),
+                         QSize(720, 560));
+    });
+    connect(phaseCodecEncodeButton, &QToolButton::clicked,
             this, &MainWindow::slotEncodeClockRegions);
-    connect(phaseCodecCancelButton, &QPushButton::clicked,
+    connect(phaseCodecCancelButton, &QToolButton::clicked,
             this, &MainWindow::slotCancelPhaseCodecEncoding);
     connect(phaseCodecModeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::slotPhaseCodecModeChanged);
+    connect(phaseCodecShowAllButton, &QToolButton::toggled, this, [this](bool checked) {
+        if (checked) {
+            if (!phaseCodecPreviewActive) {
+                phaseCodecPreviewActive = true;
+                updatePhaseCodecPreview();
+                return;
+            }
+            highlightAllPhaseCodecTiles();
+        } else {
+            clearPhaseCodecHighlight();
+        }
+    });
+    connect(phaseCodec3DButton, &QToolButton::clicked,
+            this, &MainWindow::showStructure3DView);
     connect(phaseCodecTable, &QTableWidget::cellClicked,
             this, &MainWindow::slotPhaseCodecTileActivated);
 
     panel->setStyleSheet(QStringLiteral(
         "QWidget#phaseCodecPanel {"
         "  background: #f7f9fc;"
-        "  border-left: 1px solid #d7dde6;"
-        "}"
-        "QLabel#phaseCodecTitle {"
-        "  color: #172033;"
-        "  font-size: 14px;"
+        "  border: 0;"
         "}"
         "QLabel#phaseCodecStatusLabel {"
         "  color: #526173;"
-        "}"
-        "QLabel#layoutInfoTitle {"
-        "  color: #172033;"
-        "  font-size: 14px;"
         "}"
         "QComboBox {"
         "  background: #ffffff;"
@@ -167,33 +240,42 @@ QWidget* MainWindow::createPhaseCodecPanel()
         "  padding: 4px 8px;"
         "  color: #172033;"
         "}"
-        "QPushButton#phaseCodecEncodeButton {"
-        "  background: #0067c0;"
-        "  border: 0;"
-        "  border-radius: 6px;"
-        "  color: #ffffff;"
-        "  font-weight: 600;"
-        "  padding: 7px 10px;"
-        "}"
-        "QPushButton#phaseCodecEncodeButton:hover {"
-        "  background: #075fae;"
-        "}"
-        "QPushButton#phaseCodecEncodeButton:pressed {"
-        "  background: #004f93;"
-        "}"
-        "QPushButton#phaseCodecCancelButton {"
+        "QToolButton {"
         "  background: #ffffff;"
-        "  border: 1px solid #b9c5d2;"
-        "  border-radius: 6px;"
-        "  color: #253449;"
+        "  border: 1px solid #c8d1dc;"
+        "  border-radius: 5px;"
+        "  color: #172033;"
         "  font-weight: 600;"
-        "  padding: 7px 10px;"
         "}"
-        "QPushButton#phaseCodecCancelButton:hover {"
+        "QToolButton:hover {"
         "  background: #eef3f8;"
         "}"
-        "QPushButton#phaseCodecCancelButton:pressed {"
-        "  background: #dfe7f0;"
+        "QToolButton:checked {"
+        "  background: #d7ebff;"
+        "  border-color: #5aa1e3;"
+        "}"
+        "QToolButton#phaseCodecEncodeButton {"
+        "  background: #0067c0;"
+        "  border: 0;"
+        "  border-radius: 5px;"
+        "  color: #ffffff;"
+        "  font-weight: 600;"
+        "}"
+        "QToolButton#phaseCodecEncodeButton:hover {"
+        "  background: #075fae;"
+        "}"
+        "QToolButton#phaseCodecEncodeButton:pressed {"
+        "  background: #004f93;"
+        "}"
+        "QToolButton#phaseCodec3DButton {"
+        "  background: #28364d;"
+        "  border: 0;"
+        "  border-radius: 5px;"
+        "  color: #ffffff;"
+        "  font-weight: 700;"
+        "}"
+        "QToolButton#phaseCodec3DButton:hover {"
+        "  background: #354761;"
         "}"
         "QTableWidget {"
         "  background: #ffffff;"
@@ -220,6 +302,692 @@ QWidget* MainWindow::createPhaseCodecPanel()
     ));
 
     return panel;
+}
+
+void MainWindow::floatDockContent(QDockWidget *dock,
+                                  QDialog **floatWindowPtr,
+                                  const QString &title,
+                                  const QSize &size)
+{
+    if (dock == nullptr || floatWindowPtr == nullptr) {
+        return;
+    }
+
+    if (*floatWindowPtr != nullptr) {
+        (*floatWindowPtr)->show();
+        (*floatWindowPtr)->raise();
+        (*floatWindowPtr)->activateWindow();
+        return;
+    }
+
+    QWidget *content = dock->widget();
+    if (content == nullptr) {
+        return;
+    }
+
+    content->setParent(nullptr);
+    dock->setWidget(nullptr);
+    dock->hide();
+
+    auto *dialog = new QDialog(this);
+    *floatWindowPtr = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    dialog->setWindowTitle(title);
+    dialog->setWindowFlags(Qt::Window |
+                           Qt::WindowTitleHint |
+                           Qt::WindowSystemMenuHint |
+                           Qt::WindowMinMaxButtonsHint |
+                           Qt::WindowCloseButtonHint);
+
+    auto *layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(content);
+
+    connect(dialog, &QDialog::finished, this, [this, dock, floatWindowPtr](int) {
+        closeDockContent(dock, floatWindowPtr);
+    });
+
+    dialog->resize(size);
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+void MainWindow::restoreDockContent(QDockWidget *dock, QDialog **floatWindowPtr)
+{
+    if (dock == nullptr || floatWindowPtr == nullptr) {
+        return;
+    }
+
+    QDialog *dialog = *floatWindowPtr;
+    if (dialog != nullptr) {
+        QWidget *content = nullptr;
+        if (dialog->layout() != nullptr && dialog->layout()->count() > 0) {
+            content = dialog->layout()->itemAt(0)->widget();
+        }
+
+        if (content != nullptr) {
+            dialog->layout()->removeWidget(content);
+            content->setParent(nullptr);
+            dock->setWidget(content);
+        }
+
+        *floatWindowPtr = nullptr;
+        dialog->hide();
+        dialog->deleteLater();
+    }
+
+    dock->show();
+    dock->raise();
+}
+
+void MainWindow::closeDockContent(QDockWidget *dock, QDialog **floatWindowPtr)
+{
+    if (dock == nullptr || floatWindowPtr == nullptr) {
+        return;
+    }
+
+    QDialog *dialog = *floatWindowPtr;
+    if (dialog != nullptr) {
+        QWidget *content = nullptr;
+        if (dialog->layout() != nullptr && dialog->layout()->count() > 0) {
+            content = dialog->layout()->itemAt(0)->widget();
+        }
+
+        if (content != nullptr) {
+            dialog->layout()->removeWidget(content);
+            content->setParent(nullptr);
+            dock->setWidget(content);
+        }
+
+        *floatWindowPtr = nullptr;
+        dialog->hide();
+        dialog->deleteLater();
+    }
+
+    dock->hide();
+}
+
+QWidget* MainWindow::createLayoutInfoPanel()
+{
+    QWidget *panel = new QWidget;
+    panel->setMinimumWidth(300);
+    panel->setObjectName(QStringLiteral("layoutInfoPanel"));
+
+    auto *layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(12, 10, 12, 10);
+    layout->setSpacing(10);
+
+    auto *toolbarLayout = new QHBoxLayout;
+    toolbarLayout->setContentsMargins(0, 0, 0, 0);
+    toolbarLayout->setSpacing(6);
+
+    auto *closeButton = createDockToolButton(panel,
+                                             tr("Close"),
+                                             tr("Close Layout Info"),
+                                             54);
+    auto *dockButton = createDockToolButton(panel,
+                                            tr("Dock"),
+                                            tr("Dock Layout Info back into the main window"));
+    auto *floatButton = createDockToolButton(panel,
+                                             tr("Float"),
+                                             tr("Float Layout Info as a standalone window"),
+                                             52);
+
+    toolbarLayout->addWidget(closeButton);
+    toolbarLayout->addWidget(dockButton);
+    toolbarLayout->addWidget(floatButton);
+    toolbarLayout->addStretch(1);
+
+    layoutInfoTable = new QTableWidget(panel);
+    layoutInfoTable->setColumnCount(2);
+    layoutInfoTable->setHorizontalHeaderLabels(QStringList() << tr("Metric") << tr("Value"));
+    layoutInfoTable->verticalHeader()->hide();
+    layoutInfoTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    layoutInfoTable->setSelectionMode(QAbstractItemView::NoSelection);
+    layoutInfoTable->setFocusPolicy(Qt::NoFocus);
+    layoutInfoTable->setShowGrid(false);
+    layoutInfoTable->setWordWrap(true);
+    layoutInfoTable->setAlternatingRowColors(true);
+    layoutInfoTable->setCornerButtonEnabled(false);
+    layoutInfoTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    layoutInfoTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    layoutInfoTable->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    layoutInfoTable->setMinimumHeight(180);
+
+    layout->addLayout(toolbarLayout);
+    layout->addWidget(layoutInfoTable, 1);
+
+    connect(closeButton, &QToolButton::clicked, this, [this]() {
+        closeDockContent(layoutInfoDock, &layoutInfoFloatWindow);
+    });
+    connect(dockButton, &QToolButton::clicked, this, [this]() {
+        restoreDockContent(layoutInfoDock, &layoutInfoFloatWindow);
+    });
+    connect(floatButton, &QToolButton::clicked, this, [this]() {
+        floatDockContent(layoutInfoDock,
+                         &layoutInfoFloatWindow,
+                         tr("Layout Info"),
+                         QSize(560, 460));
+    });
+
+    panel->setStyleSheet(QStringLiteral(
+        "QWidget#layoutInfoPanel {"
+        "  background: #f7f9fc;"
+        "  border: 0;"
+        "}"
+        "QToolButton {"
+        "  background: #ffffff;"
+        "  border: 1px solid #c8d1dc;"
+        "  border-radius: 5px;"
+        "  color: #172033;"
+        "  font-weight: 600;"
+        "}"
+        "QToolButton:hover {"
+        "  background: #eef3f8;"
+        "}"
+        "QTableWidget {"
+        "  background: #ffffff;"
+        "  alternate-background-color: #f8fafc;"
+        "  border: 1px solid #d7dde6;"
+        "  border-radius: 7px;"
+        "  color: #172033;"
+        "}"
+        "QTableWidget::item {"
+        "  border-bottom: 1px solid #eef2f6;"
+        "  border-right: 1px solid #eef2f6;"
+        "  padding: 6px;"
+        "}"
+        "QHeaderView::section {"
+        "  background: #edf2f7;"
+        "  border: 0;"
+        "  color: #405064;"
+        "  padding: 5px;"
+        "}"
+    ));
+
+    return panel;
+}
+
+void MainWindow::createVerilogSourceDock()
+{
+    verilogSourceDock = new QDockWidget(tr("Verilog Source"), splitter);
+    verilogSourceDock->setObjectName(QStringLiteral("verilogSourceDock"));
+    verilogSourceDock->setAllowedAreas(Qt::LeftDockWidgetArea |
+                                       Qt::RightDockWidgetArea |
+                                       Qt::BottomDockWidgetArea);
+    verilogSourceDock->setFeatures(QDockWidget::DockWidgetClosable);
+    verilogSourceDock->setMinimumWidth(340);
+
+    auto *content = new QWidget(verilogSourceDock);
+    content->setObjectName(QStringLiteral("verilogSourceDockContent"));
+    content->setMinimumSize(340, 360);
+
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(10, 8, 10, 10);
+    layout->setSpacing(8);
+
+    auto *toolbarLayout = new QHBoxLayout;
+    toolbarLayout->setContentsMargins(0, 0, 0, 0);
+    toolbarLayout->setSpacing(6);
+
+    auto *closeButton = createDockToolButton(content,
+                                             tr("Close"),
+                                             tr("Close the Verilog source dock"),
+                                             54);
+    auto *dockButton = createDockToolButton(content,
+                                            tr("Dock"),
+                                            tr("Dock the Verilog source view back into the main window"));
+    auto *floatButton = createDockToolButton(content,
+                                             tr("Float"),
+                                             tr("Float the Verilog source view as a standalone window"),
+                                             52);
+
+    toolbarLayout->addWidget(closeButton);
+    toolbarLayout->addWidget(dockButton);
+    toolbarLayout->addWidget(floatButton);
+    toolbarLayout->addStretch(1);
+
+    verilogSourceEditor = new QPlainTextEdit(content);
+    verilogSourceEditor->setObjectName(QStringLiteral("verilogSourceEditor"));
+    verilogSourceEditor->setReadOnly(true);
+    verilogSourceEditor->setLineWrapMode(QPlainTextEdit::NoWrap);
+    verilogSourceEditor->setPlainText(tr("Open a Verilog .v file from an algorithm button to view it here."));
+    QFont codeFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    codeFont.setPointSize(9);
+    verilogSourceEditor->setFont(codeFont);
+
+    layout->addLayout(toolbarLayout);
+    layout->addWidget(verilogSourceEditor, 1);
+    verilogSourceDock->setWidget(content);
+
+    connect(closeButton, &QToolButton::clicked, this, [this]() {
+        closeDockContent(verilogSourceDock, &verilogSourceFloatWindow);
+    });
+    connect(dockButton, &QToolButton::clicked, this, [this]() {
+        restoreDockContent(verilogSourceDock, &verilogSourceFloatWindow);
+    });
+    connect(floatButton, &QToolButton::clicked, this, [this]() {
+        const QString title = verilogSourceDock != nullptr
+            ? verilogSourceDock->windowTitle()
+            : tr("Verilog Source");
+        floatDockContent(verilogSourceDock,
+                         &verilogSourceFloatWindow,
+                         title,
+                         QSize(640, 620));
+    });
+
+    verilogSourceDock->setStyleSheet(dockChromeStyle(QStringLiteral("verilogSourceDock")) +
+        QStringLiteral(
+        "QWidget#verilogSourceDockContent {"
+        "  background: #f7f9fc;"
+        "}"
+        "QPlainTextEdit#verilogSourceEditor {"
+        "  background: #ffffff;"
+        "  border: 1px solid #d7dde6;"
+        "  border-radius: 7px;"
+        "  color: #172033;"
+        "  padding: 8px;"
+        "  selection-background-color: #cfe8ff;"
+        "}"
+        "QToolButton {"
+        "  background: #ffffff;"
+        "  border: 1px solid #c8d1dc;"
+        "  border-radius: 5px;"
+        "  color: #172033;"
+        "  font-weight: 600;"
+        "}"
+        "QToolButton:hover {"
+        "  background: #eef3f8;"
+        "}"
+    ));
+
+    if (splitter != nullptr) {
+        splitter->insertWidget(1, verilogSourceDock);
+    }
+}
+
+void MainWindow::updateVerilogSourceFile(const QString &fileName)
+{
+    if (verilogSourceEditor == nullptr) {
+        return;
+    }
+
+    QFile file(fileName);
+    const QFileInfo info(fileName);
+    const QString title = info.fileName().isEmpty()
+        ? tr("Verilog Source")
+        : tr("Verilog Source - %1").arg(info.fileName());
+
+    if (verilogSourceDock != nullptr) {
+        verilogSourceDock->setWindowTitle(title);
+    }
+    if (verilogSourceFloatWindow != nullptr) {
+        verilogSourceFloatWindow->setWindowTitle(title);
+        verilogSourceFloatWindow->raise();
+    } else if (verilogSourceDock != nullptr) {
+        verilogSourceDock->show();
+        verilogSourceDock->raise();
+    }
+
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        verilogSourceEditor->setPlainText(tr("Cannot open %1\n\n%2")
+                                              .arg(QDir::toNativeSeparators(fileName),
+                                                   file.errorString()));
+        return;
+    }
+
+    QTextStream in(&file);
+    verilogSourceEditor->setPlainText(in.readAll());
+    verilogSourceEditor->moveCursor(QTextCursor::Start);
+}
+
+void MainWindow::createCircuitSchematicDock()
+{
+    circuitSchematicDock = new QDockWidget(tr("Circuit Structure"), this);
+    circuitSchematicDock->setObjectName(QStringLiteral("circuitSchematicDock"));
+    circuitSchematicDock->setAllowedAreas(Qt::LeftDockWidgetArea |
+                                          Qt::RightDockWidgetArea |
+                                          Qt::BottomDockWidgetArea);
+    circuitSchematicDock->setFeatures(QDockWidget::DockWidgetClosable);
+    circuitSchematicDock->setMinimumWidth(660);
+
+    auto *content = new QWidget(circuitSchematicDock);
+    content->setObjectName(QStringLiteral("circuitSchematicDockContent"));
+    content->setMinimumSize(660, 360);
+
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(10, 8, 10, 10);
+    layout->setSpacing(8);
+
+    auto *toolbarLayout = new QHBoxLayout;
+    toolbarLayout->setContentsMargins(0, 0, 0, 0);
+    toolbarLayout->setSpacing(6);
+
+    auto *closeButton = createDockToolButton(content,
+                                             tr("Close"),
+                                             tr("Close the circuit structure dock"),
+                                             54);
+
+    auto *dockButton = createDockToolButton(content,
+                                            tr("Dock"),
+                                            tr("Dock the circuit view back into the main window"));
+
+    auto *floatButton = createDockToolButton(content,
+                                             tr("Float"),
+                                             tr("Float the circuit view as a standalone window"),
+                                             52);
+
+    auto *exportButton = createDockToolButton(content,
+                                              tr("Save"),
+                                              tr("Save circuit structure as SVG or cropped PDF"),
+                                              54);
+
+    auto *labelButton = createDockToolButton(content,
+                                             tr("Labels"),
+                                             tr("Show or hide node labels"),
+                                             58);
+    labelButton->setCheckable(true);
+    labelButton->setChecked(true);
+
+    auto *cancelButton = createDockToolButton(content,
+                                              tr("Cancel"),
+                                              tr("Clear selected circuit item"),
+                                              62);
+
+    auto *zoomOutButton = createDockToolButton(content, QStringLiteral("-"), tr("Zoom out"), 28);
+
+    auto *zoomInButton = createDockToolButton(content, QStringLiteral("+"), tr("Zoom in"), 28);
+
+    auto *fitButton = createDockToolButton(content, tr("Fit"), tr("Fit circuit"), 42);
+
+    toolbarLayout->addWidget(closeButton);
+    toolbarLayout->addWidget(dockButton);
+    toolbarLayout->addWidget(floatButton);
+    toolbarLayout->addWidget(exportButton);
+    toolbarLayout->addWidget(labelButton);
+    toolbarLayout->addWidget(cancelButton);
+    toolbarLayout->addStretch(1);
+    toolbarLayout->addWidget(zoomOutButton);
+    toolbarLayout->addWidget(zoomInButton);
+    toolbarLayout->addWidget(fitButton);
+
+    circuitSchematicView = new CircuitSchematicView(content);
+    circuitSchematicView->setMinimumSize(640, 310);
+
+    layout->addLayout(toolbarLayout);
+    layout->addWidget(circuitSchematicView, 1);
+    circuitSchematicDock->setWidget(content);
+
+    connect(closeButton, &QToolButton::clicked, this, [this]() {
+        closeDockContent(circuitSchematicDock, &circuitSchematicFloatWindow);
+    });
+    connect(dockButton, &QToolButton::clicked, this, [this]() {
+        restoreDockContent(circuitSchematicDock, &circuitSchematicFloatWindow);
+    });
+    connect(floatButton, &QToolButton::clicked, this, [this]() {
+        const QString title = circuitSchematicDock != nullptr
+            ? circuitSchematicDock->windowTitle()
+            : tr("Circuit Structure");
+        floatDockContent(circuitSchematicDock,
+                         &circuitSchematicFloatWindow,
+                         title,
+                         QSize(860, 620));
+    });
+    connect(exportButton, &QToolButton::clicked,
+            this, &MainWindow::exportCircuitSchematicSvg);
+    connect(labelButton, &QToolButton::toggled,
+            circuitSchematicView, &CircuitSchematicView::setNodeLabelsVisible);
+    connect(cancelButton, &QToolButton::clicked,
+            this, &MainWindow::slotClearCircuitSelection);
+    connect(zoomOutButton, &QToolButton::clicked,
+            circuitSchematicView, &CircuitSchematicView::zoomOut);
+    connect(zoomInButton, &QToolButton::clicked,
+            circuitSchematicView, &CircuitSchematicView::zoomIn);
+    connect(fitButton, &QToolButton::clicked,
+            circuitSchematicView, &CircuitSchematicView::fitToCircuit);
+    connect(circuitSchematicView, &CircuitSchematicView::nodeActivated,
+            this, &MainWindow::slotCircuitNodeActivated);
+    connect(circuitSchematicView, &CircuitSchematicView::edgeActivated,
+            this, &MainWindow::slotCircuitEdgeActivated);
+
+    circuitSchematicDock->setStyleSheet(dockChromeStyle(QStringLiteral("circuitSchematicDock")) +
+        QStringLiteral(
+        "QWidget#circuitSchematicDockContent {"
+        "  background: #f7f9fc;"
+        "}"
+        "QGraphicsView#circuitSchematicView {"
+        "  background: #fafcff;"
+        "  border: 1px solid #d7dde6;"
+        "  border-radius: 7px;"
+        "}"
+        "QToolButton {"
+        "  background: #ffffff;"
+        "  border: 1px solid #c8d1dc;"
+        "  border-radius: 5px;"
+        "  color: #172033;"
+        "  font-weight: 600;"
+        "}"
+        "QToolButton:hover {"
+        "  background: #eef3f8;"
+        "}"
+        "QToolButton:checked {"
+        "  background: #d7ebff;"
+        "  border-color: #5aa1e3;"
+        "}"
+    ));
+
+    addDockWidget(Qt::RightDockWidgetArea, circuitSchematicDock);
+    resizeDocks(QList<QDockWidget*>() << circuitSchematicDock,
+                QList<int>() << 720,
+                Qt::Horizontal);
+}
+
+void MainWindow::createPhaseCodecDock()
+{
+    phaseCodecDock = new QDockWidget(tr("Phase Codec"), this);
+    phaseCodecDock->setObjectName(QStringLiteral("phaseCodecDock"));
+    phaseCodecDock->setAllowedAreas(Qt::LeftDockWidgetArea |
+                                    Qt::RightDockWidgetArea |
+                                    Qt::BottomDockWidgetArea);
+    phaseCodecDock->setFeatures(QDockWidget::DockWidgetClosable);
+    phaseCodecDock->setMinimumWidth(320);
+    phaseCodecPanel = createPhaseCodecPanel();
+    phaseCodecDock->setWidget(phaseCodecPanel);
+    phaseCodecDock->setStyleSheet(dockChromeStyle(QStringLiteral("phaseCodecDock")));
+
+    addDockWidget(Qt::RightDockWidgetArea, phaseCodecDock);
+    if (circuitSchematicDock != nullptr) {
+        splitDockWidget(circuitSchematicDock, phaseCodecDock, Qt::Vertical);
+    }
+}
+
+void MainWindow::createLayoutInfoDock()
+{
+    layoutInfoDock = new QDockWidget(tr("Layout Info"), this);
+    layoutInfoDock->setObjectName(QStringLiteral("layoutInfoDock"));
+    layoutInfoDock->setAllowedAreas(Qt::LeftDockWidgetArea |
+                                    Qt::RightDockWidgetArea |
+                                    Qt::BottomDockWidgetArea);
+    layoutInfoDock->setFeatures(QDockWidget::DockWidgetClosable);
+    layoutInfoDock->setMinimumWidth(320);
+    layoutInfoPanel = createLayoutInfoPanel();
+    layoutInfoDock->setWidget(layoutInfoPanel);
+    layoutInfoDock->setStyleSheet(dockChromeStyle(QStringLiteral("layoutInfoDock")));
+
+    addDockWidget(Qt::RightDockWidgetArea, layoutInfoDock);
+    if (phaseCodecDock != nullptr) {
+        splitDockWidget(phaseCodecDock, layoutInfoDock, Qt::Vertical);
+    }
+    resizeDocks(QList<QDockWidget*>() << circuitSchematicDock << phaseCodecDock << layoutInfoDock,
+                QList<int>() << 520 << 280 << 220,
+                Qt::Vertical);
+}
+
+void MainWindow::createStructure3DDock()
+{
+    structure3DDock = new QDockWidget(tr("3D Structure"), this);
+    structure3DDock->setObjectName(QStringLiteral("structure3DDock"));
+    structure3DDock->setAllowedAreas(Qt::LeftDockWidgetArea |
+                                     Qt::RightDockWidgetArea |
+                                     Qt::BottomDockWidgetArea);
+    structure3DDock->setFeatures(QDockWidget::DockWidgetClosable);
+    structure3DDock->setMinimumSize(720, 420);
+
+    auto *content = new QWidget(structure3DDock);
+    content->setObjectName(QStringLiteral("structure3DDockContent"));
+    content->setMinimumSize(720, 420);
+
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(10, 8, 10, 10);
+    layout->setSpacing(8);
+
+    auto *toolbarLayout = new QHBoxLayout;
+    toolbarLayout->setContentsMargins(0, 0, 0, 0);
+    toolbarLayout->setSpacing(6);
+
+    auto *closeButton = createDockToolButton(content,
+                                             tr("Close"),
+                                             tr("Close the 3D structure dock"),
+                                             54);
+    auto *dockButton = createDockToolButton(content,
+                                            tr("Dock"),
+                                            tr("Dock the 3D structure view back into the main window"));
+    auto *floatButton = createDockToolButton(content,
+                                             tr("Float"),
+                                             tr("Float the 3D structure view as a standalone window"),
+                                             52);
+    auto *refreshButton = createDockToolButton(content,
+                                               tr("Update"),
+                                               tr("Refresh the 3D structure from the current layout"),
+                                               62);
+    auto *saveButton = createDockToolButton(content,
+                                            tr("Save"),
+                                            tr("Save the current 3D structure as SVG or cropped PDF"),
+                                            54);
+    auto *zoomOutButton = createDockToolButton(content, QStringLiteral("-"), tr("Zoom out"), 28);
+    auto *zoomInButton = createDockToolButton(content, QStringLiteral("+"), tr("Zoom in"), 28);
+    auto *fitButton = createDockToolButton(content, tr("Fit"), tr("Fit 3D structure"), 42);
+
+    toolbarLayout->addWidget(closeButton);
+    toolbarLayout->addWidget(dockButton);
+    toolbarLayout->addWidget(floatButton);
+    toolbarLayout->addWidget(refreshButton);
+    toolbarLayout->addWidget(saveButton);
+    toolbarLayout->addStretch(1);
+    toolbarLayout->addWidget(zoomOutButton);
+    toolbarLayout->addWidget(zoomInButton);
+    toolbarLayout->addWidget(fitButton);
+
+    structure3DView = new LayeredStructure3DView(content);
+    structure3DView->setMinimumSize(700, 360);
+
+    layout->addLayout(toolbarLayout);
+    layout->addWidget(structure3DView, 1);
+    structure3DDock->setWidget(content);
+
+    connect(closeButton, &QToolButton::clicked, this, [this]() {
+        closeDockContent(structure3DDock, &structure3DFloatWindow);
+    });
+    connect(dockButton, &QToolButton::clicked, this, [this]() {
+        restoreDockContent(structure3DDock, &structure3DFloatWindow);
+    });
+    connect(floatButton, &QToolButton::clicked, this, [this]() {
+        floatDockContent(structure3DDock,
+                         &structure3DFloatWindow,
+                         tr("3D Structure"),
+                         QSize(980, 720));
+    });
+    connect(refreshButton, &QToolButton::clicked,
+            this, &MainWindow::updateStructure3DView);
+    connect(saveButton, &QToolButton::clicked,
+            this, &MainWindow::exportStructure3DGraphic);
+    connect(zoomOutButton, &QToolButton::clicked,
+            structure3DView, &LayeredStructure3DView::zoomOut);
+    connect(zoomInButton, &QToolButton::clicked,
+            structure3DView, &LayeredStructure3DView::zoomIn);
+    connect(fitButton, &QToolButton::clicked,
+            structure3DView, &LayeredStructure3DView::fitToStructure);
+
+    structure3DDock->setStyleSheet(dockChromeStyle(QStringLiteral("structure3DDock")) +
+        QStringLiteral(
+        "QWidget#structure3DDockContent {"
+        "  background: #f7f9fc;"
+        "}"
+        "QGraphicsView#layeredStructure3DView {"
+        "  background: #f7fafd;"
+        "  border: 1px solid #d7dde6;"
+        "  border-radius: 7px;"
+        "}"
+        "QToolButton {"
+        "  background: #ffffff;"
+        "  border: 1px solid #c8d1dc;"
+        "  border-radius: 5px;"
+        "  color: #172033;"
+        "  font-weight: 600;"
+        "}"
+        "QToolButton:hover {"
+        "  background: #eef3f8;"
+        "}"
+    ));
+
+    addDockWidget(Qt::BottomDockWidgetArea, structure3DDock);
+    structure3DDock->hide();
+}
+
+void MainWindow::exportStructure3DGraphic()
+{
+    if (structure3DView == nullptr) {
+        return;
+    }
+
+    updateStructure3DView();
+
+    const QFileInfo currentInfo(curFile);
+    const QString defaultDir = currentInfo.absoluteDir().exists()
+        ? currentInfo.absoluteDir().absolutePath()
+        : QDir::currentPath();
+    const QString defaultName = QStringLiteral("ifcn_3d_structure.pdf");
+    QString selectedFilter;
+    QString filePath = QFileDialog::getSaveFileName(this,
+                                                    tr("Save 3D Structure"),
+                                                    QDir(defaultDir).absoluteFilePath(defaultName),
+                                                    tr("PDF files (*.pdf);;SVG files (*.svg)"),
+                                                    &selectedFilter);
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    QFileInfo info(filePath);
+    QString suffix = info.suffix().toLower();
+    if (suffix.isEmpty()) {
+        suffix = selectedFilter.contains(QStringLiteral("SVG"), Qt::CaseInsensitive)
+            ? QStringLiteral("svg")
+            : QStringLiteral("pdf");
+        filePath += QLatin1Char('.') + suffix;
+    }
+
+    if (suffix != QStringLiteral("svg") && suffix != QStringLiteral("pdf")) {
+        suffix = selectedFilter.contains(QStringLiteral("SVG"), Qt::CaseInsensitive)
+            ? QStringLiteral("svg")
+            : QStringLiteral("pdf");
+        filePath += QLatin1Char('.') + suffix;
+    }
+
+    const bool saved = suffix == QStringLiteral("pdf")
+        ? structure3DView->exportToPdf(filePath)
+        : structure3DView->exportToSvg(filePath);
+
+    if (!saved) {
+        QMessageBox::warning(this,
+                             tr("Save 3D Structure"),
+                             tr("Failed to save the 3D structure graphic."));
+        return;
+    }
+
+    printToStatusBar(tr("3D structure saved: %1")
+                         .arg(QDir::toNativeSeparators(filePath)));
 }
 
 void MainWindow::centerViewOnItems(bool fitToView)
@@ -459,6 +1227,20 @@ void MainWindow::clearPhaseCodecHighlight()
     phaseCodecHighlightItems.clear();
 }
 
+QRectF MainWindow::phaseCodecTileSceneRect(const PhaseCodecTilePreview &tile) const
+{
+    const int startGridX = phaseCodecOriginGrid.x()
+        + static_cast<int>(tile.tileX) * phaseCodecBlockSize;
+    const int startGridY = phaseCodecOriginGrid.y()
+        + static_cast<int>(tile.tileY) * phaseCodecBlockSize;
+    const qreal left = 40.0 + startGridX * CLOCK_SCHEME_SIZE_5 - CLOCK_SCHEME_SIZE_5 / 2.0;
+    const qreal top = 40.0 + startGridY * CLOCK_SCHEME_SIZE_5 - CLOCK_SCHEME_SIZE_5 / 2.0;
+    return QRectF(left,
+                  top,
+                  phaseCodecBlockSize * CLOCK_SCHEME_SIZE_5,
+                  phaseCodecBlockSize * CLOCK_SCHEME_SIZE_5);
+}
+
 void MainWindow::highlightPhaseCodecTile(const PhaseCodecTilePreview &tile)
 {
     if (scene == nullptr || view == nullptr) {
@@ -466,17 +1248,7 @@ void MainWindow::highlightPhaseCodecTile(const PhaseCodecTilePreview &tile)
     }
 
     clearPhaseCodecHighlight();
-
-    const int startGridX = phaseCodecOriginGrid.x()
-        + static_cast<int>(tile.tileX) * phaseCodecBlockSize;
-    const int startGridY = phaseCodecOriginGrid.y()
-        + static_cast<int>(tile.tileY) * phaseCodecBlockSize;
-    const qreal left = 40.0 + startGridX * CLOCK_SCHEME_SIZE_5 - CLOCK_SCHEME_SIZE_5 / 2.0;
-    const qreal top = 40.0 + startGridY * CLOCK_SCHEME_SIZE_5 - CLOCK_SCHEME_SIZE_5 / 2.0;
-    const QRectF blockRect(left,
-                           top,
-                           phaseCodecBlockSize * CLOCK_SCHEME_SIZE_5,
-                           phaseCodecBlockSize * CLOCK_SCHEME_SIZE_5);
+    const QRectF blockRect = phaseCodecTileSceneRect(tile);
 
     QPen outerPen(QColor(0, 103, 192, 235), 4.0);
     outerPen.setCosmetic(true);
@@ -529,6 +1301,201 @@ void MainWindow::highlightPhaseCodecTile(const PhaseCodecTilePreview &tile)
         customStatusBar->addMessage(tr("Located encoded tile (%1, %2)")
                                     .arg(tile.tileX)
                                     .arg(tile.tileY));
+    }
+}
+
+void MainWindow::highlightAllPhaseCodecTiles()
+{
+    if (scene == nullptr || view == nullptr) {
+        return;
+    }
+
+    clearPhaseCodecHighlight();
+    QRectF combinedRect;
+    for (const PhaseCodecTilePreview &tile : phaseCodecTiles) {
+        const QRectF blockRect = phaseCodecTileSceneRect(tile);
+        combinedRect = combinedRect.isValid() ? combinedRect.united(blockRect) : blockRect;
+
+        QPen outerPen(QColor(0, 103, 192, 205), 2.8);
+        outerPen.setCosmetic(true);
+        outerPen.setJoinStyle(Qt::MiterJoin);
+        auto *overlay = scene->addRect(blockRect,
+                                       outerPen,
+                                       QBrush(QColor(0, 103, 192, 24)));
+        overlay->setZValue(999990);
+        phaseCodecHighlightItems.push_back(overlay);
+
+        auto *label = scene->addSimpleText(tr("tile(%1,%2)\n0x%3")
+                                           .arg(tile.tileX)
+                                           .arg(tile.tileY)
+                                           .arg(tile.hex));
+        QFont labelFont = label->font();
+        labelFont.setBold(true);
+        labelFont.setPointSize(8);
+        label->setFont(labelFont);
+        label->setBrush(QBrush(QColor(0, 63, 120)));
+        label->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+        label->setPos(blockRect.left() + 6, blockRect.top() + 6);
+        label->setZValue(999991);
+        phaseCodecHighlightItems.push_back(label);
+    }
+
+    if (combinedRect.isValid()) {
+        view->centerOn(combinedRect.center());
+    }
+
+    if (customStatusBar != nullptr) {
+        customStatusBar->addMessage(tr("Showing all %1 encoded phase tile(s)")
+                                    .arg(phaseCodecTiles.size()));
+    }
+}
+
+void MainWindow::updateStructure3DView()
+{
+    if (structure3DView == nullptr || scene == nullptr) {
+        return;
+    }
+
+    QVector<LayeredStructure3DView::ClockRegionRecord> clockRegions;
+    const QVector<QCADScene::ClockRegionRecord> sceneClockRegions = scene->clockRegions();
+    if (phaseCodecTiles.isEmpty() && !sceneClockRegions.isEmpty()) {
+        phaseCodecPreviewActive = true;
+        updatePhaseCodecPreview();
+    }
+    clockRegions.reserve(sceneClockRegions.size());
+    for (const QCADScene::ClockRegionRecord &region : sceneClockRegions) {
+        LayeredStructure3DView::ClockRegionRecord record;
+        record.x = region.x;
+        record.y = region.y;
+        record.phase = region.phase;
+        clockRegions.push_back(record);
+    }
+
+    if (clockRegions.isEmpty() && gateLevelMapping != nullptr) {
+        clockRegions.reserve(gateLevelMapping->coordPhaseMap.size());
+        for (auto it = gateLevelMapping->coordPhaseMap.cbegin();
+             it != gateLevelMapping->coordPhaseMap.cend();
+             ++it) {
+            LayeredStructure3DView::ClockRegionRecord record;
+            record.x = 40 + it.key().x() * CLOCK_SCHEME_SIZE_5;
+            record.y = 40 + it.key().y() * CLOCK_SCHEME_SIZE_5;
+            record.phase = it.value();
+            clockRegions.push_back(record);
+        }
+    }
+
+    QVector<QVector<LayeredStructure3DView::CellRecord>> cellsByLayer;
+    cellsByLayer.resize(3);
+
+    if (scene->hasFastRender()) {
+        const auto &fastLayers = scene->fastCellsByLayer();
+        const int layerLimit = qMin(3, fastLayers.size());
+        for (int layer = 0; layer < layerLimit; ++layer) {
+            cellsByLayer[layer].reserve(fastLayers[layer].size());
+            for (const QCADScene::FastCellRecord &cell : fastLayers[layer]) {
+                LayeredStructure3DView::CellRecord record;
+                record.x = cell.x;
+                record.y = cell.y;
+                record.layer = layer;
+                record.phase = cell.phase;
+                record.type = cell.type;
+                record.name = cell.name;
+                cellsByLayer[layer].push_back(record);
+            }
+        }
+    } else {
+        const int layerLimit = qMin(3, layers.size());
+        for (int layer = 0; layer < layerLimit; ++layer) {
+            cellsByLayer[layer].reserve(layers[layer].size());
+            for (QGraphicsItem *item : layers[layer]) {
+                if (item == nullptr || item->type() != QCADCellItem::Type) {
+                    continue;
+                }
+                const auto *cell = static_cast<const QCADCellItem *>(item);
+                LayeredStructure3DView::CellRecord record;
+                record.x = static_cast<int>(std::round(simon::x(*cell)));
+                record.y = static_cast<int>(std::round(simon::y(*cell)));
+                record.layer = layer;
+                record.phase = simon::timezone(*cell);
+                record.type = cell->getCellType();
+                record.name = QString::fromStdString(simon::name(*cell));
+                cellsByLayer[layer].push_back(record);
+            }
+        }
+    }
+
+    int phaseCount = 4;
+    if (!sceneClockRegions.isEmpty()) {
+        phaseCount = selectedPhaseCodecCount(sceneClockRegions);
+    } else if (phaseCodecModeComboBox != nullptr) {
+        const int requested = phaseCodecModeComboBox->currentData().toInt();
+        if (requested == 3 || requested == 4) {
+            phaseCount = requested;
+        }
+    }
+
+    QVector<LayeredStructure3DView::EncodedTileRecord> encodedTiles;
+    encodedTiles.reserve(phaseCodecTiles.size());
+    for (const PhaseCodecTilePreview &tile : phaseCodecTiles) {
+        LayeredStructure3DView::EncodedTileRecord record;
+        record.tileX = tile.tileX;
+        record.tileY = tile.tileY;
+        record.startGridX = phaseCodecOriginGrid.x()
+            + static_cast<int>(tile.tileX) * phaseCodecBlockSize;
+        record.startGridY = phaseCodecOriginGrid.y()
+            + static_cast<int>(tile.tileY) * phaseCodecBlockSize;
+        record.blockSize = phaseCodecBlockSize;
+        record.hex = tile.hex;
+
+        try {
+            const auto matrix = fcngraph::phase_codec::decodePackedHexToMatrix(
+                tile.hex.toStdString(),
+                phaseCount,
+                phaseCodecBlockSize
+            );
+            for (int row = 0; row < phaseCodecBlockSize; ++row) {
+                if (row > 0) {
+                    record.matrixText += QLatin1Char('\n');
+                }
+                for (int column = 0; column < phaseCodecBlockSize; ++column) {
+                    if (column > 0) {
+                        record.matrixText += QLatin1Char(' ');
+                    }
+                    record.matrixText += QString::number(matrix[static_cast<size_t>(row)]
+                                                               [static_cast<size_t>(column)]);
+                }
+            }
+        } catch (const std::exception &) {
+            record.matrixText = tr("decode failed");
+        }
+
+        encodedTiles.push_back(record);
+    }
+
+    structure3DView->setStructure(phaseCount, clockRegions, cellsByLayer, encodedTiles);
+
+    if (customStatusBar != nullptr) {
+        customStatusBar->addMessage(tr("3D structure refreshed: %1-phase clock generator, %2 clock regions, %3 encoded tiles")
+                                    .arg(phaseCount)
+                                    .arg(clockRegions.size())
+                                    .arg(encodedTiles.size()));
+    }
+}
+
+void MainWindow::showStructure3DView()
+{
+    if (structure3DDock == nullptr || structure3DView == nullptr) {
+        return;
+    }
+
+    phaseCodecPreviewActive = true;
+    updatePhaseCodecPreview();
+    updateStructure3DView();
+    structure3DDock->show();
+    structure3DDock->raise();
+    if (structure3DFloatWindow != nullptr) {
+        structure3DFloatWindow->show();
+        structure3DFloatWindow->raise();
     }
 }
 
@@ -685,6 +1652,11 @@ void MainWindow::updatePhaseCodecPreview()
                 .arg(phaseCount)
                 .arg(blockSize)
                 .arg(phaseCodecTiles.size()));
+        if (phaseCodecShowAllButton != nullptr && phaseCodecShowAllButton->isChecked()) {
+            highlightAllPhaseCodecTiles();
+        } else {
+            clearPhaseCodecHighlight();
+        }
     } catch (const std::exception &ex) {
         clearPhaseCodecHighlight();
         phaseCodecStatusLabel->setText(tr("Encoding failed: %1").arg(ex.what()));
@@ -701,6 +1673,10 @@ void MainWindow::slotCancelPhaseCodecEncoding()
 {
     phaseCodecPreviewActive = false;
     phaseCodecTiles.clear();
+    if (phaseCodecShowAllButton != nullptr) {
+        const QSignalBlocker blocker(phaseCodecShowAllButton);
+        phaseCodecShowAllButton->setChecked(false);
+    }
     clearPhaseCodecHighlight();
     if (phaseCodecTable != nullptr) {
         phaseCodecTable->clear();
@@ -721,6 +1697,9 @@ void MainWindow::slotPhaseCodecModeChanged(int idx)
     if (phaseCodecPreviewActive) {
         updatePhaseCodecPreview();
     }
+    if (structure3DDock != nullptr && structure3DDock->isVisible()) {
+        updateStructure3DView();
+    }
 }
 
 void MainWindow::slotPhaseCodecTileActivated(int row, int column)
@@ -737,6 +1716,10 @@ void MainWindow::slotPhaseCodecTileActivated(int row, int column)
     const int previewIndex = item->data(Qt::UserRole).toInt(&ok);
     if (!ok || previewIndex < 0 || previewIndex >= phaseCodecTiles.size()) {
         return;
+    }
+    if (phaseCodecShowAllButton != nullptr && phaseCodecShowAllButton->isChecked()) {
+        const QSignalBlocker blocker(phaseCodecShowAllButton);
+        phaseCodecShowAllButton->setChecked(false);
     }
     highlightPhaseCodecTile(phaseCodecTiles[previewIndex]);
 }

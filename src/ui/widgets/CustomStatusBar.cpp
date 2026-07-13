@@ -3,38 +3,83 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QSizePolicy>
+#include <QStyle>
+#include <QTime>
+#include <QToolButton>
 
 CustomStatusBar::CustomStatusBar(QWidget *parent) : QWidget(parent)
 {
     setObjectName("CustomStatusBar");
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
 
-    // 创建内容区域
+    mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(3);
+
+    summaryWidget = new QWidget(this);
+    summaryWidget->setObjectName(QStringLiteral("statusSummary"));
+    summaryWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    summaryBadgeLabel = new QLabel(tr("Ready"), summaryWidget);
+    summaryBadgeLabel->setObjectName(QStringLiteral("statusBadge"));
+    summaryBadgeLabel->setProperty("state", QStringLiteral("ready"));
+    summaryBadgeLabel->setAlignment(Qt::AlignCenter);
+    summaryBadgeLabel->setMinimumWidth(72);
+
+    latestMessageLabel = new QLabel(tr("Ready"), summaryWidget);
+    latestMessageLabel->setObjectName(QStringLiteral("latestStatusMessage"));
+    latestMessageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    latestMessageLabel->setMinimumWidth(0);
+    latestMessageLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    detailsButton = new QToolButton(summaryWidget);
+    detailsButton->setObjectName(QStringLiteral("statusDetailsButton"));
+    detailsButton->setText(tr("Details"));
+    detailsButton->setToolTip(tr("Show or hide the operation log"));
+    detailsButton->setCheckable(true);
+    detailsButton->setAutoRaise(true);
+
+    auto *summaryLayout = new QHBoxLayout(summaryWidget);
+    summaryLayout->setContentsMargins(7, 4, 7, 4);
+    summaryLayout->setSpacing(8);
+    summaryLayout->addWidget(summaryBadgeLabel);
+    summaryLayout->addWidget(latestMessageLabel, 1);
+    summaryLayout->addWidget(detailsButton);
+    mainLayout->addWidget(summaryWidget);
+
     statusContent = new QWidget(this);
     statusLayout = new QVBoxLayout(statusContent);
     statusLayout->setContentsMargins(4, 4, 4, 6);
     statusLayout->setSpacing(2);
+    statusLayout->setAlignment(Qt::AlignTop);
 
-    // 创建 QScrollArea 并将内容区域添加进去
     scrollArea = new QScrollArea(this);
+    scrollArea->setObjectName(QStringLiteral("statusLog"));
     scrollArea->setWidget(statusContent);
     scrollArea->setWidgetResizable(true);
-
     scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-
-    scrollArea->setMinimumHeight(140);  // 设置最小高度
-
-    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    scrollArea->setMaximumHeight(112);
+    scrollArea->hide();
     mainLayout->addWidget(scrollArea);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
-    setLayout(mainLayout);
 
-    // 留一个弹簧避免最后一行被遮挡
-    statusLayout->addStretch(1);
+    connect(detailsButton, &QToolButton::toggled, this, [this](bool visible) {
+        scrollArea->setVisible(visible);
+        detailsButton->setText(visible ? tr("Hide details") : tr("Details"));
+        updateGeometry();
+    });
 }
 
 void CustomStatusBar::addMessage(const QString &message)
 {
-    QLabel *newMessageText = new QLabel(message, statusContent);
+    if (statusMessagesMuted) {
+        return;
+    }
+
+    latestMessageLabel->setText(message);
+    latestMessageLabel->setToolTip(message);
+
+    const QString timestamp = QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
+    QLabel *newMessageText = new QLabel(QStringLiteral("%1  %2").arg(timestamp, message), statusContent);
     newMessageText->setObjectName("statusMessage");
     newMessageText->setWordWrap(true);
     newMessageText->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -42,15 +87,27 @@ void CustomStatusBar::addMessage(const QString &message)
     newMessageText->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     newMessageText->setMinimumHeight(newMessageText->fontMetrics().lineSpacing() + 12);
 
-    // 将文本消息添加到布局中
-    statusLayout->insertWidget(statusLayout->count() - 1, newMessageText);
+    statusLayout->addWidget(newMessageText);
+    messageLabels.push_back(newMessageText);
+    while (messageLabels.size() > 100) {
+        QLabel *oldest = messageLabels.takeFirst();
+        statusLayout->removeWidget(oldest);
+        oldest->deleteLater();
+    }
 
-    // 强制刷新布局和滚动到最新的消息
     QTimer::singleShot(0, this, [this]() {
-        scrollArea->updateGeometry();  // 更新滚动区域的布局
-        QApplication::processEvents();  // 处理事件队列，确保布局更新
         scrollArea->verticalScrollBar()->setValue(scrollArea->verticalScrollBar()->maximum());
     });
+}
+
+void CustomStatusBar::setMessagesMuted(bool muted)
+{
+    statusMessagesMuted = muted;
+}
+
+bool CustomStatusBar::messagesMuted() const
+{
+    return statusMessagesMuted;
 }
 
 void CustomStatusBar::startOperation(const QString &title, const QString &detail)
@@ -60,7 +117,10 @@ void CustomStatusBar::startOperation(const QString &title, const QString &detail
     operationDetail = detail;
     operationProgressBar->setRange(0, 0);
     operationProgressBar->setValue(0);
-    operationWidget->show();
+    setSummaryState(tr("Running"), QStringLiteral("running"));
+    latestMessageLabel->setText(detail);
+    operationHideTimer->stop();
+    showOperationWidget();
     operationElapsed.restart();
     operationTimer->start(1000);
     refreshOperationElapsed();
@@ -76,7 +136,9 @@ void CustomStatusBar::updateOperation(const QString &detail, int value, int maxi
     } else {
         operationProgressBar->setRange(0, 0);
     }
-    operationWidget->show();
+    setSummaryState(tr("Running"), QStringLiteral("running"));
+    latestMessageLabel->setText(detail);
+    showOperationWidget();
     refreshOperationElapsed();
 }
 
@@ -88,7 +150,11 @@ void CustomStatusBar::finishOperation(const QString &message)
     operationProgressBar->setValue(100);
     operationTitleLabel->setText(tr("Completed"));
     operationDetail = message;
+    setSummaryState(tr("Done"), QStringLiteral("success"));
+    addMessage(message);
+    showOperationWidget();
     refreshOperationElapsed();
+    scheduleOperationHide(6000);
 }
 
 void CustomStatusBar::failOperation(const QString &message)
@@ -99,7 +165,11 @@ void CustomStatusBar::failOperation(const QString &message)
     operationProgressBar->setValue(0);
     operationTitleLabel->setText(tr("Failed"));
     operationDetail = message;
+    setSummaryState(tr("Failed"), QStringLiteral("error"));
+    addMessage(message);
+    showOperationWidget();
     refreshOperationElapsed();
+    scheduleOperationHide(12000);
 }
 
 void CustomStatusBar::ensureOperationWidget()
@@ -110,6 +180,7 @@ void CustomStatusBar::ensureOperationWidget()
 
     operationWidget = new QWidget(this);
     operationWidget->setObjectName("operationStatus");
+    operationWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     operationTitleLabel = new QLabel(operationWidget);
     operationTitleLabel->setWordWrap(true);
@@ -143,7 +214,21 @@ void CustomStatusBar::ensureOperationWidget()
     operationTimer = new QTimer(this);
     connect(operationTimer, &QTimer::timeout, this, &CustomStatusBar::refreshOperationElapsed);
 
-    statusLayout->insertWidget(0, operationWidget);
+    operationHideTimer = new QTimer(this);
+    operationHideTimer->setSingleShot(true);
+    connect(operationHideTimer, &QTimer::timeout, operationWidget, &QWidget::hide);
+
+    mainLayout->insertWidget(1, operationWidget);
+    operationWidget->hide();
+}
+
+void CustomStatusBar::showOperationWidget()
+{
+    if (operationWidget == nullptr) {
+        return;
+    }
+    operationWidget->show();
+    operationWidget->raise();
 }
 
 void CustomStatusBar::refreshOperationElapsed()
@@ -154,4 +239,23 @@ void CustomStatusBar::refreshOperationElapsed()
 
     const qint64 elapsedSeconds = operationElapsed.isValid() ? operationElapsed.elapsed() / 1000 : 0;
     operationDetailLabel->setText(tr("%1 | elapsed %2s").arg(operationDetail).arg(elapsedSeconds));
+}
+
+void CustomStatusBar::setSummaryState(const QString &label, const QString &state)
+{
+    if (summaryBadgeLabel == nullptr) {
+        return;
+    }
+    summaryBadgeLabel->setText(label);
+    summaryBadgeLabel->setProperty("state", state);
+    summaryBadgeLabel->style()->unpolish(summaryBadgeLabel);
+    summaryBadgeLabel->style()->polish(summaryBadgeLabel);
+    summaryBadgeLabel->update();
+}
+
+void CustomStatusBar::scheduleOperationHide(int milliseconds)
+{
+    if (operationHideTimer != nullptr) {
+        operationHideTimer->start(qMax(0, milliseconds));
+    }
 }

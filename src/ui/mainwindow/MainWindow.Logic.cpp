@@ -109,7 +109,7 @@ void MainWindow::loadFile(const QString &fileName)
 
     loadClockRegionsFromFile(fileName);
     setCurrentFile(fileName);
-    statusBar()->showMessage(tr("Loaded %1").arg(fileName), 2000);
+    customStatusBar->addMessage(tr("Loaded %1").arg(fileName));
     emit savedname(fileName);
     endSceneBatchUpdate(true);
     resetUndoHistory();
@@ -147,7 +147,7 @@ bool MainWindow::shouldMapIfcnFile(const QString &fileName) const
     return true;
 }
 
-void MainWindow::mapIfcnFile(const QString &fileName)
+void MainWindow::mapIfcnFile(const QString &fileName, bool showStatusMessage)
 {
     scene->clearFastRender();
     clearCircuitNodeHighlight();
@@ -155,7 +155,9 @@ void MainWindow::mapIfcnFile(const QString &fileName)
     setCurrentFile(fileName);
     setDirty(true);
     resetUndoHistory();
-    statusBar()->showMessage(tr("Mapped %1").arg(fileName), 2000);
+    if (showStatusMessage) {
+        customStatusBar->addMessage(tr("Mapped %1").arg(fileName));
+    }
     emit savedname(fileName);
 }
 
@@ -478,7 +480,7 @@ bool MainWindow::saveFile(const QString &fileName, bool updateCurrentFile, bool 
         setCurrentFile(fileName);
     }
     if (showStatus) {
-        statusBar()->showMessage(tr("文本保存成功"), 2000);
+        customStatusBar->addMessage(tr("Saved successfully"));
     }
     return true;
 }
@@ -539,6 +541,27 @@ QString MainWindow::defaultQcaSavePath() const
     return curFile;
 }
 
+void MainWindow::openLayoutFilePath(const QString &fileName)
+{
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    if (tabHost) {
+        tabHost->openFileInNewTab(fileName);
+        return;
+    }
+
+    if ((layers.size() == 0) || (layers.size() == 1 && layers[0].isEmpty())) {
+        loadFile(fileName);
+        return;
+    }
+
+    MainWindow *newMainWindow = new MainWindow;
+    newMainWindow->show();
+    newMainWindow->loadFile(fileName);
+}
+
 void MainWindow::slotNew()
 {
     if (tabHost) {
@@ -557,22 +580,7 @@ void MainWindow::slotOpen()
         return;
     }
 
-    const QString suffix = QFileInfo(fileName).suffix().toLower();
-    const bool isIfcn = (suffix == "ifcn");
-
-    if (tabHost) {
-        tabHost->openFileInNewTab(fileName);
-        return;
-    }
-
-    if ((layers.size() == 0) || (layers.size() == 1 && layers[0].isEmpty())) {
-        loadFile(fileName);
-        return;
-    }
-
-    MainWindow *newMainWindow = new MainWindow;
-    newMainWindow->show();
-    newMainWindow->loadFile(fileName);
+    openLayoutFilePath(fileName);
 }
 
 bool MainWindow::slotSave()

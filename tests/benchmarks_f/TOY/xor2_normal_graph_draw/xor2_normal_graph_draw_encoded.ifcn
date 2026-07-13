@@ -1,0 +1,53 @@
+#circuit name: xor2.v
+
+#designed by normal graph draw algorithm based on GCN embedding + barycenter ordering, right-down reachable initialization, ML-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification.
+
+#gate level placement and routing infomation
+#gates number: 6
+#input/output: 2 / 1
+#edges number: 7
+#total layers: 4
+#layout area: width: 3, height: 5, area: 15
+#critical path: 7
+#clocks: 1.75
+#run time: 2.320310 s
+#phase encoding: enabled
+#phase count: 4
+#clock scheme: 2DDWave
+#block size: 4x4
+#coordinate origin: normalized top-left (0,0)
+#unassigned phase in raw map: none
+#encoded padding/unassigned compatibility fill: 0
+#encoding: row-major blocks; each block stores one byte per row; each cell uses 2 bits; column 0 is LSB
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (0,0);
+1, b, input, (1,0);
+2, out, and, (2,4);
+3, w1, and, (2,2);
+4, w2, or, (1,2);
+5, ~w1, not, (2,3);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(4,2): (1,2),(1,3),(1,4),(2,4);
+(5,2): (2,3),(2,4);
+(3,5): (2,2),(2,3);
+(1,4): (1,0),(1,1),(1,2);
+(1,3): (1,0),(1,1),(2,1),(2,2);
+(0,4): (0,0),(0,1),(0,2),(1,2);
+(0,3): (0,0),(0,1),(1,1),(2,1),(2,2);
+#paths info
+
+#absolute bbox: (0,0) -> (2,4)
+#raw size: width: 3, height: 5
+#padded size: width: 4, height: 8
+#blocks: columns: 1, rows: 2
+
+#encoded phase map
+### (block_x,block_y): hex ###
+(0,0):0x24390e13;
+(0,1):0x24000000;
+#encoded phase map

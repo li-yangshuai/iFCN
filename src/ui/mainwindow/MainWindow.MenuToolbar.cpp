@@ -2,8 +2,72 @@
 #include <QMenuBar>
 #include <QDockWidget>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QKeySequence>
 #include <QSizePolicy>
+#include <QTemporaryFile>
+#include <QToolButton>
+
+namespace {
+QWidget *createToolbarSpacer(QWidget *parent)
+{
+    auto *spacer = new QWidget(parent);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    spacer->setStyleSheet(QStringLiteral("background: transparent;"));
+    return spacer;
+}
+
+QToolButton *createWorkspaceToolButton(QWidget *parent,
+                                       const QString &text,
+                                       const QString &toolTip)
+{
+    auto *button = new QToolButton(parent);
+    button->setText(text);
+    button->setToolTip(toolTip);
+    button->setAutoRaise(false);
+    button->setMinimumSize(58, 28);
+    return button;
+}
+} // namespace
+
+bool MainWindow::prepareSimulationInput()
+{
+    QTemporaryFile snapshot(
+            QDir::temp().filePath(QStringLiteral("ifcn_simulation_XXXXXX.qca")));
+    snapshot.setAutoRemove(false);
+    if (!snapshot.open()) {
+        printToStatusBar(tr("Simulation failed: cannot create a temporary QCA snapshot."));
+        return false;
+    }
+
+    const QString snapshotFileName = snapshot.fileName();
+    snapshot.close();
+    if (!saveFile(snapshotFileName, false, false)) {
+        QFile::remove(snapshotFileName);
+        return false;
+    }
+
+    QString resultBasePath;
+    if (!curFile.isEmpty() && curFile != tr("Unnamed")) {
+        const QFileInfo sourceInfo(curFile);
+        resultBasePath = sourceInfo.absoluteDir().filePath(
+                sourceInfo.completeBaseName());
+    } else {
+        const QFileInfo snapshotInfo(snapshotFileName);
+        resultBasePath = snapshotInfo.absoluteDir().filePath(
+                QStringLiteral("untitled_") + snapshotInfo.completeBaseName());
+    }
+
+    if (!simulationManager->setSimulationInputFile(
+                snapshotFileName, resultBasePath, snapshotFileName)) {
+        QFile::remove(snapshotFileName);
+        return false;
+    }
+
+    printToStatusBar(tr("Simulation input snapshot generated from the current canvas."));
+    return true;
+}
 
 void MainWindow::createActions()
 {
@@ -72,16 +136,6 @@ void MainWindow::createActions()
     redoAction->setStatusTip(tr("redo last undone edit"));
     connect(redoAction, &QAction::triggered, this, &MainWindow::slotRedo);
 
-    /******** "放大"动作 *********/
-    zoomInAction = new QAction(QIcon(QDir::toNativeSeparators(":/zoomIn.png")), tr("Zoom&In"), this);
-    zoomInAction->setShortcuts(QKeySequence::ZoomIn);
-    zoomInAction->setStatusTip(tr("zoomIn file"));
-
-    /******** "缩小"动作 *********/
-    zoomOutAction = new QAction(QIcon(QDir::toNativeSeparators(":/zoomOut.png")), tr("Zoom&Out"), this);
-    zoomOutAction->setShortcuts(QKeySequence::ZoomOut);
-    zoomOutAction->setStatusTip(tr("zoomOut file"));
-
     /******** "时钟网格视图"动作 *********/
     toggleClockGridAction = new QAction(tr("Clock Grid"), this);
     toggleClockGridAction->setCheckable(true);
@@ -138,23 +192,61 @@ void MainWindow::createActions()
     startBistableSimAction = new QAction(tr("&Start Bistable Simulation"), this);
     startBistableSimAction->setShortcut(tr("Ctrl+B"));
     startBistableSimAction->setStatusTip(tr("Start Bistable Simulation"));
-    connect(startBistableSimAction, &QAction::triggered, simulationManager, &SimulationManager::slotBistableSim);
+    connect(startBistableSimAction, &QAction::triggered, this, [this]() {
+        if (prepareSimulationInput()) {
+            simulationManager->slotBistableSim();
+        }
+    });
+
+    startAcceleratedBistableSimAction = new QAction(
+            tr("Start &Accelerated Bistable Simulation"), this);
+    startAcceleratedBistableSimAction->setShortcut(tr("Ctrl+Alt+B"));
+    startAcceleratedBistableSimAction->setStatusTip(
+            tr("Start strict-equivalent accelerated Bistable simulation"));
+    connect(startAcceleratedBistableSimAction, &QAction::triggered, this, [this]() {
+        if (prepareSimulationInput()) {
+            simulationManager->slotAcceleratedBistableSim();
+        }
+    });
 
     startCoherenceSimAction = new QAction(tr("&Start Coherence Simulation"), this);
-    startCoherenceSimAction->setShortcut(tr("Ctrl+C"));
+    startCoherenceSimAction->setShortcut(tr("Ctrl+Shift+C"));
     startCoherenceSimAction->setStatusTip(tr("Start Coherence Simulation"));
-    connect(startCoherenceSimAction, &QAction::triggered, simulationManager, &SimulationManager::slotCoherenceSim);
+    connect(startCoherenceSimAction, &QAction::triggered, this, [this]() {
+        if (prepareSimulationInput()) {
+            simulationManager->slotCoherenceSim();
+        }
+    });
 
-    starBistableSimWithSelectiveAction = new QAction(tr("&Strar Bistable With Selective Simulation"));
+    startAcceleratedCoherenceSimAction = new QAction(
+            tr("Start A&ccelerated Coherence Simulation"), this);
+    startAcceleratedCoherenceSimAction->setShortcut(tr("Ctrl+Alt+C"));
+    startAcceleratedCoherenceSimAction->setStatusTip(
+            tr("Start strict-equivalent accelerated Coherence simulation"));
+    connect(startAcceleratedCoherenceSimAction, &QAction::triggered, this, [this]() {
+        if (prepareSimulationInput()) {
+            simulationManager->slotAcceleratedCoherenceSim();
+        }
+    });
+
+    starBistableSimWithSelectiveAction = new QAction(tr("&Start Bistable With Selective Simulation"));
     starBistableSimWithSelectiveAction->setShortcut(tr("Ctrl+G"));
-    starBistableSimWithSelectiveAction->setStatusTip(tr("Strar Bistable With Selective Simulation"));
-    connect(starBistableSimWithSelectiveAction, &QAction::triggered, simulationManager, &SimulationManager::slotBistableSimWithSelective);
+    starBistableSimWithSelectiveAction->setStatusTip(tr("Start Bistable With Selective Simulation"));
+    connect(starBistableSimWithSelectiveAction, &QAction::triggered, this, [this]() {
+        if (prepareSimulationInput()) {
+            simulationManager->slotBistableSimWithSelective();
+        }
+    });
 
-    startCoherenceSimWithSelectiveAction = new QAction(tr("&Strar Coherence With Selective Simulation"));
+    startCoherenceSimWithSelectiveAction = new QAction(tr("&Start Coherence With Selective Simulation"));
     startCoherenceSimWithSelectiveAction->setShortcut(tr("Ctrl+H"));
-    startCoherenceSimWithSelectiveAction->setStatusTip(tr("Strar Coherence With Selective Simulation"));
-    connect(startCoherenceSimWithSelectiveAction, &QAction::triggered, simulationManager, &SimulationManager::slotCoherenceSimWithSelective);
-    
+    startCoherenceSimWithSelectiveAction->setStatusTip(tr("Start Coherence With Selective Simulation"));
+    connect(startCoherenceSimWithSelectiveAction, &QAction::triggered, this, [this]() {
+        if (prepareSimulationInput()) {
+            simulationManager->slotCoherenceSimWithSelective();
+        }
+    });
+
     energyAnalysisAction = new QAction(tr("&Energy Analysis"), this);
     energyAnalysisAction->setShortcut(tr("Ctrl+E"));
     energyAnalysisAction->setStatusTip(tr("Start Energy Analysis"));
@@ -179,6 +271,9 @@ void MainWindow::createActions()
     
     /******** "layer comboBox" *********/
     layerComboBox = new LayerComboBox(this); 
+    layerComboBox->setObjectName(QStringLiteral("layerComboBox"));
+    layerComboBox->setMinimumSize(148, 30);
+    layerComboBox->setMaximumWidth(210);
     connect(layerComboBox, SIGNAL(currentActiveIndex(int)), this, SLOT(slotLayerActiveChanged(int)));
     connect(layerComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(slotLayerActiveChanged(int)));
     
@@ -192,12 +287,15 @@ void MainWindow::createActions()
     connect(clockComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT( slotClockIndexChanged(int) ));
 
     //view mode
-    viewLabel =  new QLabel(tr("view mode : "));
+    viewLabel = new QLabel(tr("Mode"));
+    viewLabel->setObjectName(QStringLiteral("viewModeLabel"));
+    viewLabel->setMinimumHeight(28);
+    viewLabel->setStyleSheet(QStringLiteral("background: transparent;"));
 
     selectModeButton = new QToolButton;
     selectModeButton->setText(tr("Select"));
     selectModeButton->setCheckable(true);
-    selectModeButton->setChecked(false);
+    selectModeButton->setChecked(true);
 
     insertModeButton = new QToolButton;
     insertModeButton->setText(tr("Insert"));
@@ -208,6 +306,14 @@ void MainWindow::createActions()
     dragModeButton->setText(tr("Drag"));
     dragModeButton->setCheckable(true);
     dragModeButton->setChecked(false);
+
+    auto configureViewModeButton = [](QToolButton *button) {
+        button->setMinimumSize(50, 28);
+        button->setAutoRaise(false);
+    };
+    configureViewModeButton(selectModeButton);
+    configureViewModeButton(insertModeButton);
+    configureViewModeButton(dragModeButton);
 
     viewModeButtonGroup = new QButtonGroup(this);
     viewModeButtonGroup->setExclusive(true);
@@ -223,52 +329,61 @@ void MainWindow::createActions()
     // thread = new QThread(this);
     // verilogHandler->moveToThread(thread);
 
-    auto configureAlgorithmButton = [](QPushButton *button, const QString &toolTip) {
-        button->setObjectName("algorithmButton");
-        button->setToolTip(toolTip);
-        button->setMinimumWidth(96);
-        button->setMaximumWidth(132);
-        button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    };
+    placeRouteMenu = new QMenu(tr("Place && Route"), this);
 
-    verParseButton = new QPushButton("Heuristic P&R");
-    verParseButton->setCheckable(true);
-    configureAlgorithmButton(verParseButton, tr("Run heuristic placement and routing"));
-    connect(verParseButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::handleParseVerilogFile);
+    auto *universalAction = placeRouteMenu->addAction(tr("Universal AI P&&R (recommended)"));
+    universalAction->setStatusTip(tr("Run the trained memory-enabled GCN+RL agent under stochastic clocks"));
+    connect(universalAction, &QAction::triggered,
+            verilogHandler, &VerilogHandler::handleGcnRlLayout);
 
+    placeRouteMenu->addSeparator();
+    auto *heuristicAction = placeRouteMenu->addAction(tr("Heuristic P&&R"));
+    heuristicAction->setStatusTip(tr("Run heuristic placement and routing"));
+    connect(heuristicAction, &QAction::triggered,
+            verilogHandler, &VerilogHandler::handleParseVerilogFile);
 
-    graphRenderButton = new QPushButton("Graph P&R");
-    graphRenderButton->setCheckable(true);
-    configureAlgorithmButton(graphRenderButton, tr("Run compact graph-based placement and routing"));
-    connect(graphRenderButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::handleGraphRender);
+    auto *graphAction = placeRouteMenu->addAction(tr("Compact Graph P&&R"));
+    graphAction->setStatusTip(tr("Run compact graph-based placement and routing"));
+    connect(graphAction, &QAction::triggered,
+            verilogHandler, &VerilogHandler::handleGraphRender);
 
-    gcnRlLayoutButton = new QPushButton("GCN+RL P&R");
-    configureAlgorithmButton(gcnRlLayoutButton, tr("Run GCN/RL placement and routing"));
-    connect(gcnRlLayoutButton, &QPushButton::clicked, verilogHandler, &VerilogHandler::handleGcnRlLayout);
+    auto *normalGraphAction = placeRouteMenu->addAction(tr("Normal Graph P&&R"));
+    normalGraphAction->setStatusTip(tr("Run normal graph-draw placement and routing"));
+    connect(normalGraphAction, &QAction::triggered,
+            verilogHandler, &VerilogHandler::handleNormalGraphDrawLayout);
 
-    //gate level mapping
-    gateLevelMappingButton = new QPushButton("Gate Mapping");
-    gateLevelMappingButton->setCheckable(true);
-    configureAlgorithmButton(gateLevelMappingButton, tr("Load and map a gate-level layout"));
-    connect(gateLevelMappingButton, &QPushButton::toggled, gateLevelMapping, [this](bool checked) {
-        if (!checked) {
-            return;
+    placeRouteButton = new QToolButton(this);
+    placeRouteButton->setObjectName(QStringLiteral("primaryAlgorithmButton"));
+    placeRouteButton->setDefaultAction(universalAction);
+    placeRouteButton->setText(tr("Universal AI P&&R"));
+    placeRouteButton->setMenu(placeRouteMenu);
+    placeRouteButton->setPopupMode(QToolButton::MenuButtonPopup);
+    placeRouteButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    placeRouteButton->setMinimumWidth(156);
+    placeRouteButton->setToolTip(tr("Run Universal AI P&R; use the arrow for classic algorithms"));
+    connect(verilogHandler, &VerilogHandler::operationStarted,
+            placeRouteButton, [this](const QString &, const QString &) {
+        if (placeRouteButton != nullptr) {
+            placeRouteButton->setEnabled(false);
         }
-        gateLevelMapping->parseGateLevelMappingFile();
+    });
+    connect(verilogHandler, &VerilogHandler::operationFinished,
+            placeRouteButton, [this](const QString &) {
+        if (placeRouteButton != nullptr) {
+            placeRouteButton->setEnabled(true);
+        }
+    });
+    connect(verilogHandler, &VerilogHandler::operationFailed,
+            placeRouteButton, [this](const QString &) {
+        if (placeRouteButton != nullptr) {
+            placeRouteButton->setEnabled(true);
+        }
     });
 
     // cell-level layout graph generation
     generateCellLevelLayoutGraph = new QAction(QIcon(QDir::toNativeSeparators(":/cameraColor.png")), tr("Save cell-level layout"), this);
     generateCellLevelLayoutGraph->setStatusTip(tr("Save cell-level layout as SVG or cropped PDF"));
     connect(generateCellLevelLayoutGraph, &QAction::triggered, verilogHandler, &VerilogHandler::generateSVG);
-
-    // force oriented algorithm
-    forceOrientedAlgorithmButton = new QPushButton("Force P&R");
-    forceOrientedAlgorithmButton->setCheckable(true);
-    configureAlgorithmButton(forceOrientedAlgorithmButton, tr("Run force-oriented placement and routing"));
-    connect(forceOrientedAlgorithmButton, &QPushButton::toggled, verilogHandler, &VerilogHandler::slotForceOrientedAlgorithm);
-
-
 }
 
 void MainWindow::createMenus()
@@ -291,9 +406,6 @@ void MainWindow::createMenus()
     editMenu->addSeparator();
     editMenu->addAction(undoAction);
     editMenu->addAction(redoAction);
-    editMenu->addSeparator();
-    editMenu->addAction(zoomInAction);
-    editMenu->addAction(zoomOutAction);
 
     /******** "视图"菜单 *********/
     viewMenu = menuBar()->addMenu("&View");
@@ -305,6 +417,10 @@ void MainWindow::createMenus()
 
     /******** "工具"菜单 *********/
     toolsMenu = menuBar()->addMenu("&Tools");
+    if (placeRouteMenu != nullptr) {
+        toolsMenu->addMenu(placeRouteMenu);
+        toolsMenu->addSeparator();
+    }
     if (verilogSourceDock != nullptr ||
         circuitSchematicDock != nullptr ||
         phaseCodecDock != nullptr ||
@@ -330,30 +446,36 @@ void MainWindow::createMenus()
     /******** "仿真"菜单 *********/
     simulationMenu = menuBar()->addMenu("&Simulation");
     simulationMenu->addAction(startBistableSimAction);
+    simulationMenu->addAction(startAcceleratedBistableSimAction);
     simulationMenu->addAction(starBistableSimWithSelectiveAction);
     // simulationMenu = menuBar()->addMenu("&Coherence Simulation");
     simulationMenu->addAction(startCoherenceSimAction);
+    simulationMenu->addAction(startAcceleratedCoherenceSimAction);
     simulationMenu->addAction(startCoherenceSimWithSelectiveAction);
     // simulationMenu = menuBar()->addMenu("&Energy Analysis");
     simulationMenu->addAction(energyAnalysisAction);
 
     simulationMenu->addAction(SimWithSelective);
-
-    /******** "帮助"菜单 *********/
-    helpMenu = menuBar()->addMenu("&Help");
-
 }
 
 void MainWindow::createToolBars()
 {
     /******** "文件"工具栏 *********/
     fileTool = addToolBar("File");
+    fileTool->setObjectName(QStringLiteral("fileToolBar"));
+    fileTool->setFloatable(false);
+    fileTool->setMovable(false);
+    fileTool->setIconSize(QSize(20, 20));
     fileTool->addAction(newAction);
     fileTool->addAction(openAction);
     fileTool->addAction(saveAction);
 
     /******** "编辑"工具栏 *********/
     editTool = addToolBar("Edit");
+    editTool->setObjectName(QStringLiteral("editToolBar"));
+    editTool->setFloatable(false);
+    editTool->setMovable(false);
+    editTool->setIconSize(QSize(20, 20));
     editTool->addAction(copyAction);
     editTool->addAction(cutAction);
     editTool->addAction(pasteAction);
@@ -361,39 +483,48 @@ void MainWindow::createToolBars()
     editTool->addAction(undoAction);
     editTool->addAction(redoAction);
 
-    editTool->addAction(zoomInAction);
-    editTool->addAction(zoomOutAction);
+    auto *encodeButton = createWorkspaceToolButton(this,
+                                                   tr("Encode"),
+                                                   tr("Encode clock regions"));
+    encodeButton->setObjectName(QStringLiteral("workspaceEncodeButton"));
+    connect(encodeButton, &QToolButton::clicked,
+            this, &MainWindow::slotEncodeClockRegions);
 
-    /******** "layers"工具栏 *********/
-    layersTool = addToolBar("Layers");
-    layersTool->addAction(addLayerAction);
-    layersTool->addAction(deleteLayerAction);
-    layersTool->addWidget(layerComboBox);
+    auto *structureButton = createWorkspaceToolButton(this,
+                                                      tr("3D"),
+                                                      tr("Show layered 3D clock and cell structure"));
+    structureButton->setObjectName(QStringLiteral("workspaceStructureButton"));
+    connect(structureButton, &QToolButton::clicked,
+            this, &MainWindow::showStructure3DView);
 
-    /******** "clock"工具栏 *********/
-    clockTool = addToolBar("Clock");
-    clockTool->addWidget(clockComboBox);
-
-    /* viewTool*/
-    viewTool = addToolBar("view");
-    viewTool->addWidget(viewLabel);
-    viewTool->addWidget(selectModeButton);
-    viewTool->addWidget(insertModeButton);
-    viewTool->addWidget(dragModeButton);
-    viewTool->addAction(toggleClockGridAction);
-    viewTool->addAction(toggleHighQualityViewAction);
-
-
-    /* verilog parse tool*/
+    /******** central workspace toolbar *********/
     addToolBarBreak(Qt::TopToolBarArea);
-    verilogTool = addToolBar("Algorithms");
-    verilogTool->setObjectName("algorithmToolBar");
-    verilogTool->setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
-    verilogTool->setFloatable(false);
-    verilogTool->addWidget(verParseButton);
-    verilogTool->addWidget(graphRenderButton);
-    verilogTool->addWidget(gcnRlLayoutButton);
-    verilogTool->addSeparator();
-    verilogTool->addWidget(gateLevelMappingButton);
-    verilogTool->addWidget(forceOrientedAlgorithmButton);
+    workspaceTool = addToolBar("Workspace");
+    workspaceTool->setObjectName(QStringLiteral("workspaceToolBar"));
+    workspaceTool->setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
+    workspaceTool->setFloatable(false);
+    workspaceTool->setMovable(false);
+    workspaceTool->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    workspaceTool->addWidget(placeRouteButton);
+    workspaceTool->addSeparator();
+    workspaceTool->addWidget(viewLabel);
+    workspaceTool->addWidget(selectModeButton);
+    workspaceTool->addWidget(insertModeButton);
+    workspaceTool->addWidget(dragModeButton);
+    workspaceTool->addAction(toggleClockGridAction);
+    workspaceTool->addAction(toggleHighQualityViewAction);
+    workspaceTool->addSeparator();
+    workspaceTool->addAction(addLayerAction);
+    workspaceTool->addAction(deleteLayerAction);
+    workspaceTool->addWidget(layerComboBox);
+    workspaceTool->addWidget(clockComboBox);
+    workspaceTool->addSeparator();
+    workspaceTool->addWidget(encodeButton);
+    workspaceTool->addWidget(structureButton);
+    workspaceTool->addWidget(createToolbarSpacer(workspaceTool));
+
+    layersTool = workspaceTool;
+    clockTool = workspaceTool;
+    viewTool = workspaceTool;
+    verilogTool = workspaceTool;
 }

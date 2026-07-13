@@ -1,0 +1,50 @@
+#circuit name: xor2.v
+
+#designed by normal graph draw algorithm based on GCN embedding + barycenter ordering, right-down reachable initialization, ML-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification.
+
+#gate level placement and routing infomation
+#gates number: 6
+#input/output: 2 / 1
+#edges number: 7
+#total layers: 4
+#layout area: width: 3, height: 5, area: 15
+#cell count: 86
+#cross count: 3
+#critical path: 7
+#clocks: 1.75
+#run time: 2.320310 s
+#phase count: 4
+#clock scheme: 2DDWave
+#clock scheme consistency: success
+#clock scheme conflicts: 0
+#random phase scheme consistency: success
+#random phase scheme conflicts: 0
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (0,0);
+1, b, input, (1,0);
+2, out, and, (2,4);
+3, w1, and, (2,2);
+4, w2, or, (1,2);
+5, ~w1, not, (2,3);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(4,2): (1,2),(1,3),(1,4),(2,4);
+(5,2): (2,3),(2,4);
+(3,5): (2,2),(2,3);
+(1,4): (1,0),(1,1),(1,2);
+(1,3): (1,0),(1,1),(2,1),(2,2);
+(0,4): (0,0),(0,1),(0,2),(1,2);
+(0,3): (0,0),(0,1),(1,1),(2,1),(2,2);
+#paths info
+#phase map
+### (x,y) : phase ###
+(0,0):0; (1,0):1; (2,0):2;
+(0,1):1; (1,1):2; (2,1):3;
+(0,2):2; (1,2):3; (2,2):0;
+(0,3):3; (1,3):0; (2,3):1;
+(0,4):0; (1,4):1; (2,4):2;
+#phase map

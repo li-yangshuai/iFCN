@@ -1,0 +1,42 @@
+#circuit name: xor2_source.v
+
+#designed by heuristic P&R algorithm with encoded 4-phase clock tiles.
+
+#gate level placement and routing infomation
+#algorithm: heuristic P&R algorithm
+#gates number: 5
+#input/output: 2 / 1
+#edges number: 7
+#total layers: 4
+#layout area: width: 3, height: 3, area: 9
+#cell count: 70
+#cross count: 0
+#phase origin: top-left=(0,0), saved coordinates are normalized to (0,0)
+#phase count: 4
+#runtime: 11.193s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (1,1);
+1, b, input, (0,2);
+2, out, and, (2,0);
+3, w1, and, (1,2);
+4, w2, or, (0,1);
+5, ~w1, not, (2,1);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,3): (1,1),(1,2);
+(0,4): (1,1),(0,1);
+(1,3): (0,2),(1,2);
+(1,4): (0,2),(0,1);
+(3,5): (1,2),(2,2),(2,1);
+(4,2): (0,1),(0,0),(1,0),(2,0);
+(5,2): (2,1),(2,0);
+#paths info
+#phase map
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0x241b0e00;
+#phase map

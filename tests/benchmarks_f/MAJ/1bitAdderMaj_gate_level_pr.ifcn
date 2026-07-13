@@ -1,8 +1,9 @@
 #circuit name: 1bitAdderMaj.v
 
-#designed by graph render algorithm with encoded 4-phase clock tiles.
+#designed by graph P&R algorithm with encoded 4-phase clock tiles.
 
 #gate level placement and routing infomation
+#algorithm: graph P&R algorithm
 #gates number: 9
 #input/output: 3 / 1
 #edges number: 11
@@ -12,7 +13,7 @@
 #cross count: 4
 #phase origin: top-left=(4,4), saved coordinates are normalized to (0,0)
 #phase count: 4
-#runtime: 0.817s
+#runtime: 0.906s
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###

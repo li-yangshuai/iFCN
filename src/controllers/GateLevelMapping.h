@@ -47,7 +47,6 @@ public:
     QString currentMappingFilePath;                   // 当前映射文件路径
 
 public slots:
-        void parseGateLevelMappingFile();                 // 打开并解析文件
         void parseGateLevelMappingFile(const QString &filePath); // 直接解析指定文件
 
         void mappingCellItem();
@@ -67,6 +66,7 @@ private:
     void parsePathLine(const QString &line);
     void parsePhaseLine(const QString &line);
     void parsePhaseCodecLine(const QString &line);
+    void applyClockSchemePhaseTemplate();
     MainWindow *mainWindow;
     int phaseCodecPhaseCount = 4;
     int phaseCodecBlockSize = 4;

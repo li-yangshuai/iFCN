@@ -300,6 +300,97 @@ bool fallbackLogicGateMapping(
     return true;
 }
 
+int portDirection(const position& gatePos, const position& neighborGate)
+{
+    if (neighborGate.first < gatePos.first && neighborGate.second == gatePos.second) return 0; // left
+    if (neighborGate.first > gatePos.first && neighborGate.second == gatePos.second) return 1; // right
+    if (neighborGate.second < gatePos.second && neighborGate.first == gatePos.first) return 2; // up
+    if (neighborGate.second > gatePos.second && neighborGate.first == gatePos.first) return 3; // down
+    return -1;
+}
+
+position transformLocalCell(const position& localCell, int transformIndex)
+{
+    const unsigned int x = localCell.first;
+    const unsigned int y = localCell.second;
+    switch (transformIndex) {
+    case 0: return {x, y};
+    case 1: return {4 - y, x};
+    case 2: return {4 - x, 4 - y};
+    case 3: return {y, 4 - x};
+    case 4: return {4 - x, y};
+    case 5: return {y, x};
+    case 6: return {x, 4 - y};
+    case 7: return {4 - y, 4 - x};
+    default: return {x, y};
+    }
+}
+
+int transformDirection(int direction, int transformIndex)
+{
+    position localPort{2, 2};
+    if (direction == 0) localPort = {0, 2};
+    else if (direction == 1) localPort = {4, 2};
+    else if (direction == 2) localPort = {2, 0};
+    else if (direction == 3) localPort = {2, 4};
+    else return -1;
+
+    const position transformed = transformLocalCell(localPort, transformIndex);
+    if (transformed.first < 2 && transformed.second == 2) return 0;
+    if (transformed.first > 2 && transformed.second == 2) return 1;
+    if (transformed.second < 2 && transformed.first == 2) return 2;
+    if (transformed.second > 2 && transformed.first == 2) return 3;
+    return -1;
+}
+
+bool placeMultiOutputNotTemplate(std::map<std::string, std::vector<position>>& nodeCells,
+                                 const position& gatePos,
+                                 const std::vector<position>& inputs,
+                                 const std::vector<position>& outputs)
+{
+    if (inputs.size() != 1 || outputs.size() != 2) {
+        return false;
+    }
+
+    const int inputDirection = portDirection(gatePos, inputs.front());
+    const int outputDirectionA = portDirection(gatePos, outputs.front());
+    const int outputDirectionB = portDirection(gatePos, outputs.back());
+    if (inputDirection < 0 || outputDirectionA < 0 || outputDirectionB < 0) {
+        return false;
+    }
+
+    const std::set<int> targetOutputDirections{outputDirectionA, outputDirectionB};
+    const std::vector<position> canonicalCells{
+        {0, 1}, {1, 1},
+        {1, 2}, {2, 2}, {3, 2}, {4, 2},
+        {0, 3}, {1, 3}, {2, 3},
+        {2, 4},
+    };
+
+    for (int transformIndex = 0; transformIndex < 8; ++transformIndex) {
+        if (transformDirection(0, transformIndex) != inputDirection) {
+            continue;
+        }
+        const std::set<int> transformedOutputDirections{
+            transformDirection(1, transformIndex),
+            transformDirection(3, transformIndex),
+        };
+        if (transformedOutputDirections != targetOutputDirections) {
+            continue;
+        }
+
+        const unsigned int baseX = gatePos.first * 5;
+        const unsigned int baseY = gatePos.second * 5;
+        for (const position& localCell : canonicalCells) {
+            const position transformed = transformLocalCell(localCell, transformIndex);
+            appendUniqueCell(nodeCells["normal"], {baseX + transformed.first, baseY + transformed.second});
+        }
+        return true;
+    }
+
+    return false;
+}
+
 std::vector<position> shortestUnitPath(const std::vector<position>& unitMapping,
                                        const position& gatePos,
                                        const position& prevGate,
@@ -500,6 +591,34 @@ void stitchRouteMapping(std::vector<std::vector<position>>& routeMapping)
 using RouteMappingKey = std::pair<position, position>;
 using RouteMappingList = std::map<RouteMappingKey, std::vector<std::vector<position>>>;
 
+void removeCellsFromRouteMappings(RouteMappingList& routeMappings,
+                                  const std::unordered_set<position, MappingPositionHash>& cellsToRemove)
+{
+    if (cellsToRemove.empty()) {
+        return;
+    }
+
+    for (auto& routeEntry : routeMappings) {
+        auto& segments = routeEntry.second;
+        for (auto& segment : segments) {
+            segment.erase(
+                std::remove_if(segment.begin(),
+                               segment.end(),
+                               [&](const position& cell) {
+                                   return cellsToRemove.find(cell) != cellsToRemove.end();
+                               }),
+                segment.end());
+        }
+        segments.erase(
+            std::remove_if(segments.begin(),
+                           segments.end(),
+                           [](const std::vector<position>& segment) {
+                               return segment.empty();
+                           }),
+            segments.end());
+    }
+}
+
 enum class RouteDirection {
     None,
     Left,
@@ -524,6 +643,110 @@ RouteDirection routeDirection(const position& from, const position& to)
         if (to.second > from.second) return RouteDirection::Down;
     }
     return RouteDirection::None;
+}
+
+std::vector<RouteDirection> incidentDirections(const position& gatePos,
+                                               const std::vector<position>& neighbors)
+{
+    std::vector<RouteDirection> directions;
+    directions.reserve(neighbors.size());
+    for (const position& neighbor : neighbors) {
+        const RouteDirection direction = routeDirection(gatePos, neighbor);
+        if (direction != RouteDirection::None &&
+            std::find(directions.begin(), directions.end(), direction) == directions.end()) {
+            directions.push_back(direction);
+        }
+    }
+    return directions;
+}
+
+bool hasDirection(const std::vector<RouteDirection>& directions,
+                  RouteDirection direction)
+{
+    return std::find(directions.begin(), directions.end(), direction) != directions.end();
+}
+
+void appendUniqueNormalCell(std::map<std::string, std::vector<position>>& nodeCells,
+                            const position& cell)
+{
+    appendUniqueCell(nodeCells["normal"], cell);
+}
+
+void connectIncidentPortsToCenter(std::map<std::string, std::vector<position>>& nodeCells,
+                                  const position& gatePos,
+                                  const std::vector<position>& inputs,
+                                  const std::vector<position>& outputs,
+                                  bool includeCenterCell)
+{
+    const position center{gatePos.first * 5 + 2, gatePos.second * 5 + 2};
+    const auto addArm = [&](const position& neighbor) {
+        const auto boundary = nodeBoundaryCell(gatePos, neighbor);
+        if (!boundary.valid) {
+            return;
+        }
+
+        const auto bridge = bridgeBetween(boundary.pos, center);
+        for (const position& cell : bridge) {
+            if (!includeCenterCell && cell == center) {
+                continue;
+            }
+            appendUniqueNormalCell(nodeCells, cell);
+        }
+    };
+
+    for (const position& input : inputs) {
+        addArm(input);
+    }
+    for (const position& output : outputs) {
+        addArm(output);
+    }
+}
+
+bool mapOppositeInputFanout(std::map<std::string, std::vector<position>>& nodeCells,
+                            const position& gatePos,
+                            const std::vector<position>& outputs)
+{
+    if (outputs.size() != 2) {
+        return false;
+    }
+
+    const auto directions = incidentDirections(gatePos, outputs);
+    if (directions.size() != 2) {
+        return false;
+    }
+
+    const unsigned int baseX = gatePos.first * 5;
+    const unsigned int baseY = gatePos.second * 5;
+
+    if (hasDirection(directions, RouteDirection::Up) &&
+        hasDirection(directions, RouteDirection::Down)) {
+        const std::vector<position> cells{
+            {baseX + 2, baseY},
+            {baseX + 2, baseY + 1},
+            {baseX + 2, baseY + 3},
+            {baseX + 2, baseY + 4},
+        };
+        for (const position& cell : cells) {
+            appendUniqueNormalCell(nodeCells, cell);
+        }
+        return true;
+    }
+
+    if (hasDirection(directions, RouteDirection::Left) &&
+        hasDirection(directions, RouteDirection::Right)) {
+        const std::vector<position> cells{
+            {baseX, baseY + 2},
+            {baseX + 1, baseY + 2},
+            {baseX + 3, baseY + 2},
+            {baseX + 4, baseY + 2},
+        };
+        for (const position& cell : cells) {
+            appendUniqueNormalCell(nodeCells, cell);
+        }
+        return true;
+    }
+
+    return false;
 }
 
 bool horizontalDirection(RouteDirection direction)
@@ -1381,6 +1604,11 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
         return routes;
     };
 
+    const auto removeBlockedTemplatePorts = [&]() {
+        removeCellsFromRouteMappings(deviatemapping_list, multi_output_not_input_boundaries);
+        removeCellsFromRouteMappings(crossline_list, multi_output_not_input_boundaries);
+    };
+
     const auto runMappingWithOrder = [&](const std::vector<std::size_t>& order) {
         resetMappingState();
         auto routes = orderedRoutes(order);
@@ -1390,9 +1618,11 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
         }
         deviate_mapping(deviate_list);
         connectRouteMappingsToOriginalEndpoints(deviatemapping_list, routes);
+        removeBlockedTemplatePorts();
         const auto rawBaselineRouteMappings = deviatemapping_list;
         crossline_mapping(routes);
         preferOppositeFanoutBranchSegments(deviatemapping_list, crossline_list, routes);
+        removeBlockedTemplatePorts();
         const auto baselineRouteMappings = deviatemapping_list;
         const auto baselineCrossMappings = crossline_list;
         const MappingOrderScore baselineScore = currentScore();
@@ -1405,6 +1635,7 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
         crossline_mapping(routes);
         preferOppositeFanoutBranchSegments(deviatemapping_list, crossline_list, routes);
         preferSharedFanoutCenterlines(deviatemapping_list, crossline_list, routes);
+        removeBlockedTemplatePorts();
         const MappingOrderScore optimizedScore = currentScore();
 
         if (!shouldUseFanoutOptimizedMapping(optimizedScore, baselineScore)) {
@@ -4674,6 +4905,7 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
     nodecell_list["normal"];
     nodecell_list["fix0"];
     nodecell_list["fix1"];
+    multi_output_not_input_boundaries.clear();
     
 
 
@@ -4718,7 +4950,11 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
             }
             else if(size == 2)
             {
-                if (((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second)&&(node.second.second.back().first == temppos.first)&&(node.second.second.back().second < temppos.second))
+                if (mapOppositeInputFanout(nodecell_list, temppos, node.second.second))
+                {
+                    continue;
+                }
+                else if (((node.second.second.front().first < temppos.first)&&(node.second.second.front().second == temppos.second)&&(node.second.second.back().first == temppos.first)&&(node.second.second.back().second < temppos.second))
                  || ((node.second.second.back().first < temppos.first)&&(node.second.second.back().second == temppos.second)&&(node.second.second.front().first == temppos.first)&&(node.second.second.front().second < temppos.second)))//左上
                 {
                     nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
@@ -5187,6 +5423,15 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         {
             int size_output = node.second.second.size();
             int size_input = node.second.first.size();
+            if ((size_input == 1) && (size_output == 2) &&
+                placeMultiOutputNotTemplate(nodecell_list, temppos, node.second.first, node.second.second))
+            {
+                const auto inputBoundary = nodeBoundaryCell(temppos, node.second.first.front());
+                if (inputBoundary.valid) {
+                    multi_output_not_input_boundaries.insert(inputBoundary.pos);
+                }
+                continue;
+            }
             if ((size_input == 1) && (size_output == 1))
             {
                 if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))//左
@@ -5522,6 +5767,16 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         }
         else if (node.first.second == "wire")
         {
+            if (!node.second.first.empty() || !node.second.second.empty())
+            {
+                connectIncidentPortsToCenter(nodecell_list,
+                                             temppos,
+                                             node.second.first,
+                                             node.second.second,
+                                             true);
+            }
+            continue;
+
             if (node.second.first.empty() || node.second.second.empty())
             {
                 continue;
@@ -5581,6 +5836,16 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         }
         else if (node.first.second == "fanout")
         {
+            if (!node.second.first.empty() || !node.second.second.empty())
+            {
+                connectIncidentPortsToCenter(nodecell_list,
+                                             temppos,
+                                             node.second.first,
+                                             node.second.second,
+                                             true);
+            }
+            continue;
+
             auto size_output = node.second.second.size();
             auto size_input = node.second.first.size();
             if (size_input == 1 && size_output == 1)//1个输出

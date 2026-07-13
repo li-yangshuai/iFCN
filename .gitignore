@@ -40,10 +40,18 @@
 
 debug/
 build/
+build-*/
 .idea/
 cmake-build-debug/
 cmake-build-release/
 docs/
+!docs/
+docs/*
+!docs/clock_zone_simulation.md
+!docs/clock_zone_simulation.tex
 experiments/
 include/gcn_rl_layout/results/
+include/gcn_rl_layout/myenv/
+__pycache__/
+*.pyc
 *_gcn_rl_layout/

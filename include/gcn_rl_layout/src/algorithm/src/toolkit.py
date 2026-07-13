@@ -334,6 +334,18 @@ def _pack_phase_block(block):
     return "".join(packed_rows)
 
 
+def _is_2ddwave_scheme(clock_scheme_name):
+    scheme = str(clock_scheme_name).strip().lower().replace(" ", "")
+    return scheme in {"2ddwave", "tddwave"}
+
+
+def _template_phase_for_coord(graphDraw, coord, phase_cycle):
+    scheme = getattr(graphDraw, "clock_scheme_name", "")
+    if _is_2ddwave_scheme(scheme):
+        return (int(coord[0]) + int(coord[1])) % int(phase_cycle)
+    return 0
+
+
 def _write_encoded_phase_mapping_file(
     graphDraw,
     output_dir,
@@ -351,6 +363,8 @@ def _write_encoded_phase_mapping_file(
     phase_enabled = True
     if hasattr(graphDraw, "mapChessboard") and hasattr(graphDraw.mapChessboard, "isPhaseEnabled"):
         phase_enabled = bool(graphDraw.mapChessboard.isPhaseEnabled())
+    clock_scheme_name = str(getattr(graphDraw, "clock_scheme_name", "random phase"))
+    raw_unassigned_phase = "none" if phase_enabled and _is_2ddwave_scheme(clock_scheme_name) else "-1"
 
     with open(encoded_filename, "w") as f:
         f.write(f"#circuit name: {graphDraw.parse.fileName}\n\n")
@@ -373,9 +387,10 @@ def _write_encoded_phase_mapping_file(
             f.write(f"#run time: {float(run_time):.6f} s\n")
         f.write("#phase encoding: enabled\n")
         f.write(f"#phase count: {phase_cycle}\n")
+        f.write(f"#clock scheme: {clock_scheme_name if phase_enabled else 'disabled'}\n")
         f.write(f"#block size: {block_size}x{block_size}\n")
         f.write("#coordinate origin: normalized top-left (0,0)\n")
-        f.write("#unassigned phase in raw map: -1\n")
+        f.write(f"#unassigned phase in raw map: {raw_unassigned_phase}\n")
         f.write("#encoded padding/unassigned compatibility fill: 0\n")
         f.write("#encoding: row-major blocks; each block stores one byte per row; each cell uses 2 bits; column 0 is LSB\n\n")
 
@@ -436,7 +451,11 @@ def _write_encoded_phase_mapping_file(
                                     abs_y = min_y + norm_y
                                     phase_val = int(graphDraw.mapChessboard.getPhase((abs_x, abs_y)))
                                     if phase_val < 0:
-                                        phase_val = 0
+                                        phase_val = _template_phase_for_coord(
+                                            graphDraw,
+                                            (abs_x, abs_y),
+                                            phase_cycle,
+                                        )
                                 if phase_val < 0 or phase_val >= phase_cycle:
                                     raise ValueError(
                                         "phase value out of range for encoded IFCN: "
@@ -532,12 +551,17 @@ def generate_gate_level_mapping_file(
                 getattr(graphDraw, "phase_conflict_count", 0),
             )
         )
+        clock_scheme_name = str(getattr(graphDraw, "clock_scheme_name", "random phase"))
         if phase_enabled:
-            f.write("#clock scheme: random phase\n")
+            f.write(f"#clock scheme: {clock_scheme_name}\n")
+            f.write(f"#clock scheme consistency: {'success' if template_ok else 'failed'}\n")
+            f.write(f"#clock scheme conflicts: {template_conflicts}\n")
             f.write(f"#random phase scheme consistency: {'success' if template_ok else 'failed'}\n")
             f.write(f"#random phase scheme conflicts: {template_conflicts}\n")
         else:
             f.write("#clock scheme: disabled\n")
+            f.write("#clock scheme consistency: disabled\n")
+            f.write("#clock scheme conflicts: 0\n")
             f.write("#random phase scheme consistency: disabled\n")
             f.write("#random phase scheme conflicts: 0\n")
         f.write("\n")
@@ -593,6 +617,12 @@ def generate_gate_level_mapping_file(
                     line_items = []
                     for x in range(minX, maxX + 1):
                         phase_val = graphDraw.mapChessboard.getPhase((x, y))
+                        if phase_val < 0:
+                            phase_val = _template_phase_for_coord(
+                                graphDraw,
+                                (x, y),
+                                phase_cycle,
+                            )
                         line_items.append(f"({x},{y}):{phase_val};")
                     f.write(" ".join(line_items) + "\n")
                 f.write("#phase map\n")

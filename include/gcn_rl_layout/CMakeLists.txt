@@ -18,6 +18,7 @@ set_target_properties(gcn_rl_parse PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(gcn_rl_chessboard STATIC
     src/chessboard/MapPhaseAStar.cpp
+    src/chessboard/RightDownAStar.cpp
 )
 target_include_directories(gcn_rl_chessboard PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/chessboard

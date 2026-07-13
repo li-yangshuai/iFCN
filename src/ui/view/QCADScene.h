@@ -73,6 +73,7 @@ public:
     void clearFastRender();
     bool hasFastRender() const;
     QRectF fastRenderBounds() const;
+    QRectF exportContentBounds() const;
     const QVector<QVector<FastCellRecord>>& fastCellsByLayer() const;
     void setFastLayerVisible(int layer, bool visible);
     bool isFastLayerVisible(int layer) const;
@@ -86,6 +87,10 @@ public:
     bool isClockGridVisible() const;
     QVector<ClockRegionRecord> clockRegions() const;
     void restoreClockRegions(const QVector<ClockRegionRecord> &regions);
+    void renderForExport(QPainter *painter,
+                         const QRectF &target = QRectF(),
+                         const QRectF &source = QRectF(),
+                         Qt::AspectRatioMode aspectRatioMode = Qt::KeepAspectRatio);
 
 protected:
     void drawBackground(QPainter* painter, const QRectF &rect) override;
@@ -122,6 +127,7 @@ private:
     int currentLayerIndex;
     int currentClockIndex;
     bool highQualityMode = false;
+    bool exportRenderMode = false;
     bool clockGridVisible = true;
     bool fastRenderEnabled = false;
     QRectF fastBounds;

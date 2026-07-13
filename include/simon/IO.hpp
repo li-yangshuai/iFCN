@@ -30,6 +30,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <cassert>
+#include <sstream>
 
 #include <iostream>
 
@@ -423,23 +424,39 @@ namespace x3 = boost::spirit::x3;
     
 
     inline bool parse_vector_table(const std::string &test_vector_file_path, VectorTable &vector_table) {
-        namespace x3 = boost::spirit::x3;
-
-        VectorTableRawData raw_data;
         std::ifstream ifs(test_vector_file_path);
-        ifs >> std::noskipws;
-
-        std::string content;
-        std::copy(std::istream_iterator<char>(ifs), std::istream_iterator<char>(),
-                  std::back_inserter(content));
-
-        bool ret = x3::phrase_parse(content.begin(), content.end(), VectorTableParser, x3::ascii::space, raw_data);
-        assert(ret);
-
-        vector_table.names        = std::move(raw_data.names);
-        vector_table.test_vectors = std::move(raw_data.test_vectors);
-
-        return ret;
+        if (!ifs) return false;
+        auto split = [](const std::string &line) {
+            std::vector<std::string> fields;
+            std::stringstream stream(line);
+            std::string field;
+            while (std::getline(stream, field, ',')) {
+                const auto first = field.find_first_not_of(" \t\r");
+                const auto last = field.find_last_not_of(" \t\r");
+                fields.push_back(first == std::string::npos ? std::string{} : field.substr(first, last - first + 1));
+            }
+            return fields;
+        };
+        std::string line;
+        if (!std::getline(ifs, line)) return false;
+        vector_table.names = split(line);
+        if (vector_table.names.empty() ||
+            std::any_of(vector_table.names.begin(), vector_table.names.end(),
+                        [](const std::string &name) { return name.empty(); })) return false;
+        vector_table.test_vectors.clear();
+        while (std::getline(ifs, line)) {
+            if (line.find_first_not_of(" \t\r") == std::string::npos) continue;
+            const auto fields = split(line);
+            if (fields.size() != vector_table.names.size()) return false;
+            std::vector<int> row;
+            row.reserve(fields.size());
+            for (const auto &field : fields) {
+                if (field != "0" && field != "1") return false;
+                row.push_back(field == "1" ? 1 : 0);
+            }
+            vector_table.test_vectors.push_back(std::move(row));
+        }
+        return !vector_table.test_vectors.empty();
     }
 
     namespace detail {

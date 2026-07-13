@@ -63,6 +63,7 @@ struct EnergyRunOptions {
     double clockPeriod = 1.0e-11;
     double inputPeriod = 1.0e-11;
     bool writeWaveform = false;
+    bool qcaOnly = false;
 };
 
 void applyFastEnergyOptions(EnergyRunOptions &options)
@@ -96,6 +97,8 @@ void parseEnergyOptions(int argc, char **argv, int startIndex, EnergyRunOptions 
 
         if (arg == "--fast") {
             applyFastEnergyOptions(options);
+        } else if (arg == "--qca-only") {
+            options.qcaOnly = true;
         } else if (arg == "--waveform") {
             options.writeWaveform = true;
         } else if (arg == "--time-step") {
@@ -381,7 +384,27 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data)
         }
     }
 
-    return cells;
+    // Node templates and routed wires may both emit the same physical site.
+    // Keeping both creates a zero-distance pair and an infinite kink energy in
+    // the simulator.  Preserve the first (node cells are emitted first), while
+    // enriching an ordinary cell with any later special mode or I/O metadata.
+    std::vector<Cell> uniqueCells;
+    std::map<std::pair<position, int>, std::size_t> siteIndex;
+    for (const Cell &cell : cells) {
+        const auto key = std::make_pair(cell.pos, cell.layer);
+        const auto [it, inserted] = siteIndex.emplace(key, uniqueCells.size());
+        if (inserted) {
+            uniqueCells.push_back(cell);
+            continue;
+        }
+        Cell &kept = uniqueCells[it->second];
+        if (kept.function == CellFunction::Normal && cell.function != CellFunction::Normal) {
+            kept.function = cell.function;
+            kept.name = cell.name;
+        }
+        if (kept.mode == CellMode::Normal && cell.mode != CellMode::Normal) kept.mode = cell.mode;
+    }
+    return uniqueCells;
 }
 
 const char *functionName(CellFunction function)
@@ -601,7 +624,8 @@ int main(int argc, char **argv)
     if (argc < 2) {
         std::cerr << "usage: ifcn_energy_analysis <layout.ifcn> [output-prefix] "
                      "[--fast] [--time-step seconds] [--duration seconds] "
-                     "[--clock-period seconds] [--input-period seconds] [--clock-slope seconds] [--waveform]\n";
+                     "[--clock-period seconds] [--input-period seconds] [--clock-slope seconds] "
+                     "[--waveform] [--qca-only]\n";
         return 2;
     }
 
@@ -623,6 +647,10 @@ int main(int argc, char **argv)
         const LayoutData layout = parseIfcn(ifcnPath);
         const std::vector<Cell> cells = mapIfcnToCells(layout);
         writeQcaFile(qcaPath, cells);
+        if (runOptions.qcaOnly) {
+            std::cout << "qca=" << qcaPath << '\n';
+            return 0;
+        }
         runEnergyAnalysis(qcaPath, reportPath, waveformPath, runOptions);
         std::cout << "qca=" << qcaPath << '\n';
         std::cout << "report=" << reportPath << '\n';

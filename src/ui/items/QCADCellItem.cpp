@@ -7,7 +7,26 @@
 #include "ui/view/QCADScene.h"
 #include "ui/mainwindow/MainWindow.h"
 
+namespace {
+constexpr qreal kCellLabelOffsetX = 12.0;
+constexpr qreal kCellLabelOffsetY = -5.0;
+constexpr int kCellLabelPointSize = 7;
+constexpr qreal kCellLabelMinLod = 0.45;
 
+void configureCellNameLabel(QGraphicsSimpleTextItem *label, const QString &text)
+{
+    if (label == nullptr) {
+        return;
+    }
+    label->setText(text);
+    label->setZValue(10);
+    QFont font = label->font();
+    font.setPointSize(kCellLabelPointSize);
+    label->setFont(font);
+    label->setBrush(QBrush(Qt::black));
+    label->setFlag(QGraphicsItem::ItemIsMovable, true);
+}
+}
 
 QDataStream &operator<<(QDataStream &out, const QCADCellItem &cellItem)
 {
@@ -183,14 +202,7 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
             break;
         case CellType::InputCell:{
             IOName = _name;
-            nameLabel = new QGraphicsSimpleTextItem(_name, this);
-            
-            nameLabel->setPos(12, -5);
-            nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
-            QFont font = nameLabel->font();
-            font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
-            nameLabel->setFont(font);
-            nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+            createNameLabel(_name);
 
             // 如果需要改变颜色
             // nameLabel->setBrush(QBrush(Qt::red));  // 设置文本颜色为红色
@@ -202,13 +214,7 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
         }
         case CellType::OutputCell:{
             IOName = _name;
-            nameLabel = new QGraphicsSimpleTextItem(_name, this);
-            nameLabel->setPos(12, -5);
-            nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
-            QFont font = nameLabel->font();
-            font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
-            nameLabel->setFont(font);
-            nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+            createNameLabel(_name);
             // 如果需要改变颜色
             // nameLabel->setBrush(QBrush(Qt::red));  // 设置文本颜色为红色
             simon::name(*this) = _name.toStdString();
@@ -220,27 +226,14 @@ QCADCellItem::QCADCellItem(int mousePointX, int mousePointY, int layerIdx /*= 0*
             simon::name(*this) = "-1.00";
             simon::function(*this) = FCNCellFunction::FIXED;
             simon::cellMode(*this) = QCACellMode::NORMAL;
-            nameLabel = new QGraphicsSimpleTextItem("-1.00", this);
-            nameLabel->setPos(12, -5);
-            nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
-            
-            QFont font = nameLabel->font();
-            font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
-            nameLabel->setFont(font);
-            nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+            createNameLabel(QStringLiteral("-1.00"));
             }
             break;
         case CellType::FixedCell_1:{
             simon::name(*this) = "1.00";
             simon::function(*this) = FCNCellFunction::FIXED;
             simon::cellMode(*this) = QCACellMode::NORMAL;
-            nameLabel = new QGraphicsSimpleTextItem("1.00", this);
-            nameLabel->setPos(12, -5);
-            nameLabel->setZValue(10);  // 设置 Z 值，使其位于其他项之上
-            QFont font = nameLabel->font();
-            font.setPointSize(7);  // 设置字体大小为10，可以根据需要调整
-            nameLabel->setFont(font);
-            nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+            createNameLabel(QStringLiteral("1.00"));
         }
             break;
         case CellType::VerticalCell:
@@ -306,6 +299,14 @@ QCADCellItem::QCADCellItem(const QCACell &cell)
     setFlag(ItemUsesExtendedStyleOption);
     setCacheMode(DeviceCoordinateCache);
     setAcceptHoverEvents(true);
+
+    const QString copiedName = QString::fromStdString(simon::name(*this));
+    if (!copiedName.isEmpty() &&
+        (simon::function(*this) == FCNCellFunction::INPUT ||
+         simon::function(*this) == FCNCellFunction::OUTPUT ||
+         simon::function(*this) == FCNCellFunction::FIXED)) {
+        createNameLabel(copiedName);
+    }
 }
 
 
@@ -361,7 +362,8 @@ void QCADCellItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *opti
     }
 
     if (nameLabel != nullptr) {
-        const bool showLabel = lod >= 0.9;
+        configureCellNameLabel(nameLabel, nameLabel->text());
+        const bool showLabel = lod >= kCellLabelMinLod;
         if (nameLabel->isVisible() != showLabel) {
             nameLabel->setVisible(showLabel);
         }
@@ -456,19 +458,17 @@ void QCADCellItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) {
 
     if (getCellType() == CellType::InputCell || getCellType() == CellType::OutputCell) {
         QString oldName = QString::fromStdString(simon::name(*this));
-        QString newName = QInputDialog::getText(nullptr, "Edit Cell Name", "Enter new name:", QLineEdit::Normal, oldName);
+        QWidget *parentWindow = nullptr;
+        if (scene() != nullptr) {
+            const QList<QGraphicsView*> views = scene()->views();
+            if (!views.isEmpty()) {
+                parentWindow = views.first()->window();
+            }
+        }
+        QString newName = QInputDialog::getText(parentWindow, "Edit Cell Name", "Enter new name:", QLineEdit::Normal, oldName);
 
         if (!newName.isEmpty() && newName != oldName) {
-            if (!nameLabel) {
-                nameLabel = new QGraphicsSimpleTextItem(newName, this);
-                nameLabel->setPos(12, -5);
-                nameLabel->setZValue(10);
-                QFont font = nameLabel->font(); font.setPointSize(7);
-                nameLabel->setFont(font);
-                nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
-            } else {
-                nameLabel->setText(newName);
-            }
+            createNameLabel(newName);
             simon::name(*this) = newName.toStdString();
             if (QCADScene *qcadScene = qobject_cast<QCADScene *>(scene())) {
                 const QVariant fastLayer = data(QCADScene::FastLayerRole);
@@ -500,13 +500,16 @@ QVariant QCADCellItem::itemChange(GraphicsItemChange change, const QVariant &val
 }
 
 void QCADCellItem::createNameLabel(const QString &name) {
-    if (!name.isEmpty()) {
-        nameLabel = new QGraphicsSimpleTextItem(name, this);
-        nameLabel->setPos(12, -5);
-        nameLabel->setZValue(10);
-        QFont font = nameLabel->font();
-        font.setPointSize(7);
-        nameLabel->setFont(font);
-        nameLabel->setFlag(QGraphicsItem::ItemIsMovable);
+    if (name.isEmpty()) {
+        if (nameLabel != nullptr) {
+            nameLabel->setVisible(false);
+        }
+        return;
     }
+    if (nameLabel == nullptr) {
+        nameLabel = new QGraphicsSimpleTextItem(name, this);
+        nameLabel->setPos(kCellLabelOffsetX, kCellLabelOffsetY);
+    }
+    configureCellNameLabel(nameLabel, name);
+    nameLabel->setVisible(true);
 }

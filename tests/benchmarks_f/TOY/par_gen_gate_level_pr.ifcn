@@ -1,16 +1,19 @@
 #circuit name: par_gen.v
 
-#designed by graph render algorithm with encoded 4-phase clock tiles.
+#designed by graph P&R algorithm with encoded 4-phase clock tiles.
 
 #gate level placement and routing infomation
+#algorithm: graph P&R algorithm
 #gates number: 17
 #input/output: 3 / 1
 #edges number: 20
 #total layers: 7
 #layout area: width: 6, height: 8, area: 48
+#cell count: 264
+#cross count: 4
 #phase origin: top-left=(3,3), saved coordinates are normalized to (0,0)
 #phase count: 4
-#runtime: 0.574s
+#runtime: 0.514s
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###

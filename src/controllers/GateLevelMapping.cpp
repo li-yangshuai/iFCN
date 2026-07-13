@@ -3,17 +3,18 @@
 #include <QTextStream>
 #include <QDebug>
 #include <QRegularExpression>
-#include <QFileDialog>
-#include <QDir>
 #include <QMessageBox>
 #include <QTimer>
 #include <QApplication>
 #include <QScreen>
 #include <QShowEvent>
 #include <QResizeEvent>
+#include <QSignalBlocker>
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 #include <limits>
+#include <exception>
 #include <autopr/algorithms/phase_codec.h>
 #include "ui/mainwindow/MainWindow.h"
 
@@ -54,6 +55,52 @@ bool sceneCoordinates(const position &cellPos, int &xCoord, int &yCoord)
     xCoord = static_cast<int>(cellPos.first * kPitch + kOrigin);
     yCoord = static_cast<int>(cellPos.second * kPitch + kOrigin);
     return true;
+}
+
+qulonglong environmentLimit(const char *name, qulonglong defaultValue)
+{
+    const QByteArray rawValue = qgetenv(name);
+    if (rawValue.isEmpty()) {
+        return defaultValue;
+    }
+
+    bool ok = false;
+    const qulonglong value = QString::fromLatin1(rawValue).trimmed().toULongLong(&ok);
+    return ok ? value : defaultValue;
+}
+
+qulonglong firstUnsignedNumber(const QString &text)
+{
+    const QRegularExpression numberPattern(QStringLiteral("(\\d+)"));
+    const QRegularExpressionMatch match = numberPattern.match(text);
+    if (!match.hasMatch()) {
+        return 0;
+    }
+
+    bool ok = false;
+    const qulonglong value = match.captured(1).toULongLong(&ok);
+    return ok ? value : 0;
+}
+
+qulonglong lastUnsignedNumber(const QString &text)
+{
+    const QRegularExpression numberPattern(QStringLiteral("(\\d+)"));
+    QRegularExpressionMatchIterator matches = numberPattern.globalMatch(text);
+    qulonglong value = 0;
+    while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        bool ok = false;
+        const qulonglong nextValue = match.captured(1).toULongLong(&ok);
+        if (ok) {
+            value = nextValue;
+        }
+    }
+    return value;
+}
+
+bool exceedsInteractiveLimit(qulonglong value, qulonglong limit)
+{
+    return limit > 0 && value > limit;
 }
 
 class CenteredMessageBox : public QMessageBox
@@ -141,27 +188,51 @@ void showCenteredMessageBox(QWidget *parent,
     CenteredMessageBox box(parent, icon, title, text);
     box.exec();
 }
+
+void resetMappedSceneLayers(MainWindow *mainWindow)
+{
+    if (mainWindow == nullptr || mainWindow->scene == nullptr || mainWindow->layerComboBox == nullptr) {
+        return;
+    }
+
+    mainWindow->scene->clearSelection();
+    mainWindow->scene->clearFastRender();
+    mainWindow->scene->clearPhaseRecord();
+
+    for (auto &layer : mainWindow->layers) {
+        for (QGraphicsItem *item : layer) {
+            if (item != nullptr) {
+                mainWindow->scene->removeItem(item);
+                delete item;
+            }
+        }
+    }
+    mainWindow->layers.clear();
+    mainWindow->setInputNames({});
+
+    QSignalBlocker blocker(mainWindow->layerComboBox);
+    while (mainWindow->layerComboBox->GetNumRows() > 0) {
+        mainWindow->layerComboBox->RemoveItem(mainWindow->layerComboBox->GetNumRows() - 1);
+    }
+
+    const QStringList layerNames = {
+        QStringLiteral("Main Cell Layer"),
+        QStringLiteral("second layer"),
+        QStringLiteral("third layer")
+    };
+    for (const QString &layerName : layerNames) {
+        mainWindow->layerComboBox->AddItem(layerName, true);
+        mainWindow->layers.push_back(QVector<QGraphicsItem*>());
+    }
+    mainWindow->layerComboBox->setCurrentIndex(0);
+    mainWindow->scene->setCurrentLayerIndex(0);
+}
 } // namespace
 
 GateLevelMapping::GateLevelMapping(MainWindow *parent)
     : QObject(parent), mainWindow(parent)
 {
     // qDebug() << "[GateLevelMapping] initialized (Qt containers)";
-}
-
-void GateLevelMapping::parseGateLevelMappingFile()
-{
-    QString filePath = QFileDialog::getOpenFileName(
-        mainWindow,
-        "Open .ifcn File",
-        QDir::currentPath(),
-        "iFCN Mapping Files (*.ifcn *.iFCN);;All file (*)"
-    );
-    if (filePath.isEmpty()) {
-        qWarning() << "[GateLevelMapping] No file selected.";
-        return;
-    }
-    parseGateLevelMappingFile(filePath);
 }
 
 void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
@@ -238,6 +309,7 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
 
     file.close();
 
+    applyClockSchemePhaseTemplate();
     mainWindow->updateLayoutInfoFromMapping(*this);
     showCenteredMessageBox(mainWindow,
         QMessageBox::Information,
@@ -252,41 +324,94 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
     mainWindow->customStatusBar->addMessage(message);
     QCoreApplication::processEvents();
 
-    mainWindow->beginSceneBatchUpdate();
-    mainWindow->scene->clearFastRender();
-
-    //映射
-    mainWindow->slotAddLayer("second layer");
-    mainWindow->slotAddLayer("third layer");
-    mainWindow->scene->beginFastRenderBuild(mainWindow->layers.size());
-
-
-    //遍历routes。打印key和value
-
-    for (auto it = routes.begin(); it != routes.end(); ++it)
-    {
-        const QPair<int,int>& key = it.key();
-        const QVector<QPoint>& path = it.value();
-        // qDebug() << "============================";
-        // qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
-
-        // for (const QPoint& p : path)
-        //     qDebug() << "   (" << p.x() << "," << p.y() << ")";
+    const qulonglong cellCount = firstUnsignedNumber(metadataValue({QStringLiteral("cell count")}));
+    const qulonglong layoutArea = lastUnsignedNumber(metadataValue({QStringLiteral("layout area")}));
+    const qulonglong cellLimit = environmentLimit("IFCN_MAX_INTERACTIVE_MAPPING_CELLS", 500000);
+    const qulonglong areaLimit = environmentLimit("IFCN_MAX_INTERACTIVE_LAYOUT_AREA", 300000);
+    const bool skipByCellCount = cellCount > 0 && exceedsInteractiveLimit(cellCount, cellLimit);
+    const bool skipByArea = cellCount == 0 && layoutArea > 0 && exceedsInteractiveLimit(layoutArea, areaLimit);
+    if (skipByCellCount || skipByArea) {
+        resetMappedSceneLayers(mainWindow);
+        const QString reason = skipByCellCount
+            ? QStringLiteral("cell count %1 exceeds interactive limit %2").arg(cellCount).arg(cellLimit)
+            : QStringLiteral("layout area %1 exceeds interactive limit %2").arg(layoutArea).arg(areaLimit);
+        const QString skipMessage = QStringLiteral(
+            "Gate-level .ifcn loaded, but cell-level interactive rendering was skipped because %1. "
+            "Set IFCN_MAX_INTERACTIVE_MAPPING_CELLS=0 or IFCN_MAX_INTERACTIVE_LAYOUT_AREA=0 to disable this guard."
+        ).arg(reason);
+        qWarning() << "[GateLevelMapping]" << skipMessage;
+        mainWindow->printToStatusBar(skipMessage);
+        showCenteredMessageBox(mainWindow,
+                               QMessageBox::Information,
+                               QStringLiteral("Large Mapping Loaded"),
+                               skipMessage);
+        emit mappingLoaded();
+        return;
     }
 
-    mappingCellItem();
-    putClock();
-    mainWindow->scene->finalizeFastRenderBuild();
-    QVector<QString> inputNames;
-    for (const auto &layerCells : mainWindow->scene->fastCellsByLayer()) {
-        for (const auto &cell : layerCells) {
-            if (cell.type == CellType::InputCell && !cell.name.isEmpty()) {
-                inputNames.push_back(cell.name);
+    resetMappedSceneLayers(mainWindow);
+
+    bool batchStarted = false;
+    try {
+        mainWindow->beginSceneBatchUpdate();
+        batchStarted = true;
+        mainWindow->scene->beginFastRenderBuild(mainWindow->layers.size());
+
+        //遍历routes。打印key和value
+
+        for (auto it = routes.begin(); it != routes.end(); ++it)
+        {
+            const QPair<int,int>& key = it.key();
+            const QVector<QPoint>& path = it.value();
+            // qDebug() << "============================";
+            // qDebug() << "Route (" << key.first << "->" << key.second << "), length =" << path.size();
+
+            // for (const QPoint& p : path)
+            //     qDebug() << "   (" << p.x() << "," << p.y() << ")";
+        }
+
+        mappingCellItem();
+        putClock();
+        mainWindow->scene->finalizeFastRenderBuild();
+        QVector<QString> inputNames;
+        for (const auto &layerCells : mainWindow->scene->fastCellsByLayer()) {
+            for (const auto &cell : layerCells) {
+                if (cell.type == CellType::InputCell && !cell.name.isEmpty()) {
+                    inputNames.push_back(cell.name);
+                }
             }
         }
+        mainWindow->setInputNames(inputNames);
+        mainWindow->endSceneBatchUpdate(true);
+        batchStarted = false;
+        mainWindow->scene->notifyClockRegionsChanged();
+    } catch (const std::exception &ex) {
+        mainWindow->scene->clearFastRender();
+        if (batchStarted) {
+            mainWindow->endSceneBatchUpdate(false);
+        }
+        const QString message = QStringLiteral("Cell-level mapping failed: %1").arg(QString::fromLocal8Bit(ex.what()));
+        qWarning() << "[GateLevelMapping]" << message;
+        mainWindow->printToStatusBar(message);
+        showCenteredMessageBox(mainWindow,
+                               QMessageBox::Warning,
+                               QStringLiteral("Mapping Failed"),
+                               message);
+        return;
+    } catch (...) {
+        mainWindow->scene->clearFastRender();
+        if (batchStarted) {
+            mainWindow->endSceneBatchUpdate(false);
+        }
+        const QString message = QStringLiteral("Cell-level mapping failed with an unknown error.");
+        qWarning() << "[GateLevelMapping]" << message;
+        mainWindow->printToStatusBar(message);
+        showCenteredMessageBox(mainWindow,
+                               QMessageBox::Warning,
+                               QStringLiteral("Mapping Failed"),
+                               message);
+        return;
     }
-    mainWindow->setInputNames(inputNames);
-    mainWindow->endSceneBatchUpdate(true);
     // printCrossline();
 
     emit mappingLoaded();
@@ -538,6 +663,26 @@ void GateLevelMapping::parsePathLine(const QString &line)
 
 void GateLevelMapping::parsePhaseLine(const QString &line)
 {
+    int layoutWidth = 0;
+    int layoutHeight = 0;
+    const QString layoutArea = metadataValue({QStringLiteral("layout area")});
+    const QRegularExpression widthPattern(QStringLiteral("width\\s*:\\s*(\\d+)"));
+    const QRegularExpression heightPattern(QStringLiteral("height\\s*:\\s*(\\d+)"));
+    const QRegularExpressionMatch widthMatch = widthPattern.match(layoutArea);
+    const QRegularExpressionMatch heightMatch = heightPattern.match(layoutArea);
+    if (widthMatch.hasMatch()) {
+        layoutWidth = widthMatch.captured(1).toInt();
+    }
+    if (heightMatch.hasMatch()) {
+        layoutHeight = heightMatch.captured(1).toInt();
+    }
+    auto inLayoutBounds = [layoutWidth, layoutHeight](const QPoint &pt) {
+        if (layoutWidth <= 0 || layoutHeight <= 0) {
+            return true;
+        }
+        return pt.x() >= 0 && pt.y() >= 0 && pt.x() < layoutWidth && pt.y() < layoutHeight;
+    };
+
     // 新格式: tile(x,y):0xhhhh; 其中 tile 坐标映射到 block_size x block_size 的相位块。
     QRegularExpression tileEntry("tile\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)\\s*:\\s*(?:0x)?([0-9a-fA-F]+)");
     QRegularExpressionMatchIterator tileIt = tileEntry.globalMatch(line);
@@ -559,6 +704,9 @@ void GateLevelMapping::parsePhaseLine(const QString &line)
                 for (int column = 0; column < phaseCodecBlockSize; ++column) {
                     const QPoint pt(tileX * phaseCodecBlockSize + column,
                                     tileY * phaseCodecBlockSize + row);
+                    if (!inLayoutBounds(pt)) {
+                        continue;
+                    }
                     coordPhaseMap.insert(pt, matrix[static_cast<size_t>(row)][static_cast<size_t>(column)]);
                 }
             }
@@ -577,6 +725,9 @@ void GateLevelMapping::parsePhaseLine(const QString &line)
     while (it.hasNext()) {
         QRegularExpressionMatch m = it.next();
         QPoint pt(m.captured(1).toInt(), m.captured(2).toInt());
+        if (pt.x() < 0 || pt.y() < 0) {
+            continue;
+        }
         coordPhaseMap.insert(pt, m.captured(3).toInt());
     }
 }
@@ -601,6 +752,53 @@ void GateLevelMapping::parsePhaseCodecLine(const QString &line)
     }
     if (phaseCodecBlockSize != 3 && phaseCodecBlockSize != 4) {
         phaseCodecBlockSize = phaseCodecPhaseCount;
+    }
+}
+
+void GateLevelMapping::applyClockSchemePhaseTemplate()
+{
+    QString scheme = metadataValue({QStringLiteral("clock scheme")}).toLower();
+    scheme.remove(QRegularExpression(QStringLiteral("\\s+")));
+    if (scheme != QStringLiteral("2ddwave") && scheme != QStringLiteral("tddwave")) {
+        return;
+    }
+
+    int minX = std::numeric_limits<int>::max();
+    int minY = std::numeric_limits<int>::max();
+    int maxX = std::numeric_limits<int>::min();
+    int maxY = std::numeric_limits<int>::min();
+
+    auto includePoint = [&](const QPoint &point) {
+        if (point.x() < 0 || point.y() < 0) {
+            return;
+        }
+        minX = std::min(minX, point.x());
+        minY = std::min(minY, point.y());
+        maxX = std::max(maxX, point.x());
+        maxY = std::max(maxY, point.y());
+    };
+
+    for (auto it = coordPhaseMap.cbegin(); it != coordPhaseMap.cend(); ++it) {
+        includePoint(it.key());
+    }
+    if (minX == std::numeric_limits<int>::max()) {
+        for (auto it = nodes.cbegin(); it != nodes.cend(); ++it) {
+            includePoint(it.value().pos);
+        }
+        for (auto it = routes.cbegin(); it != routes.cend(); ++it) {
+            for (const QPoint &point : it.value()) {
+                includePoint(point);
+            }
+        }
+    }
+    if (minX == std::numeric_limits<int>::max()) {
+        return;
+    }
+
+    for (int y = minY; y <= maxY; ++y) {
+        for (int x = minX; x <= maxX; ++x) {
+            coordPhaseMap.insert(QPoint(x, y), (x + y) & 0x3);
+        }
     }
 }
 
@@ -632,9 +830,20 @@ void GateLevelMapping::mappingCellItem(){
         const QVector<QPoint>& qPoints = it.value();
         std::vector<position> convertedRoute;
         convertedRoute.reserve(qPoints.size());
-        for (const QPoint& point : qPoints)
+        if (qPoints.size() < 2) {
+            continue;
+        }
+        for (const QPoint& point : qPoints) {
+            if (point.x() < 0 || point.y() < 0) {
+                convertedRoute.clear();
+                break;
+            }
             convertedRoute.emplace_back(static_cast<unsigned int>(point.x()),
                                         static_cast<unsigned int>(point.y()));
+        }
+        if (convertedRoute.size() < 2) {
+            continue;
+        }
         circle_line.push_back(std::move(convertedRoute));
     }
     std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node,type), (扇入，扇出)>

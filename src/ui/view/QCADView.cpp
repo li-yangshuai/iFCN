@@ -5,12 +5,15 @@
 #include <QStandardItem>
 
 #include <QDebug>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QPainterPath>
 #include <algorithm>
 #include <cmath>
 QCADView::QCADView(QWidget *parent) : QGraphicsView(parent)
 {
     setDragMode(RubberBandDrag);
-    setStyleSheet("padding: 0px; border: 20px;");
+    setStyleSheet("padding: 0px; border: none; background: #ffffff;");
     setMouseTracking(true);
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     setResizeAnchor(QGraphicsView::AnchorViewCenter);
@@ -42,6 +45,83 @@ void QCADView::setHighQualityMode(bool enabled)
 bool QCADView::isHighQualityMode() const
 {
     return highQualityMode;
+}
+
+void QCADView::setEmptyStateVisible(bool visible)
+{
+    if (emptyStateVisible == visible) {
+        return;
+    }
+    emptyStateVisible = visible;
+    viewport()->update();
+}
+
+bool QCADView::isEmptyStateVisible() const
+{
+    return emptyStateVisible;
+}
+
+void QCADView::paintEvent(QPaintEvent *event)
+{
+    QGraphicsView::paintEvent(event);
+    if (!emptyStateVisible || viewport() == nullptr || viewport()->width() < 320 || viewport()->height() < 180) {
+        return;
+    }
+
+    QPainter painter(viewport());
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const int cardWidth = qMin(470, viewport()->width() - 48);
+    const int cardHeight = 164;
+    QRectF card((viewport()->width() - cardWidth) / 2.0,
+                (viewport()->height() - cardHeight) / 2.0,
+                cardWidth,
+                cardHeight);
+
+    painter.setPen(QPen(QColor("#d6dde8"), 1.0));
+    painter.setBrush(QColor(250, 252, 255, 245));
+    painter.drawRoundedRect(card, 12.0, 12.0);
+
+    const QPointF iconCenter(card.left() + 48.0, card.top() + 48.0);
+    painter.setPen(QPen(QColor("#2563eb"), 2.2));
+    painter.setBrush(QColor("#eff6ff"));
+    painter.drawRoundedRect(QRectF(iconCenter.x() - 20.0,
+                                   iconCenter.y() - 20.0,
+                                   40.0,
+                                   40.0),
+                            9.0,
+                            9.0);
+    painter.drawLine(iconCenter + QPointF(-10.0, 0.0), iconCenter + QPointF(10.0, 0.0));
+    painter.drawLine(iconCenter + QPointF(0.0, -10.0), iconCenter + QPointF(0.0, 10.0));
+    painter.setBrush(QColor("#2563eb"));
+    painter.drawEllipse(iconCenter + QPointF(-10.0, 0.0), 3.2, 3.2);
+    painter.drawEllipse(iconCenter + QPointF(10.0, 0.0), 3.2, 3.2);
+    painter.drawEllipse(iconCenter + QPointF(0.0, -10.0), 3.2, 3.2);
+    painter.drawEllipse(iconCenter + QPointF(0.0, 10.0), 3.2, 3.2);
+
+    QRectF titleRect(card.left() + 82.0, card.top() + 25.0, card.width() - 108.0, 30.0);
+    QFont titleFont = painter.font();
+    titleFont.setPointSizeF(titleFont.pointSizeF() + 2.0);
+    titleFont.setBold(true);
+    painter.setFont(titleFont);
+    painter.setPen(QColor("#172033"));
+    painter.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter, tr("Start a layout"));
+
+    QFont bodyFont = painter.font();
+    bodyFont.setPointSizeF(qMax(8.0, bodyFont.pointSizeF() - 1.5));
+    bodyFont.setBold(false);
+    painter.setFont(bodyFont);
+    painter.setPen(QColor("#5b6474"));
+    painter.drawText(QRectF(card.left() + 82.0, card.top() + 55.0,
+                            card.width() - 108.0, 42.0),
+                     Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+                     tr("Open or drop an .ifcn/.qca layout, or run Universal AI P&R from the toolbar."));
+
+    painter.setPen(QColor("#7b8493"));
+    painter.drawText(QRectF(card.left() + 24.0, card.bottom() - 44.0,
+                            card.width() - 48.0, 24.0),
+                     Qt::AlignCenter,
+                     tr("Tip: choose a cell on the left to enter Insert mode."));
 }
 
 void QCADView::ensurePanTargetVisible(const QPointF &targetCenter)

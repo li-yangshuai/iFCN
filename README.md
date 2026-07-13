@@ -71,7 +71,7 @@ Run the GUI:
 
 ### Run Graph-Based Placement and Routing
 
-1. Click `Graph P&R` in the `Algorithms` toolbar.
+1. Open the arrow beside `Universal AI P&R` and choose `Compact Graph P&R`.
 2. Select a Verilog file, for example:
 
 ```text
@@ -96,15 +96,88 @@ tests/cell_level_examples/GoodiFCN/xor2_gate_level_pr.ifcn
 
 3. The circuit is mapped into cell-level layout form in the scene.
 
+### Run the Universal Memory GCN+RL Agent
+
+The trained recurrent graph policy is integrated into the desktop UI:
+
+1. Click the main `Universal AI P&R` toolbar action.
+2. Select a Verilog circuit.
+3. Keep `Universal memory agent` selected and choose `Fast preview`, `Balanced`,
+   or `High quality`.
+4. The status strip reports checkpoint loading, graph preparation, stochastic-clock
+   exact routing, and export progress.
+5. The GUI loads an artifact only when the runner reports `strict_success`: no
+   failed edge, direction violation, or sampled-clock violation.
+
+The arrow beside the action keeps the heuristic and graph-based baselines. The
+options dialog also retains `Legacy online PPO training` for comparison, but it
+is no longer the default GCN+RL path.
+
+Training or continuing the shared policy remains a CLI workflow:
+
+```bash
+include/gcn_rl_layout/myenv/bin/python \
+  include/gcn_rl_layout/src/algorithm/main/train_universal_graph_ppo.py \
+  --benchmarks tests/benchmarks_f/TOY/xor2.v tests/benchmarks_f/TOY/xnor2.v \
+  --clock-mode stochastic-bands \
+  --episodes 2000 --exact-field-samples 4
+```
+
+See
+[the universal stochastic-clock design](include/gcn_rl_layout/UNIVERSAL_STOCHASTIC_CLOCK.md)
+for the model, current limitations, and evaluation protocol.
+
+Evaluate the checkpoint on explicitly held-out circuits and fresh frozen clock
+fields (the overlap guard prevents accidentally reporting training circuits):
+
+```bash
+include/gcn_rl_layout/myenv/bin/python \
+  include/gcn_rl_layout/src/algorithm/main/evaluate_universal_graph_ppo.py \
+  --checkpoint include/gcn_rl_layout/results/universal_graph_ppo/universal_graph_ppo.pt \
+  --benchmark-glob 'tests/benchmarks_f/IWLS93/*.v' \
+  --clock-field-samples 32 --require-unseen
+```
+
 ### Run Simulation
 
 Use the `Simulation` menu:
 
 - `Start Bistable Simulation`
+- `Start Accelerated Bistable Simulation`
 - `Start Coherence Simulation`
+- `Start Accelerated Coherence Simulation`
 - selective simulation options when vector-table input is needed
 
-Simulation progress is shown in the dynamic progress area. The UI remains usable while simulation tasks run.
+The accelerated engines evaluate the same Bistable or coherence-vector equations
+on the same sample grid. They use order-preserving spatial graph construction,
+packed sparse kernels, and model-specific redundant-work elimination; no neural
+surrogate, cell skipping, or time-step approximation is involved. The baseline
+engines remain available as reproducible references.
+
+All six physical-simulation actions take a temporary QCA snapshot of the current
+in-memory canvas. A layout generated from `.ifcn` can therefore be simulated
+immediately, including unsaved edits, without first using **Save As QCA**. The
+snapshot is removed automatically while the `.rst` result is written beside the
+original document.
+
+Simulation progress is shown in the dynamic progress area. The UI remains usable
+while simulation tasks run.
+
+For paired accuracy/performance measurements, configure a Release build and run:
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --target ifcn_physical_benchmark -j4
+build-release/ifcn_physical_benchmark circuit.qca \
+  --model both --repetitions 10 --warmup 1 --require-equivalent \
+  --json result.json --csv result.csv
+```
+
+The complete `hfut-sim/benchmark` directory can be evaluated with
+`scripts/run_hfut_physical_benchmark.sh`. It records per-circuit raw timings,
+logic agreement, MAE/RMSE/maximum error, aggregate speedup, and bootstrap
+confidence intervals. The implementation and experiment design are documented
+in [`docs/clock_zone_simulation.tex`](docs/clock_zone_simulation.tex).
 
 ### Run Energy Analysis
 
@@ -165,4 +238,3 @@ If you use iFCN in academic work, please cite the related publications:
 - F. Peng, Y. Zhang, R. Kuang and G. Xie, "Spars: A Full Flow Quantum-Dot Cellular Automata Circuit Design Tool," IEEE TCAS-II, 2021.
 - Y. Li, G. Xie, Q. Han, X. Li, G. Li, B. Zhang, and F. Peng, "Field-coupled nanocomputing placement and routing with genetic and A* algorithms," IEEE TCAS-I, 2022.
 - Y. Li, F. Peng, X. Tong, R. Zhu, Q. Han and G. Xie, "iFCN: An Automated RTL-to-Device Framework for Molecular Field-Coupled Nanocomputing Circuits," IEEE TCAS-I, 2025.
-

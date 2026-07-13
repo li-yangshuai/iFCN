@@ -91,7 +91,9 @@ int main(int argc, char **argv)
     std::vector<std::vector<position>> routePaths;
     routePaths.reserve(routes.size());
     for (const auto &route : routes) {
-        routePaths.push_back(route.second);
+        if (route.second.size() >= 2) {
+            routePaths.push_back(route.second);
+        }
     }
 
     std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> nodeLinks;

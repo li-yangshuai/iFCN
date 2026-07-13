@@ -1,0 +1,28 @@
+{
+  "benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41.v",
+  "resolved_benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41.v",
+  "parser_safe_generated": false,
+  "seed": 1,
+  "seed_attempts": [
+    {
+      "seed": 1,
+      "failed_edge_count": 0,
+      "clock_template_ok": true,
+      "clock_template_conflicts": 0,
+      "area": 120
+    }
+  ],
+  "output_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw",
+  "ifcn": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_normal_graph_draw.ifcn",
+  "encoded_ifcn": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_normal_graph_draw_encoded.ifcn",
+  "raw_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_raw.svg",
+  "ordered_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41.svg",
+  "physical_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_physical.svg",
+  "stage_tex_dir": "seed_1",
+  "failed_edge_count": 0,
+  "width": 12,
+  "height": 10,
+  "area": 120,
+  "run_time_sec": 2.1700112179969437,
+  "algorithm_description": "normal graph draw algorithm based on GCN embedding + barycenter ordering, right-down reachable initialization, ML-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
+}

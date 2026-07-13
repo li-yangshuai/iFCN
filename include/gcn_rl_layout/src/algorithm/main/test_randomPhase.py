@@ -1,5 +1,5 @@
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 import hashlib
 import heapq
 import json
@@ -25,6 +25,7 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCONFIG_DIR)
 from lib import iFCN_Lab
 from src.circuit_parse import CircuitParser
 from src.gcn_model_less_node import normal_generate, visualize_layered_graph_sorted
+from src.stochastic_clock import ClockField, install_phase_field
 from src.toolkit import generate_gate_level_mapping_file
 
 
@@ -44,6 +45,7 @@ LAYOUT_MEMORY_DIR = os.path.abspath(
     )
 )
 GCN_CACHE_DIR = os.path.join(LAYOUT_MEMORY_DIR, "gcn_cache")
+GCN_CACHE_SCHEMA_VERSION = 3
 ALGORITHM_DESCRIPTION = (
     "GCN layer ordering + orientation-aware adaptive compact layout search + "
     "GCN-guided local compaction + phase-aware monotone routing with edge-exposed ports"
@@ -66,6 +68,22 @@ DEFAULT_ALLOW_ESCAPE_ROUTING = os.environ.get("IFCN_GCN_RL_ALLOW_ESCAPE_ROUTING"
 DEFAULT_FLEXIBLE_ROUTER_EXPANSION_LIMIT = max(
     0,
     int(os.environ.get("IFCN_GCN_RL_FLEX_EXPANSION_LIMIT", "8000")),
+)
+DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT = max(
+    0,
+    int(os.environ.get("IFCN_GCN_RL_MONOTONE_EXPANSION_LIMIT", "8000")),
+)
+DEFAULT_REPAIR_ORDER_ATTEMPTS = max(
+    0,
+    int(os.environ.get("IFCN_GCN_RL_REPAIR_ORDER_ATTEMPTS", "4")),
+)
+DEFAULT_ALTERNATE_PHASE_POLICY_ORDERS = max(
+    0,
+    int(os.environ.get("IFCN_GCN_RL_ALT_PHASE_POLICY_ORDERS", "3")),
+)
+DEFAULT_LOCAL_RIPUP_ATTEMPTS = max(
+    0,
+    int(os.environ.get("IFCN_GCN_RL_LOCAL_RIPUP_ATTEMPTS", "6")),
 )
 
 
@@ -175,6 +193,7 @@ def build_benchmark_cache_key(benchmark_path, seed):
     stat = os.stat(benchmark_path)
     payload = json.dumps(
         {
+            "cache_schema_version": GCN_CACHE_SCHEMA_VERSION,
             "benchmark_path": benchmark_path,
             "seed": int(seed),
             "size": int(stat.st_size),
@@ -207,6 +226,7 @@ def load_or_generate_gcn_layout(
     benchmark_path,
     seed,
     use_cache=True,
+    device="auto",
 ):
     benchmark_path = os.path.abspath(benchmark_path)
     cache_path = get_gcn_cache_path(benchmark_path, seed)
@@ -275,6 +295,7 @@ def load_or_generate_gcn_layout(
         circuit.effective_edges,
         circuit.node_to_index,
         circuit.filePath,
+        device=device,
     )
 
     if use_cache:
@@ -532,12 +553,19 @@ def apply_common_first_input_phase(board, circuit, node_positions, common_phase=
         board.setPhase((int(coord[0]), int(coord[1])), int(common_phase))
 
 
-def create_board_with_positions(circuit, node_positions, common_first_input_phase=None):
+def create_board_with_positions(
+    circuit,
+    node_positions,
+    common_first_input_phase=None,
+    clock_field=None,
+):
     board = iFCN_Lab.MapChessboard()
     board.setPhaseEnabled(True)
+    if clock_field is not None:
+        install_phase_field(board, clock_field)
     for node_id, coord in node_positions.items():
         board.placeNode(node_id, coord, circuit.get_node_type(node_id))
-    if common_first_input_phase is not None:
+    if common_first_input_phase is not None and clock_field is None:
         apply_common_first_input_phase(
             board,
             circuit,
@@ -658,7 +686,13 @@ def build_route_order(circuit, node_positions=None, orientation=TOP_DOWN, embedd
     return ordered_pairs
 
 
-def build_route_order_variants(circuit, node_positions=None, orientation=TOP_DOWN, embedding_scores=None):
+def build_route_order_variants(
+    circuit,
+    node_positions=None,
+    orientation=TOP_DOWN,
+    embedding_scores=None,
+    edge_priorities=None,
+):
     base_order = build_route_order(
         circuit,
         node_positions=node_positions,
@@ -692,7 +726,19 @@ def build_route_order_variants(circuit, node_positions=None, orientation=TOP_DOW
     def source_secondary(edge):
         return int(node_positions[int(edge[0])][secondary_axis])
 
+    learned_order = None
+    if edge_priorities:
+        learned_order = sorted(
+            base_order,
+            key=lambda edge: (
+                -float(edge_priorities.get((int(edge[0]), int(edge[1])), 0.0)),
+                int(edge[0]),
+                int(edge[1]),
+            ),
+        )
+
     variants = [
+        learned_order or base_order,
         base_order,
         sorted(
             base_order,
@@ -778,10 +824,35 @@ def get_preferred_end_directions(orientation):
     return [(0, -1), (-1, 0), (1, 0), (0, 1)]
 
 
+def get_recorded_output_directions(outgoing_directions, node_id):
+    recorded = outgoing_directions.get(int(node_id))
+    if recorded is None:
+        return set()
+    if isinstance(recorded, set):
+        return set(recorded)
+    return {recorded}
+
+
+def record_output_direction(outgoing_directions, node_id, direction, multi_output_nodes):
+    node_id = int(node_id)
+    if node_id in multi_output_nodes:
+        recorded = get_recorded_output_directions(outgoing_directions, node_id)
+        recorded.add(direction)
+        outgoing_directions[node_id] = recorded
+    else:
+        outgoing_directions[node_id] = direction
+
+
 def get_candidate_start_directions(node_id, orientation, incoming_directions, outgoing_directions):
     node_id = int(node_id)
     if node_id in outgoing_directions:
-        direction = outgoing_directions[node_id]
+        recorded_directions = get_recorded_output_directions(
+            outgoing_directions,
+            node_id,
+        )
+        if len(recorded_directions) != 1:
+            return []
+        direction = next(iter(recorded_directions))
         if direction in incoming_directions[node_id]:
             return []
         return [direction]
@@ -791,8 +862,7 @@ def get_candidate_start_directions(node_id, orientation, incoming_directions, ou
 def get_candidate_end_directions(node_id, orientation, incoming_directions, outgoing_directions):
     node_id = int(node_id)
     blocked = set(incoming_directions[node_id])
-    if node_id in outgoing_directions:
-        blocked.add(outgoing_directions[node_id])
+    blocked.update(get_recorded_output_directions(outgoing_directions, node_id))
     return [direction for direction in get_preferred_end_directions(orientation) if direction not in blocked]
 
 
@@ -981,11 +1051,16 @@ def route_monotone_with_phase(
     orientation,
     start_dir=None,
     end_dir=None,
+    start_dirs=None,
+    end_dirs=None,
     start_coord=None,
     goal_coord=None,
     start_run_len=1,
     save_path=True,
     force_start_advance=False,
+    expansion_limit=DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT,
+    advance_cost=1,
+    hold_cost=2,
 ):
     start = tuple(start_coord) if start_coord is not None else board.getPlacedNodeCoord(src)
     goal = tuple(goal_coord) if goal_coord is not None else board.getPlacedNodeCoord(dst)
@@ -1022,12 +1097,14 @@ def route_monotone_with_phase(
         heapq.heappush(queue, (heuristic, 0, state))
 
     visited = set()
+    expansions = 0
 
-    while queue:
+    while queue and (expansion_limit <= 0 or expansions < expansion_limit):
         _priority, current_cost, current = heapq.heappop(queue)
         if current in visited:
             continue
         visited.add(current)
+        expansions += 1
 
         x, y, phase, run_len = current
         current_coord = (x, y)
@@ -1059,10 +1136,16 @@ def route_monotone_with_phase(
             next_coord = (nx, ny)
             if prev_coord is not None and next_coord == prev_coord:
                 continue
-            if prev_coord is None and start_dir is not None and (dx, dy) != start_dir:
-                continue
-            if next_coord == goal and end_dir is not None:
-                if (x - goal[0], y - goal[1]) != end_dir:
+            if prev_coord is None:
+                if start_dirs is not None and (dx, dy) not in start_dirs:
+                    continue
+                if start_dir is not None and (dx, dy) != start_dir:
+                    continue
+            if next_coord == goal:
+                incoming_dir = (x - goal[0], y - goal[1])
+                if end_dirs is not None and incoming_dir not in end_dirs:
+                    continue
+                if end_dir is not None and incoming_dir != end_dir:
                     continue
             if next_coord != goal and not board.canPlaceWire(next_coord):
                 continue
@@ -1072,11 +1155,14 @@ def route_monotone_with_phase(
 
             candidate_states = []
             if phase_compatible(board, next_coord, next_phase):
-                candidate_states.append(((nx, ny, next_phase, 1), 1))
+                candidate_states.append(
+                    ((nx, ny, next_phase, 1), max(1, int(advance_cost)))
+                )
             allow_hold = not (force_start_advance and prev_coord is None)
             if allow_hold and can_hold and phase_compatible(board, next_coord, phase):
-                hold_cost = 2
-                candidate_states.append(((nx, ny, phase, run_len + 1), hold_cost))
+                candidate_states.append(
+                    ((nx, ny, phase, run_len + 1), max(1, int(hold_cost)))
+                )
 
             for next_state, transition_cost in candidate_states:
                 turn_cost = 0
@@ -1103,12 +1189,16 @@ def route_flexible_with_phase(
     orientation,
     start_dir=None,
     end_dir=None,
+    start_dirs=None,
+    end_dirs=None,
     start_coord=None,
     goal_coord=None,
     start_run_len=1,
     save_path=True,
     expansion_limit=DEFAULT_FLEXIBLE_ROUTER_EXPANSION_LIMIT,
     force_start_advance=False,
+    advance_cost=1,
+    hold_cost=2,
 ):
     if expansion_limit <= 0:
         return []
@@ -1183,10 +1273,16 @@ def route_flexible_with_phase(
             next_coord = (nx, ny)
             if prev_coord is not None and next_coord == prev_coord:
                 continue
-            if prev_coord is None and start_dir is not None and (dx, dy) != start_dir:
-                continue
-            if next_coord == goal and end_dir is not None:
-                if (x - goal[0], y - goal[1]) != end_dir:
+            if prev_coord is None:
+                if start_dirs is not None and (dx, dy) not in start_dirs:
+                    continue
+                if start_dir is not None and (dx, dy) != start_dir:
+                    continue
+            if next_coord == goal:
+                incoming_dir = (x - goal[0], y - goal[1])
+                if end_dirs is not None and incoming_dir not in end_dirs:
+                    continue
+                if end_dir is not None and incoming_dir != end_dir:
                     continue
             if next_coord != goal and not board.canPlaceWire(next_coord):
                 continue
@@ -1195,10 +1291,14 @@ def route_flexible_with_phase(
             can_hold = (max_same_phase <= 0) or (run_len < max_same_phase)
             candidate_states = []
             if phase_compatible(board, next_coord, next_phase):
-                candidate_states.append((next_phase, 1, 1))
+                candidate_states.append(
+                    (next_phase, 1, max(1, int(advance_cost)))
+                )
             allow_hold = not (force_start_advance and prev_coord is None)
             if allow_hold and can_hold and phase_compatible(board, next_coord, phase):
-                candidate_states.append((phase, run_len + 1, 2))
+                candidate_states.append(
+                    (phase, run_len + 1, max(1, int(hold_cost)))
+                )
 
             for candidate_phase, candidate_run, transition_cost in candidate_states:
                 turn_cost = 0
@@ -2858,16 +2958,41 @@ def route_single_edge_with_direction_constraints(
     outgoing_directions,
     routed_paths=None,
     first_layer_inputs=None,
+    combined_port_search=True,
+    advance_cost=1,
+    hold_cost=2,
+    multi_output_nodes=None,
+    allow_relaxed_ports=True,
+    allow_escape_routing=DEFAULT_ALLOW_ESCAPE_ROUTING,
+    monotone_expansion_limit=None,
+    flexible_expansion_limit=None,
 ):
+    monotone_expansion_limit = (
+        DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT
+        if monotone_expansion_limit is None else
+        max(0, int(monotone_expansion_limit))
+    )
+    flexible_expansion_limit = (
+        DEFAULT_FLEXIBLE_ROUTER_EXPANSION_LIMIT
+        if flexible_expansion_limit is None else
+        max(0, int(flexible_expansion_limit))
+    )
     start_coord = board.getPlacedNodeCoord(src)
     goal_coord = board.getPlacedNodeCoord(dst)
     force_start_advance = int(src) in (first_layer_inputs or set())
-    start_directions = get_candidate_start_directions(
-        src,
-        orientation,
-        incoming_directions,
-        outgoing_directions,
-    )
+    if int(src) in {int(node_id) for node_id in (multi_output_nodes or ())}:
+        start_directions = [
+            direction
+            for direction in get_preferred_start_directions(orientation)
+            if direction not in incoming_directions[int(src)]
+        ]
+    else:
+        start_directions = get_candidate_start_directions(
+            src,
+            orientation,
+            incoming_directions,
+            outgoing_directions,
+        )
     end_directions = get_candidate_end_directions(
         dst,
         orientation,
@@ -2891,22 +3016,48 @@ def route_single_edge_with_direction_constraints(
         orientation,
         incoming_directions,
         outgoing_directions,
+        combined_port_search=combined_port_search,
+        advance_cost=advance_cost,
+        hold_cost=hold_cost,
+        monotone_expansion_limit=monotone_expansion_limit,
     )
     if branch_path:
         return branch_path
 
+    start_directions = [
+        direction
+        for direction in start_directions
+        if add_direction(start_coord, direction) == goal_coord
+        or board.canPlaceWire(add_direction(start_coord, direction))
+    ]
+    if not start_directions:
+        return []
     direction_pairs = [
         (start_dir, end_dir)
         for start_dir in start_directions
         for end_dir in end_directions
     ]
 
-    for start_dir in start_directions:
-        start_neighbor = add_direction(start_coord, start_dir)
-        if start_neighbor != goal_coord and not board.canPlaceWire(start_neighbor):
-            continue
-
-        for end_dir in end_directions:
+    if combined_port_search:
+        path = route_monotone_with_phase(
+            board,
+            src,
+            dst,
+            phase_cycle,
+            padding,
+            max_same_phase,
+            orientation,
+            start_dirs=set(start_directions),
+            end_dirs=set(end_directions),
+            force_start_advance=force_start_advance,
+            expansion_limit=monotone_expansion_limit,
+            advance_cost=advance_cost,
+            hold_cost=hold_cost,
+        )
+        if path:
+            return path
+    else:
+        for start_dir, end_dir in direction_pairs:
             path = route_monotone_with_phase(
                 board,
                 src,
@@ -2918,35 +3069,66 @@ def route_single_edge_with_direction_constraints(
                 start_dir=start_dir,
                 end_dir=end_dir,
                 force_start_advance=force_start_advance,
+                expansion_limit=monotone_expansion_limit,
+                advance_cost=advance_cost,
+                hold_cost=hold_cost,
             )
             if path:
                 return path
 
-    relaxed_monotone_path = route_monotone_with_phase(
-        board,
-        src,
-        dst,
-        phase_cycle,
-        padding,
-        max_same_phase,
-        orientation,
-        force_start_advance=force_start_advance,
-    )
-    if relaxed_monotone_path:
-        return relaxed_monotone_path
+    # Monotone routing can fail when an already-routed net forces a short
+    # detour. Keep the selected node ports fixed while allowing A* to move
+    # backwards around the obstruction before considering relaxed ports.
+    if combined_port_search:
+        path = route_flexible_with_phase(
+            board,
+            src,
+            dst,
+            phase_cycle,
+            padding,
+            max_same_phase,
+            orientation,
+            start_dirs=set(start_directions),
+            end_dirs=set(end_directions),
+            force_start_advance=force_start_advance,
+            expansion_limit=flexible_expansion_limit,
+            advance_cost=advance_cost,
+            hold_cost=hold_cost,
+        )
+        if path:
+            return path
+    if allow_relaxed_ports:
+        relaxed_monotone_path = route_monotone_with_phase(
+            board,
+            src,
+            dst,
+            phase_cycle,
+            padding,
+            max_same_phase,
+            orientation,
+            force_start_advance=force_start_advance,
+            expansion_limit=monotone_expansion_limit,
+            advance_cost=advance_cost,
+            hold_cost=hold_cost,
+        )
+        if relaxed_monotone_path:
+            return relaxed_monotone_path
 
-    flexible_path = route_flexible_with_phase(
-        board,
-        src,
-        dst,
-        phase_cycle,
-        padding,
-        max_same_phase,
-        orientation,
-        force_start_advance=force_start_advance,
-    )
-    if flexible_path:
-        return flexible_path
+        flexible_path = route_flexible_with_phase(
+            board,
+            src,
+            dst,
+            phase_cycle,
+            padding,
+            max_same_phase,
+            orientation,
+            force_start_advance=force_start_advance,
+            expansion_limit=flexible_expansion_limit,
+            advance_cost=advance_cost,
+            hold_cost=hold_cost,
+        )
+        if flexible_path:
+            return flexible_path
 
     if DEFAULT_GENERIC_ROUTER_COMBO_LIMIT > 0:
         for start_dir, end_dir in direction_pairs[:DEFAULT_GENERIC_ROUTER_COMBO_LIMIT]:
@@ -2966,7 +3148,7 @@ def route_single_edge_with_direction_constraints(
             if path:
                 return path
 
-    if DEFAULT_ALLOW_ESCAPE_ROUTING:
+    if allow_escape_routing:
         # Last-resort exact route without fixed port directions. This keeps a
         # difficult benchmark from being discarded solely because all legal
         # port choices were locally blocked; direction violations are still
@@ -3027,6 +3209,10 @@ def route_edge_from_existing_source_trunk(
     orientation,
     incoming_directions,
     outgoing_directions,
+    combined_port_search=True,
+    advance_cost=1,
+    hold_cost=2,
+    monotone_expansion_limit=DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT,
 ):
     goal_coord = board.getPlacedNodeCoord(int(dst))
     end_directions = get_candidate_end_directions(
@@ -3059,34 +3245,69 @@ def route_edge_from_existing_source_trunk(
         )
         start_run_len = trailing_same_phase_run(board, prefix_path)
 
-        for start_dir in start_directions:
-            start_neighbor = add_direction(branch_coord, start_dir)
-            if start_neighbor != goal_coord and not board.canPlaceWire(start_neighbor):
-                continue
-
-            for end_dir in ordered_end_directions:
-                branch_segment = route_monotone_with_phase(
-                    board,
-                    src,
-                    dst,
-                    phase_cycle,
-                    padding,
-                    max_same_phase,
-                    orientation,
-                    start_dir=start_dir,
-                    end_dir=end_dir,
-                    start_coord=branch_coord,
-                    goal_coord=goal_coord,
-                    start_run_len=start_run_len,
-                    save_path=False,
-                )
-                if branch_segment:
-                    return merge_prefix_and_branch_path(prefix_path, branch_segment)
+        start_directions = [
+            direction
+            for direction in start_directions
+            if add_direction(branch_coord, direction) == goal_coord
+            or board.canPlaceWire(add_direction(branch_coord, direction))
+        ]
+        if not start_directions:
+            continue
+        if combined_port_search:
+            branch_segment = route_monotone_with_phase(
+                board,
+                src,
+                dst,
+                phase_cycle,
+                padding,
+                max_same_phase,
+                orientation,
+                start_dirs=set(start_directions),
+                end_dirs=set(ordered_end_directions),
+                start_coord=branch_coord,
+                goal_coord=goal_coord,
+                start_run_len=start_run_len,
+                save_path=False,
+                expansion_limit=monotone_expansion_limit,
+                advance_cost=advance_cost,
+                hold_cost=hold_cost,
+            )
+            if branch_segment:
+                return merge_prefix_and_branch_path(prefix_path, branch_segment)
+        else:
+            for start_dir in start_directions:
+                for end_dir in ordered_end_directions:
+                    branch_segment = route_monotone_with_phase(
+                        board,
+                        src,
+                        dst,
+                        phase_cycle,
+                        padding,
+                        max_same_phase,
+                        orientation,
+                        start_dir=start_dir,
+                        end_dir=end_dir,
+                        start_coord=branch_coord,
+                        goal_coord=goal_coord,
+                        start_run_len=start_run_len,
+                        save_path=False,
+                        expansion_limit=monotone_expansion_limit,
+                        advance_cost=advance_cost,
+                        hold_cost=hold_cost,
+                    )
+                    if branch_segment:
+                        return merge_prefix_and_branch_path(
+                            prefix_path,
+                            branch_segment,
+                        )
 
     return []
 
 
-def compute_direction_violation_count(routed_paths):
+def compute_direction_violation_count(routed_paths, multi_output_nodes=None):
+    multi_output_nodes = {
+        int(node_id) for node_id in (multi_output_nodes or ())
+    }
     incoming_directions = defaultdict(list)
     outgoing_directions = defaultdict(set)
 
@@ -3104,12 +3325,51 @@ def compute_direction_violation_count(routed_paths):
         incoming_dir_set = set(incoming_directions[node_id])
         if len(incoming_dir_set) < len(incoming_directions[node_id]):
             violation_count += len(incoming_directions[node_id]) - len(incoming_dir_set)
-        if len(outgoing_directions[node_id]) > 1:
+        if (
+            node_id not in multi_output_nodes
+            and len(outgoing_directions[node_id]) > 1
+        ):
             violation_count += len(outgoing_directions[node_id]) - 1
         overlap = incoming_dir_set & outgoing_directions[node_id]
         violation_count += len(overlap)
 
     return violation_count
+
+
+def find_direction_violation_edges(routed_paths, multi_output_nodes=None):
+    multi_output_nodes = {
+        int(node_id) for node_id in (multi_output_nodes or ())
+    }
+    incoming = defaultdict(list)
+    outgoing = defaultdict(list)
+    for edge, path in routed_paths.items():
+        normalized_edge = (int(edge[0]), int(edge[1]))
+        out_dir = get_outgoing_direction(path)
+        in_dir = get_incoming_direction(path)
+        if out_dir is not None:
+            outgoing[normalized_edge[0]].append((normalized_edge, out_dir))
+        if in_dir is not None:
+            incoming[normalized_edge[1]].append((normalized_edge, in_dir))
+
+    conflict_edges = set()
+    for node_id in set(incoming) | set(outgoing):
+        incoming_by_direction = defaultdict(list)
+        outgoing_by_direction = defaultdict(list)
+        for edge, direction in incoming[node_id]:
+            incoming_by_direction[direction].append(edge)
+        for edge, direction in outgoing[node_id]:
+            outgoing_by_direction[direction].append(edge)
+
+        for edges in incoming_by_direction.values():
+            if len(edges) > 1:
+                conflict_edges.update(edges)
+        if node_id not in multi_output_nodes and len(outgoing_by_direction) > 1:
+            for edges in outgoing_by_direction.values():
+                conflict_edges.update(edges)
+        for direction in set(incoming_by_direction) & set(outgoing_by_direction):
+            conflict_edges.update(incoming_by_direction[direction])
+            conflict_edges.update(outgoing_by_direction[direction])
+    return conflict_edges
 
 
 def route_edges_with_phase(
@@ -3120,18 +3380,53 @@ def route_edges_with_phase(
     max_same_phase,
     orientation,
     embedding_scores=None,
+    clock_field=None,
+    edge_priorities=None,
 ):
     node_positions = {
         int(node_id): (int(coord[0]), int(coord[1]))
         for node_id, coord in board.nodeIndexToCoordMap.items()
     }
     first_input_nodes = set(first_layer_input_nodes(circuit, node_positions))
+    multi_output_nodes = {
+        int(node_id)
+        for node_id in circuit.effective_nodes
+        if str(circuit.getNodeTypeString(int(node_id))).lower()
+        in {"input", "fanout"}
+    }
+    edge_count = len(circuit.effective_edges)
+    large_circuit = edge_count >= 75 or (
+        edge_count >= 60 and int(phase_cycle) <= 2
+    )
+    initial_monotone_budget = 1000 if edge_count >= 75 else 2000
+    initial_flexible_budget = 1500 if edge_count >= 75 else 2500
+    initial_monotone_limit = (
+        initial_monotone_budget
+        if large_circuit and DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT <= 0
+        else min(
+            DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT,
+            initial_monotone_budget,
+        )
+        if large_circuit
+        else DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT
+    )
+    initial_flexible_limit = (
+        min(DEFAULT_FLEXIBLE_ROUTER_EXPANSION_LIMIT, initial_flexible_budget)
+        if large_circuit
+        else DEFAULT_FLEXIBLE_ROUTER_EXPANSION_LIMIT
+    )
 
-    def route_order_once(ordered_pairs):
+    def route_order_once(
+        ordered_pairs,
+        combined_port_search=True,
+        advance_cost=1,
+        hold_cost=2,
+    ):
         attempt_board = create_board_with_positions(
             circuit,
             node_positions,
             common_first_input_phase=0,
+            clock_field=clock_field,
         )
         routed_paths = {}
         failed_edges = []
@@ -3158,6 +3453,12 @@ def route_edges_with_phase(
                 outgoing_directions,
                 routed_paths=routed_paths,
                 first_layer_inputs=first_input_nodes,
+                combined_port_search=combined_port_search,
+                advance_cost=advance_cost,
+                hold_cost=hold_cost,
+                multi_output_nodes=multi_output_nodes,
+                monotone_expansion_limit=initial_monotone_limit,
+                flexible_expansion_limit=initial_flexible_limit,
             )
             if not path:
                 failed_edges.append((int(src), int(dst)))
@@ -3167,7 +3468,12 @@ def route_edges_with_phase(
             out_dir = get_outgoing_direction(path)
             in_dir = get_incoming_direction(path)
             if out_dir is not None:
-                outgoing_directions[int(src)] = out_dir
+                record_output_direction(
+                    outgoing_directions,
+                    int(src),
+                    out_dir,
+                    multi_output_nodes,
+                )
             if in_dir is not None:
                 incoming_directions[int(dst)].add(in_dir)
             routed_paths[(int(src), int(dst))] = path
@@ -3181,15 +3487,23 @@ def route_edges_with_phase(
         node_positions=node_positions,
         orientation=orientation,
         embedding_scores=embedding_scores,
+        edge_priorities=edge_priorities,
     )
-    if len(circuit.effective_edges) >= 80:
-        route_order_variants = route_order_variants[:DEFAULT_ROUTE_ORDER_VARIANTS]
+    route_order_limit = (
+        min(DEFAULT_ROUTE_ORDER_VARIANTS, 3)
+        if large_circuit
+        else DEFAULT_ROUTE_ORDER_VARIANTS
+    )
+    route_order_variants = route_order_variants[:route_order_limit]
 
     for ordered_pairs in route_order_variants:
         attempt_board, routed_paths, failed_edges = route_order_once(ordered_pairs)
         width, height = attempt_board.computeLayoutArea()
         area = width * height if width > 0 and height > 0 else float("inf")
-        direction_violations = compute_direction_violation_count(routed_paths)
+        direction_violations = compute_direction_violation_count(
+            routed_paths,
+            multi_output_nodes,
+        )
         key = (
             len(failed_edges),
             direction_violations,
@@ -3204,24 +3518,73 @@ def route_edges_with_phase(
         if not failed_edges and direction_violations == 0:
             break
 
-    if best_payload is not None and 0 < len(best_payload[2]) <= 16 and route_order_variants:
-        base_order = route_order_variants[0]
-        failed_set = set(best_payload[2])
-        failed_first_order = [
-            edge for edge in base_order if (int(edge[0]), int(edge[1])) in failed_set
-        ] + [
-            edge for edge in base_order if (int(edge[0]), int(edge[1])) not in failed_set
+    if best_payload is not None and (
+        best_payload[2]
+        or compute_direction_violation_count(
+            best_payload[1],
+            multi_output_nodes,
+        ) > 0
+    ):
+        alternate_orders = route_order_variants[
+            :(
+                min(DEFAULT_ALTERNATE_PHASE_POLICY_ORDERS, 1)
+                if large_circuit
+                else DEFAULT_ALTERNATE_PHASE_POLICY_ORDERS
+            )
         ]
-        failed_last_order = [
-            edge for edge in base_order if (int(edge[0]), int(edge[1])) not in failed_set
-        ] + [
-            edge for edge in base_order if (int(edge[0]), int(edge[1])) in failed_set
-        ]
-        for repair_order in (failed_first_order, failed_last_order):
-            attempt_board, routed_paths, failed_edges = route_order_once(repair_order)
+        for advance_cost, hold_cost in ((1, 1), (2, 1)):
+            for ordered_pairs in alternate_orders:
+                attempt_board, routed_paths, failed_edges = route_order_once(
+                    ordered_pairs,
+                    advance_cost=advance_cost,
+                    hold_cost=hold_cost,
+                )
+                width, height = attempt_board.computeLayoutArea()
+                area = width * height if width > 0 and height > 0 else float("inf")
+                direction_violations = compute_direction_violation_count(
+                    routed_paths,
+                    multi_output_nodes,
+                )
+                key = (
+                    len(failed_edges),
+                    direction_violations,
+                    area,
+                    max(width, height),
+                    width + height,
+                    sum(len(path) for path in routed_paths.values()),
+                )
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_payload = (attempt_board, routed_paths, failed_edges)
+                if not failed_edges and direction_violations == 0:
+                    break
+            if best_payload is not None and (
+                not best_payload[2]
+                and compute_direction_violation_count(
+                    best_payload[1],
+                    multi_output_nodes,
+                ) == 0
+            ):
+                break
+
+    if best_payload is not None and (
+        best_payload[2]
+        or compute_direction_violation_count(
+            best_payload[1],
+            multi_output_nodes,
+        ) > 0
+    ) and route_order_variants:
+        for ordered_pairs in route_order_variants:
+            attempt_board, routed_paths, failed_edges = route_order_once(
+                ordered_pairs,
+                combined_port_search=False,
+            )
             width, height = attempt_board.computeLayoutArea()
             area = width * height if width > 0 and height > 0 else float("inf")
-            direction_violations = compute_direction_violation_count(routed_paths)
+            direction_violations = compute_direction_violation_count(
+                routed_paths,
+                multi_output_nodes,
+            )
             key = (
                 len(failed_edges),
                 direction_violations,
@@ -3235,6 +3598,308 @@ def route_edges_with_phase(
                 best_payload = (attempt_board, routed_paths, failed_edges)
             if not failed_edges and direction_violations == 0:
                 break
+
+    def problem_edges(payload):
+        edges = {
+            (int(src), int(dst))
+            for src, dst in payload[2]
+        }
+        edges.update(
+            find_direction_violation_edges(
+                payload[1],
+                multi_output_nodes,
+            )
+        )
+        return edges
+
+    if (
+        best_payload is not None
+        and route_order_variants
+        and DEFAULT_REPAIR_ORDER_ATTEMPTS > 0
+    ):
+        base_order = route_order_variants[0]
+        repair_queue = []
+        queued_orders = set()
+
+        def queue_problem_orders(payload):
+            problems = problem_edges(payload)
+            if not 0 < len(problems) <= 24:
+                return
+            problem_order = [
+                edge
+                for edge in base_order
+                if (int(edge[0]), int(edge[1])) in problems
+            ]
+            clean_order = [
+                edge
+                for edge in base_order
+                if (int(edge[0]), int(edge[1])) not in problems
+            ]
+            candidates = (
+                problem_order + clean_order,
+                list(reversed(problem_order)) + clean_order,
+                clean_order + problem_order,
+                clean_order + list(reversed(problem_order)),
+            )
+            for repair_order in candidates:
+                signature = tuple(
+                    (int(src), int(dst)) for src, dst in repair_order
+                )
+                if signature in queued_orders:
+                    continue
+                queued_orders.add(signature)
+                repair_queue.append(repair_order)
+
+        queue_problem_orders(best_payload)
+        repair_attempts = 0
+        while (
+            repair_queue
+            and repair_attempts < (
+                min(DEFAULT_REPAIR_ORDER_ATTEMPTS, 2)
+                if large_circuit
+                else DEFAULT_REPAIR_ORDER_ATTEMPTS
+            )
+        ):
+            repair_order = repair_queue.pop(0)
+            repair_attempts += 1
+            attempt_board, routed_paths, failed_edges = route_order_once(repair_order)
+            width, height = attempt_board.computeLayoutArea()
+            area = width * height if width > 0 and height > 0 else float("inf")
+            direction_violations = compute_direction_violation_count(
+                routed_paths,
+                multi_output_nodes,
+            )
+            key = (
+                len(failed_edges),
+                direction_violations,
+                area,
+                max(width, height),
+                width + height,
+                sum(len(path) for path in routed_paths.values()),
+            )
+            if best_key is None or key < best_key:
+                best_key = key
+                best_payload = (attempt_board, routed_paths, failed_edges)
+                queue_problem_orders(best_payload)
+            if not failed_edges and direction_violations == 0:
+                break
+
+    def reroute_problem_subset(source_payload, reroute_order, advance_cost, hold_cost):
+        source_board, source_paths, _source_failed = source_payload
+        reroute_set = {
+            (int(src), int(dst)) for src, dst in reroute_order
+        }
+        attempt_board = create_board_with_positions(
+            circuit,
+            node_positions,
+            common_first_input_phase=0,
+            clock_field=clock_field,
+        )
+        routed_paths = {}
+        incoming_directions = defaultdict(set)
+        outgoing_directions = {}
+        placed_by_source = set()
+
+        for edge, path in source_paths.items():
+            normalized_edge = (int(edge[0]), int(edge[1]))
+            if normalized_edge in reroute_set:
+                continue
+            normalized_path = [
+                (int(coord[0]), int(coord[1])) for coord in path
+            ]
+            for coord in normalized_path:
+                phase = int(source_board.getPhase(coord))
+                if phase >= 0 and attempt_board.getPhase(coord) < 0:
+                    attempt_board.setPhase(coord, phase)
+            for coord in normalized_path[1:-1]:
+                occupancy_key = (normalized_edge[0], coord)
+                if occupancy_key in placed_by_source:
+                    continue
+                attempt_board.placeWire(coord)
+                placed_by_source.add(occupancy_key)
+            attempt_board.savePath(normalized_edge, normalized_path)
+            routed_paths[normalized_edge] = normalized_path
+            out_dir = get_outgoing_direction(normalized_path)
+            in_dir = get_incoming_direction(normalized_path)
+            if out_dir is not None:
+                record_output_direction(
+                    outgoing_directions,
+                    normalized_edge[0],
+                    out_dir,
+                    multi_output_nodes,
+                )
+            if in_dir is not None:
+                incoming_directions[normalized_edge[1]].add(in_dir)
+
+        failed_edges = []
+        generic_router = iFCN_Lab.MapPhaseAStar(
+            attempt_board,
+            phase_cycle,
+            padding,
+            max_same_phase,
+        )
+        for src, dst in reroute_order:
+            edge = (int(src), int(dst))
+            path = route_single_edge_with_direction_constraints(
+                attempt_board,
+                generic_router,
+                edge[0],
+                edge[1],
+                phase_cycle,
+                padding,
+                max_same_phase,
+                orientation,
+                incoming_directions,
+                outgoing_directions,
+                routed_paths=routed_paths,
+                first_layer_inputs=first_input_nodes,
+                combined_port_search=True,
+                advance_cost=advance_cost,
+                hold_cost=hold_cost,
+                multi_output_nodes=multi_output_nodes,
+                allow_relaxed_ports=False,
+                allow_escape_routing=False,
+                monotone_expansion_limit=(
+                    min(DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT, 2000)
+                    if large_circuit and DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT > 0
+                    else 2000
+                    if large_circuit
+                    else DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT
+                ),
+                flexible_expansion_limit=(
+                    min(DEFAULT_FLEXIBLE_ROUTER_EXPANSION_LIMIT, 2500)
+                    if large_circuit
+                    else DEFAULT_FLEXIBLE_ROUTER_EXPANSION_LIMIT
+                ),
+            )
+            if not path:
+                failed_edges.append(edge)
+                continue
+            attempt_board.savePath(edge, path)
+            routed_paths[edge] = path
+            out_dir = get_outgoing_direction(path)
+            in_dir = get_incoming_direction(path)
+            if out_dir is not None:
+                record_output_direction(
+                    outgoing_directions,
+                    edge[0],
+                    out_dir,
+                    multi_output_nodes,
+                )
+            if in_dir is not None:
+                incoming_directions[edge[1]].add(in_dir)
+
+        return attempt_board, routed_paths, failed_edges
+
+    if (
+        best_payload is not None
+        and route_order_variants
+        and DEFAULT_LOCAL_RIPUP_ATTEMPTS > 0
+    ):
+        core_problems = problem_edges(best_payload)
+        problems = set(core_problems)
+        if core_problems:
+            problem_nodes = {
+                int(node_id)
+                for edge in core_problems
+                for node_id in edge
+            }
+            blocker_priority = Counter()
+            for src, dst in circuit.effective_edges:
+                edge = (int(src), int(dst))
+                if edge in core_problems:
+                    continue
+                blocker_priority[edge] += (
+                    int(edge[0] in problem_nodes) +
+                    int(edge[1] in problem_nodes)
+                ) * 4
+
+            endpoint_neighbors = set()
+            for node_id in problem_nodes:
+                coord = node_positions.get(int(node_id))
+                if coord is None:
+                    continue
+                endpoint_neighbors.add((int(coord[0]), int(coord[1])))
+                for direction in ALL_DIRECTIONS:
+                    endpoint_neighbors.add(add_direction(coord, direction))
+            for edge, path in best_payload[1].items():
+                normalized_edge = (int(edge[0]), int(edge[1]))
+                if normalized_edge in core_problems:
+                    continue
+                endpoint_overlap = sum(
+                    (int(coord[0]), int(coord[1])) in endpoint_neighbors
+                    for coord in path[1:-1]
+                )
+                blocker_priority[normalized_edge] += endpoint_overlap * 3
+
+                for failed_src, failed_dst in best_payload[2]:
+                    start = node_positions[int(failed_src)]
+                    goal = node_positions[int(failed_dst)]
+                    min_x = min(int(start[0]), int(goal[0])) - 1
+                    max_x = max(int(start[0]), int(goal[0])) + 1
+                    min_y = min(int(start[1]), int(goal[1])) - 1
+                    max_y = max(int(start[1]), int(goal[1])) + 1
+                    corridor_overlap = sum(
+                        min_x <= int(coord[0]) <= max_x and
+                        min_y <= int(coord[1]) <= max_y
+                        for coord in path[1:-1]
+                    )
+                    blocker_priority[normalized_edge] += corridor_overlap
+
+            if len(problems) <= 24:
+                for edge, priority in sorted(
+                    blocker_priority.items(),
+                    key=lambda item: (-int(item[1]), int(item[0][0]), int(item[0][1])),
+                ):
+                    if priority <= 0 or len(problems) >= 24:
+                        break
+                    problems.add(edge)
+        if 0 < len(problems) <= 24:
+            base_order = route_order_variants[0]
+            problem_order = [
+                (int(src), int(dst))
+                for src, dst in base_order
+                if (int(src), int(dst)) in problems
+            ]
+            local_attempts = [
+                (problem_order, 1, 2),
+                (list(reversed(problem_order)), 1, 2),
+                (problem_order, 1, 1),
+                (list(reversed(problem_order)), 1, 1),
+                (problem_order, 2, 1),
+                (list(reversed(problem_order)), 2, 1),
+            ][:(
+                min(DEFAULT_LOCAL_RIPUP_ATTEMPTS, 3)
+                if large_circuit
+                else DEFAULT_LOCAL_RIPUP_ATTEMPTS
+            )]
+            source_payload = best_payload
+            for reroute_order, advance_cost, hold_cost in local_attempts:
+                attempt_board, routed_paths, failed_edges = reroute_problem_subset(
+                    source_payload,
+                    reroute_order,
+                    advance_cost,
+                    hold_cost,
+                )
+                width, height = attempt_board.computeLayoutArea()
+                area = width * height if width > 0 and height > 0 else float("inf")
+                direction_violations = compute_direction_violation_count(
+                    routed_paths,
+                    multi_output_nodes,
+                )
+                key = (
+                    len(failed_edges),
+                    direction_violations,
+                    area,
+                    max(width, height),
+                    width + height,
+                    sum(len(path) for path in routed_paths.values()),
+                )
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_payload = (attempt_board, routed_paths, failed_edges)
+                if not failed_edges and direction_violations == 0:
+                    break
 
     if best_payload is None:
         return board, {}, list(circuit.effective_edges)
@@ -3325,7 +3990,42 @@ def evaluate_layout_candidate(
     max_same_phase,
     embedding_scores=None,
 ):
-    board = create_board_with_positions(circuit, candidate["node_positions"])
+    clock_field = candidate.get("clock_field")
+    if clock_field is not None:
+        if not isinstance(clock_field, ClockField):
+            raise TypeError("candidate['clock_field'] must be a ClockField")
+        if int(clock_field.spec.phase_count) != int(phase_cycle):
+            raise ValueError(
+                "clock field phase_count does not match routing phase_cycle: "
+                f"{clock_field.spec.phase_count} != {phase_cycle}"
+            )
+        xs = [int(coord[0]) for coord in candidate["node_positions"].values()]
+        ys = [int(coord[1]) for coord in candidate["node_positions"].values()]
+        required_margin = max(0, int(padding))
+        required_bounds = (
+            min(xs) - required_margin,
+            min(ys) - required_margin,
+            max(xs) + required_margin,
+            max(ys) + required_margin,
+        )
+        field_min_x, field_min_y, field_max_x, field_max_y = clock_field.bounds
+        req_min_x, req_min_y, req_max_x, req_max_y = required_bounds
+        if not (
+            field_min_x <= req_min_x
+            and field_min_y <= req_min_y
+            and field_max_x >= req_max_x
+            and field_max_y >= req_max_y
+        ):
+            raise ValueError(
+                "clock field does not cover the placement plus routing padding: "
+                f"field={clock_field.bounds}, required={required_bounds}"
+            )
+
+    board = create_board_with_positions(
+        circuit,
+        candidate["node_positions"],
+        clock_field=clock_field,
+    )
     board, routed_paths, failed_edges = route_edges_with_phase(
         board,
         circuit,
@@ -3334,6 +4034,8 @@ def evaluate_layout_candidate(
         max_same_phase,
         candidate["orientation"],
         embedding_scores=embedding_scores,
+        clock_field=clock_field,
+        edge_priorities=candidate.get("routing_edge_priorities"),
     )
     width, height = board.computeLayoutArea()
     area = width * height if width > 0 and height > 0 else float("inf")
@@ -3344,7 +4046,16 @@ def evaluate_layout_candidate(
         candidate["orientation"],
     )
     route_overhang_penalty = compute_route_overhang_penalty(candidate["node_positions"], board)
-    direction_violation_count = compute_direction_violation_count(routed_paths)
+    multi_output_nodes = {
+        int(node_id)
+        for node_id in circuit.effective_nodes
+        if str(circuit.getNodeTypeString(int(node_id))).lower()
+        in {"input", "fanout"}
+    }
+    direction_violation_count = compute_direction_violation_count(
+        routed_paths,
+        multi_output_nodes,
+    )
     return {
         "board": board,
         "node_positions": candidate["node_positions"],
@@ -3360,12 +4071,16 @@ def evaluate_layout_candidate(
                 candidate["strategy"] == "gcn",
             )
         ),
+        "routing_edge_priority_guidance": bool(candidate.get("routing_edge_priorities")),
         "width": width,
         "height": height,
         "area": area,
         "io_exposure_penalty": io_exposure_penalty,
         "route_overhang_penalty": route_overhang_penalty,
         "direction_violation_count": direction_violation_count,
+        "clock_field": clock_field,
+        "clock_field_hash": clock_field.field_hash if clock_field is not None else "",
+        "clock_scheme": "causal-random-field" if clock_field is not None else "dynamic-legacy",
     }
 
 

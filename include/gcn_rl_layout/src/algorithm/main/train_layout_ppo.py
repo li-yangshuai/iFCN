@@ -49,6 +49,7 @@ from test_randomPhase import (
     compute_io_edge_penalty,
     create_board_with_positions,
     evaluate_layout_candidate,
+    find_direction_violation_edges,
     get_gcn_cache_path,
     get_layout_memory_path,
     infer_layer_secondary_spacing,
@@ -292,6 +293,18 @@ def parse_args():
     parser.add_argument("--gamma", type=float, default=DEFAULT_GAMMA)
     parser.add_argument("--gae-lambda", type=float, default=DEFAULT_GAE_LAMBDA)
     parser.add_argument("--clip-eps", type=float, default=DEFAULT_CLIP_EPS)
+    parser.add_argument(
+        "--value-clip-eps",
+        type=float,
+        default=DEFAULT_CLIP_EPS,
+        help="PPO value-function clipping range; use 0 to disable value clipping.",
+    )
+    parser.add_argument(
+        "--target-kl",
+        type=float,
+        default=0.03,
+        help="Stop a PPO epoch early when approximate KL exceeds this value; use 0 to disable.",
+    )
     parser.add_argument("--entropy-coef", type=float, default=DEFAULT_ENTROPY_COEF)
     parser.add_argument("--value-coef", type=float, default=DEFAULT_VALUE_COEF)
     parser.add_argument("--max-grad-norm", type=float, default=DEFAULT_MAX_GRAD_NORM)
@@ -403,6 +416,12 @@ def parse_args():
         type=int,
         default=0,
         help="In placement mode, exact-route validate the episode best every N episodes. Use 0 for final-only.",
+    )
+    parser.add_argument(
+        "--exact-feedback-weight",
+        type=float,
+        default=1.0,
+        help="PPO reward scale for periodic exact-routing feedback in placement mode.",
     )
     parser.add_argument(
         "--placement-candidate-pool-size",
@@ -518,6 +537,14 @@ def clone_positions(node_positions):
     return {int(node_id): (int(coord[0]), int(coord[1])) for node_id, coord in node_positions.items()}
 
 
+def is_legal_layout_result(result):
+    return (
+        not bool(result.get("placement_only_evaluation", False)) and
+        int(len(result.get("failed_edges", []))) == 0 and
+        int(result.get("direction_violation_count", 0)) == 0
+    )
+
+
 def scalarize_layout_result(
     result,
     aspect_ratio_limit=DEFAULT_ASPECT_RATIO_LIMIT,
@@ -600,6 +627,78 @@ def layout_selection_key(compact, cost, mode="legal-area"):
     )
 
 
+def select_diverse_placement_candidates(candidate_pool, limit):
+    limit = max(0, int(limit))
+    if limit == 0 or not candidate_pool:
+        return []
+
+    ranking_keys = (
+        lambda item: (
+            int(item["compact"]["direction_violation_count"]),
+            int(item["compact"]["route_overhang_penalty"]),
+            float(item["compact"]["area"]),
+            float(item["cost"]),
+        ),
+        lambda item: (
+            int(item["compact"]["direction_violation_count"]),
+            float(item["compact"]["area"]),
+            int(item["compact"]["route_overhang_penalty"]),
+            float(item["cost"]),
+        ),
+        lambda item: (
+            int(item["compact"]["direction_violation_count"]),
+            float(item["cost"]),
+            float(item["compact"]["area"]),
+        ),
+        lambda item: (
+            int(item["compact"]["direction_violation_count"]),
+            int(max(item["compact"]["width"], item["compact"]["height"])),
+            int(item["compact"]["route_overhang_penalty"]),
+            float(item["compact"]["area"]),
+        ),
+    )
+    selected = []
+    selected_signatures = set()
+    port_pressure_levels = sorted(
+        {
+            int(item["compact"]["direction_violation_count"])
+            for item in candidate_pool
+        }
+    )
+    for port_pressure in port_pressure_levels:
+        level_candidates = [
+            item for item in candidate_pool
+            if int(item["compact"]["direction_violation_count"]) == port_pressure
+        ]
+        ranked_lists = [
+            sorted(level_candidates, key=ranking_key)
+            for ranking_key in ranking_keys
+        ]
+        cursors = [0] * len(ranked_lists)
+        while len(selected) < min(limit, len(candidate_pool)):
+            added = False
+            for list_idx, ranked in enumerate(ranked_lists):
+                while cursors[list_idx] < len(ranked):
+                    candidate = ranked[cursors[list_idx]]
+                    cursors[list_idx] += 1
+                    signature = (
+                        tuple(candidate["clock_context"]),
+                        tuple(sorted(candidate["positions"].items())),
+                    )
+                    if signature not in selected_signatures:
+                        selected.append(candidate)
+                        selected_signatures.add(signature)
+                        added = True
+                        break
+                if len(selected) >= limit:
+                    break
+            if not added:
+                break
+        if len(selected) >= limit:
+            break
+    return selected
+
+
 def node_position_area(node_positions):
     if not node_positions:
         return INVALID_LAYOUT_AREA
@@ -635,6 +734,159 @@ def expand_node_positions(node_positions, orientation, primary_scale=1, secondar
     return expanded
 
 
+def _preferred_port_direction(source_coord, target_coord):
+    dx = int(source_coord[0]) - int(target_coord[0])
+    dy = int(source_coord[1]) - int(target_coord[1])
+    if abs(dx) >= abs(dy):
+        return (1, 0) if dx >= 0 else (-1, 0)
+    return (0, 1) if dy >= 0 else (0, -1)
+
+
+def _segments_cross_properly(first_start, first_end, second_start, second_end):
+    def orientation(first, second, third):
+        return (
+            (int(second[0]) - int(first[0])) *
+            (int(third[1]) - int(first[1])) -
+            (int(second[1]) - int(first[1])) *
+            (int(third[0]) - int(first[0]))
+        )
+
+    first_side = orientation(first_start, first_end, second_start)
+    second_side = orientation(first_start, first_end, second_end)
+    third_side = orientation(second_start, second_end, first_start)
+    fourth_side = orientation(second_start, second_end, first_end)
+    return (
+        first_side != 0 and
+        second_side != 0 and
+        third_side != 0 and
+        fourth_side != 0 and
+        ((first_side > 0) != (second_side > 0)) and
+        ((third_side > 0) != (fourth_side > 0))
+    )
+
+
+def compute_placement_routability_proxy(circuit, node_positions, orientation):
+    """Estimate random-clock routability without running the exact A* router."""
+    positions = clone_positions(node_positions)
+    occupied = set(positions.values())
+    cardinal_steps = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    flexible_output_types = {"input", "fanout"}
+
+    port_pressure = 0
+    preferred_port_collisions = 0
+    for node_id, coord in positions.items():
+        fanins = [
+            int(value) for value in circuit.get_fanins(int(node_id))
+            if int(value) in positions
+        ]
+        fanouts = [
+            int(value) for value in circuit.get_fanouts(int(node_id))
+            if int(value) in positions
+        ]
+        node_type = str(circuit.getNodeTypeString(int(node_id))).strip().lower()
+        output_port_count = (
+            min(4, len(fanouts))
+            if node_type in flexible_output_types
+            else int(bool(fanouts))
+        )
+        required_ports = len(fanins) + output_port_count
+        available_ports = sum(
+            (int(coord[0]) + dx, int(coord[1]) + dy) not in occupied
+            for dx, dy in cardinal_steps
+        )
+        port_pressure += max(0, required_ports - available_ports)
+
+        incoming_directions = [
+            _preferred_port_direction(positions[fanin], coord)
+            for fanin in fanins
+        ]
+        outgoing_directions = [
+            _preferred_port_direction(positions[fanout], coord)
+            for fanout in fanouts
+        ]
+        incoming_counts = Counter(incoming_directions)
+        preferred_port_collisions += sum(
+            max(0, count - 1) for count in incoming_counts.values()
+        )
+        if node_type in flexible_output_types:
+            outgoing_counts = Counter(outgoing_directions)
+            preferred_port_collisions += sum(
+                max(0, count - 1) for count in outgoing_counts.values()
+            )
+        elif outgoing_directions:
+            outgoing_directions = [Counter(outgoing_directions).most_common(1)[0][0]]
+        preferred_port_collisions += len(
+            set(incoming_directions).intersection(outgoing_directions)
+        )
+
+    edges = [
+        (int(src), int(dst))
+        for src, dst in circuit.effective_edges
+        if int(src) in positions and int(dst) in positions
+    ]
+    crossing_count = 0
+    for first_idx, (first_src, first_dst) in enumerate(edges):
+        first_nodes = {first_src, first_dst}
+        for second_src, second_dst in edges[first_idx + 1:]:
+            if first_nodes.intersection((second_src, second_dst)):
+                continue
+            if _segments_cross_properly(
+                positions[first_src],
+                positions[first_dst],
+                positions[second_src],
+                positions[second_dst],
+            ):
+                crossing_count += 1
+
+    primary_axis = 0 if orientation == LEFT_RIGHT else 1
+    secondary_axis = 1 - primary_axis
+    secondary_values = [int(coord[secondary_axis]) for coord in positions.values()]
+    track_capacity = (
+        max(secondary_values) - min(secondary_values) + 3
+        if secondary_values
+        else 1
+    )
+    boundary_loads = Counter()
+    total_wirelength = 0
+    for src, dst in edges:
+        src_coord = positions[src]
+        dst_coord = positions[dst]
+        total_wirelength += (
+            abs(int(src_coord[0]) - int(dst_coord[0])) +
+            abs(int(src_coord[1]) - int(dst_coord[1]))
+        )
+        primary_start = int(src_coord[primary_axis])
+        primary_end = int(dst_coord[primary_axis])
+        for boundary in range(min(primary_start, primary_end), max(primary_start, primary_end)):
+            boundary_loads[boundary] += 1
+
+    boundary_overflow = sum(
+        max(0, int(load) - int(track_capacity))
+        for load in boundary_loads.values()
+    )
+    mean_wirelength = (
+        float(total_wirelength) / float(len(edges))
+        if edges
+        else 0.0
+    )
+    long_edge_pressure = max(0, int(np.ceil(mean_wirelength)) - 6)
+    congestion_pressure = (
+        int(preferred_port_collisions) +
+        int(crossing_count) +
+        int(boundary_overflow) * 2 +
+        int(long_edge_pressure)
+    )
+    return {
+        "port_pressure": int(port_pressure),
+        "preferred_port_collisions": int(preferred_port_collisions),
+        "crossing_count": int(crossing_count),
+        "boundary_overflow": int(boundary_overflow),
+        "mean_wirelength": float(mean_wirelength),
+        "long_edge_pressure": int(long_edge_pressure),
+        "congestion_pressure": int(congestion_pressure),
+    }
+
+
 def evaluate_placement_only_candidate(candidate, circuit):
     board = create_board_with_positions(circuit, candidate["node_positions"])
     width, height = board.computeLayoutArea()
@@ -643,6 +895,11 @@ def evaluate_placement_only_candidate(candidate, circuit):
         circuit,
         candidate["node_positions"],
         board,
+        candidate["orientation"],
+    )
+    routability_proxy = compute_placement_routability_proxy(
+        circuit,
+        candidate["node_positions"],
         candidate["orientation"],
     )
     return {
@@ -659,8 +916,9 @@ def evaluate_placement_only_candidate(candidate, circuit):
         "height": height,
         "area": area,
         "io_exposure_penalty": io_exposure_penalty,
-        "route_overhang_penalty": 0,
-        "direction_violation_count": 0,
+        "route_overhang_penalty": int(routability_proxy["congestion_pressure"]),
+        "direction_violation_count": int(routability_proxy["port_pressure"]),
+        "placement_routability_proxy": routability_proxy,
         "placement_only_evaluation": True,
     }
 
@@ -779,6 +1037,11 @@ def evaluate_layout_candidate_in_subprocess(
     embedding_scores=None,
     timeout_sec=0,
 ):
+    if candidate.get("clock_field") is not None:
+        raise ValueError(
+            "ClockField objects are evaluated in-process until the exact-worker "
+            "payload carries the absolute stage map."
+        )
     payload = {
         "benchmark": os.path.abspath(circuit.filePath),
         "parse_mode": getattr(circuit, "parse_mode_resolved", "auto"),
@@ -854,7 +1117,10 @@ def evaluate_layout_candidate_with_timeout(
             embedding_scores=embedding_scores,
         )
 
-    if int(getattr(circuit, "effective_nodes_num", 0)) >= 80:
+    if (
+        int(getattr(circuit, "effective_nodes_num", 0)) >= 80
+        and candidate.get("clock_field") is None
+    ):
         return evaluate_layout_candidate_in_subprocess(
             candidate,
             circuit,
@@ -1122,6 +1388,7 @@ class Transition:
     value: float
     done: bool
     action_mask: np.ndarray
+    truncated: bool = False
 
 
 class LayoutCompactionEnv:
@@ -1403,6 +1670,9 @@ class LayoutCompactionEnv:
             "layout_strategy": result["layout_strategy"],
             "x_spacing": result["x_spacing"],
             "y_spacing": result["y_spacing"],
+            "placement_only_evaluation": bool(
+                result.get("placement_only_evaluation", False)
+            ),
         }
 
     def _primary_axis(self, coord):
@@ -2525,10 +2795,15 @@ def masked_categorical(logits, action_mask):
     return Categorical(logits=masked_logits)
 
 
-def compute_gae(rewards, values, dones, gamma, gae_lambda):
+def compute_gae(rewards, values, dones, gamma, gae_lambda, bootstrap_value=0.0):
+    """Compute GAE with ``dones`` representing true MDP termination only.
+
+    A step-limit cutoff is a truncation, not a terminal state.  Callers pass the
+    critic value of the final observation via ``bootstrap_value`` in that case.
+    """
     advantages = np.zeros_like(rewards, dtype=np.float32)
     gae = 0.0
-    next_value = 0.0
+    next_value = float(bootstrap_value)
     for idx in reversed(range(len(rewards))):
         non_terminal = 1.0 - float(dones[idx])
         delta = rewards[idx] + gamma * next_value * non_terminal - values[idx]
@@ -2537,6 +2812,15 @@ def compute_gae(rewards, values, dones, gamma, gae_lambda):
         next_value = values[idx]
     returns = advantages + values
     return advantages, returns
+
+
+def estimate_state_value(model, obs, device):
+    obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+    with torch.no_grad():
+        _logits, value = model(obs_tensor)
+    if not torch.isfinite(value).all():
+        raise FloatingPointError("non-finite critic value while bootstrapping a truncated rollout")
+    return float(value.squeeze(0).item())
 
 
 def select_action(model, obs, action_mask, device, action_prior_logits=None):
@@ -2563,7 +2847,15 @@ def select_action(model, obs, action_mask, device, action_prior_logits=None):
     )
 
 
-def ppo_update(model, optimizer, transitions, args, device, action_prior_logits=None):
+def ppo_update(
+    model,
+    optimizer,
+    transitions,
+    args,
+    device,
+    action_prior_logits=None,
+    bootstrap_value=0.0,
+):
     obs_batch = torch.as_tensor(
         np.stack([transition.obs for transition in transitions]),
         dtype=torch.float32,
@@ -2594,10 +2886,12 @@ def ppo_update(model, optimizer, transitions, args, device, action_prior_logits=
         done_batch,
         args.gamma,
         args.gae_lambda,
+        bootstrap_value=bootstrap_value,
     )
     advantages = (advantages - advantages.mean()) / max(1e-6, advantages.std())
     advantage_batch = torch.as_tensor(advantages, dtype=torch.float32, device=device)
     return_batch = torch.as_tensor(returns, dtype=torch.float32, device=device)
+    old_value_batch = torch.as_tensor(value_batch, dtype=torch.float32, device=device)
 
     batch_size = obs_batch.shape[0]
     minibatch_size = min(args.minibatch_size, batch_size)
@@ -2611,6 +2905,9 @@ def ppo_update(model, optimizer, transitions, args, device, action_prior_logits=
     if action_prior_logits is not None:
         prior_tensor = torch.as_tensor(action_prior_logits, dtype=torch.float32, device=device).unsqueeze(0)
 
+    target_kl = max(0.0, float(getattr(args, "target_kl", 0.0)))
+    value_clip_eps = max(0.0, float(getattr(args, "value_clip_eps", args.clip_eps)))
+    stopped_for_kl = False
     for _epoch in range(args.ppo_epochs):
         np.random.shuffle(permutation)
         for start in range(0, batch_size, minibatch_size):
@@ -2626,15 +2923,28 @@ def ppo_update(model, optimizer, transitions, args, device, action_prior_logits=
             entropy = dist.entropy().mean()
             new_logprob = dist.log_prob(action_batch[batch_indices])
             new_logprob = torch.nan_to_num(new_logprob, nan=0.0, posinf=1e6, neginf=-1e6)
-            ratios = torch.exp(new_logprob - old_logprob_batch[batch_indices])
-            ratios = torch.nan_to_num(ratios, nan=1.0, posinf=10.0, neginf=0.0)
+            log_ratio = new_logprob - old_logprob_batch[batch_indices]
+            if not torch.isfinite(log_ratio).all():
+                continue
+            stable_log_ratio = torch.clamp(log_ratio, min=-20.0, max=20.0)
+            ratios = torch.exp(stable_log_ratio)
 
             unclipped = ratios * advantage_batch[batch_indices]
             clipped = torch.clamp(ratios, 1.0 - args.clip_eps, 1.0 + args.clip_eps) * advantage_batch[batch_indices]
             policy_loss = -torch.min(unclipped, clipped).mean()
-            value_loss = 0.5 * (return_batch[batch_indices] - values).pow(2).mean()
+            value_error = (return_batch[batch_indices] - values).pow(2)
+            if value_clip_eps > 0.0:
+                clipped_values = old_value_batch[batch_indices] + torch.clamp(
+                    values - old_value_batch[batch_indices],
+                    -value_clip_eps,
+                    value_clip_eps,
+                )
+                clipped_value_error = (return_batch[batch_indices] - clipped_values).pow(2)
+                value_loss = 0.5 * torch.maximum(value_error, clipped_value_error).mean()
+            else:
+                value_loss = 0.5 * value_error.mean()
             loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy
-            approx_kl = (old_logprob_batch[batch_indices] - new_logprob).mean()
+            approx_kl = ((ratios - 1.0) - stable_log_ratio).mean()
             clipfrac = ((ratios - 1.0).abs() > args.clip_eps).float().mean()
             if not torch.isfinite(loss):
                 continue
@@ -2650,6 +2960,12 @@ def ppo_update(model, optimizer, transitions, args, device, action_prior_logits=
             approx_kls.append(float(approx_kl.item()))
             clipfracs.append(float(clipfrac.item()))
 
+            if target_kl > 0.0 and float(approx_kl.item()) > target_kl:
+                stopped_for_kl = True
+                break
+        if stopped_for_kl:
+            break
+
     return {
         "policy_loss_mean": float(np.mean(policy_losses)) if policy_losses else 0.0,
         "value_loss_mean": float(np.mean(value_losses)) if value_losses else 0.0,
@@ -2657,6 +2973,7 @@ def ppo_update(model, optimizer, transitions, args, device, action_prior_logits=
         "approx_kl_mean": float(np.mean(approx_kls)) if approx_kls else 0.0,
         "clipfrac_mean": float(np.mean(clipfracs)) if clipfracs else 0.0,
         "update_steps": len(policy_losses),
+        "stopped_for_kl": bool(stopped_for_kl),
     }
 
 
@@ -2670,6 +2987,8 @@ def export_layout_artifacts(
     artifact_stem,
     benchmark_label,
     phase_cycle,
+    layout_strategy="ppo-rl",
+    algorithm_description=None,
 ):
     os.makedirs(output_dir, exist_ok=True)
     file_stem = f"{artifact_stem}_rl_layout"
@@ -2685,9 +3004,11 @@ def export_layout_artifacts(
         best_result["failed_edges"],
         x_spacing,
         y_spacing,
-        "ppo-rl",
+        str(layout_strategy),
         run_time_sec,
     )
+    if algorithm_description:
+        layout_result.algorithm_description = str(algorithm_description)
 
     preserve_unassigned_export_phases(best_result["board"], phase_cycle)
     iFCN_Lab.MapChessboard.outputTexFile(best_result["board"], file_stem, output_dir)
@@ -3156,6 +3477,7 @@ def build_run_config(
         "fast_eval_node_threshold": int(args.fast_eval_node_threshold),
         "final_exact_validation": bool(args.final_exact_validation),
         "exact_validation_interval": int(args.exact_validation_interval),
+        "exact_feedback_weight": float(args.exact_feedback_weight),
         "placement_candidate_pool_size": int(args.placement_candidate_pool_size),
         "final_exact_validation_candidates": int(args.final_exact_validation_candidates),
         "exact_eval_timeout_sec": int(args.exact_eval_timeout_sec),
@@ -3302,6 +3624,15 @@ def build_training_summary(
     total_reward_improvement_bonus = float(
         sum(float(row["reward_improvement_bonus"]) for row in step_rows)
     )
+    exact_feedback_evaluations = int(
+        sum(1 for row in episode_rows if row.get("exact_feedback_failed_edges") is not None)
+    )
+    exact_feedback_legal_count = int(
+        sum(int(row.get("exact_feedback_legal", 0)) for row in episode_rows)
+    )
+    exact_feedback_reward_total = float(
+        sum(float(row.get("exact_feedback_reward", 0.0)) for row in episode_rows)
+    )
 
     return {
         "benchmark": os.path.abspath(benchmark_path),
@@ -3364,6 +3695,7 @@ def build_training_summary(
         "fast_eval_node_threshold": int(args.fast_eval_node_threshold),
         "final_exact_validation": bool(args.final_exact_validation),
         "exact_validation_interval": int(args.exact_validation_interval),
+        "exact_feedback_weight": float(args.exact_feedback_weight),
         "placement_candidate_pool_size": int(args.placement_candidate_pool_size),
         "final_exact_validation_candidates": int(args.final_exact_validation_candidates),
         "exact_eval_timeout_sec": int(args.exact_eval_timeout_sec),
@@ -3485,6 +3817,9 @@ def build_training_summary(
         "reward_delta_clipped_total": total_reward_delta_clipped,
         "reward_area_delta_clipped_total": total_reward_area_delta_clipped,
         "reward_improvement_bonus_total": total_reward_improvement_bonus,
+        "exact_feedback_evaluations": exact_feedback_evaluations,
+        "exact_feedback_legal_count": exact_feedback_legal_count,
+        "exact_feedback_reward_total": exact_feedback_reward_total,
         "policy_loss_episode_mean": float(np.mean(policy_losses)) if len(policy_losses) else 0.0,
         "value_loss_episode_mean": float(np.mean(value_losses)) if len(value_losses) else 0.0,
         "entropy_episode_mean": float(np.mean(entropies)) if len(entropies) else 0.0,
@@ -3603,6 +3938,7 @@ def main():
             resolved_benchmark_path,
             args.seed,
             use_cache=not args.disable_gcn_cache,
+            device=args.device,
         )
         ordered_layers = normalize_layers(barycenter_opt_layers)
         embedding_scores = build_embedding_score_map(circuit, ordered_layers, embeddings)
@@ -3700,7 +4036,7 @@ def main():
                 if best_partial_key is None or candidate_key < best_partial_key:
                     best_partial_key = candidate_key
                     best_partial_memory = (candidate, candidate_result)
-                if not args.memory_only_inference or int(len(candidate_result["failed_edges"])) == 0:
+                if not args.memory_only_inference or is_legal_layout_result(candidate_result):
                     warm_start = candidate_result
                     memory_candidate = candidate
                     if args.memory_only_inference:
@@ -3775,7 +4111,7 @@ def main():
         if resolved_train_eval_mode != "placement":
             warm_start_eval_stats = {
                 "candidate_count": 1,
-                "legal_count": 1 if int(len(warm_start.get("failed_edges", []))) == 0 else 0,
+                "legal_count": 1 if is_legal_layout_result(warm_start) else 0,
                 "timeout_count": 1 if bool(warm_start.get("exact_evaluation_timeout", False)) else 0,
                 "failed_edge_count_sum": int(len(warm_start.get("failed_edges", []))),
                 "total_eval_sec": float(warm_start.get("candidate_eval_sec", 0.0)),
@@ -4044,7 +4380,10 @@ def main():
             "failed_edges": int(len(global_best_compact["failed_edges"])),
             "area": float(global_best_compact["area"]),
         }
-        summary["strict_success"] = bool(int(summary.get("best_failed_edges", 0)) == 0)
+        summary["strict_success"] = bool(
+            int(summary.get("best_failed_edges", 0)) == 0 and
+            int(summary.get("best_direction_violation_count", 0)) == 0
+        )
         summary["rl_experience_path"] = None
         summary["rl_experience_action_templates"] = 0
         summary["rl_experience_updates"] = 0
@@ -4152,18 +4491,21 @@ def main():
                 "try_index": int(try_idx),
                 "routing_embedding_guidance": bool(use_embedding_guidance),
                 "failed_edges": int(len(exact_compact["failed_edges"])),
+                "direction_violations": int(exact_compact["direction_violation_count"]),
                 "area": float(exact_compact["area"]),
                 "width": int(exact_compact["width"]),
                 "height": int(exact_compact["height"]),
                 "cost": float(exact_cost),
                 "runtime_sec": float(time.perf_counter() - validation_start),
                 "timeout_sec": int(effective_timeout_sec),
+                "timed_out": bool(exact_result.get("exact_evaluation_timeout", False)),
             }
             exact_validation_records.append(record)
             print(
                 "[Strict] Exact validation "
                 f"{label} try={try_idx} embedding={int(use_embedding_guidance)}: "
                 f"failed_edges={record['failed_edges']} "
+                f"direction_violations={record['direction_violations']} "
                 f"area={record['area']:.1f} "
                 f"size={record['width']}x{record['height']} "
                 f"runtime={record['runtime_sec']:.2f}s"
@@ -4172,8 +4514,10 @@ def main():
             if best_key is None or exact_key < best_key:
                 best_payload = (exact_result, exact_compact, exact_cost, record)
                 best_key = exact_key
-            if int(len(exact_compact["failed_edges"])) == 0:
+            if is_legal_layout_result(exact_compact):
                 return exact_result, exact_compact, exact_cost, record
+            if record["timed_out"]:
+                break
         return best_payload
 
     if env.train_eval_mode == "placement" and args.final_exact_validation:
@@ -4187,7 +4531,7 @@ def main():
         if reference_payload is not None:
             strict_reference_exact_payload = reference_payload
             reference_result, reference_compact, reference_cost, _record = reference_payload
-            if int(len(reference_compact["failed_edges"])) == 0:
+            if is_legal_layout_result(reference_compact):
                 strict_reference_exact_valid = True
                 strict_reference_result = reference_result
                 strict_reference_compact = reference_compact
@@ -4245,17 +4589,12 @@ def main():
                 "preferred_embedding_guidance": bool(preferred_embedding_guidance),
             }
         )
-        placement_candidate_pool.sort(
-            key=lambda item: (
-                int(len(item["compact"]["failed_edges"])),
-                float(item["compact"]["area"]),
-                int(max(item["compact"]["width"], item["compact"]["height"])),
-                float(item["cost"]),
-            )
-        )
         max_pool_size = max(1, int(args.placement_candidate_pool_size))
         if len(placement_candidate_pool) > max_pool_size:
-            del placement_candidate_pool[max_pool_size:]
+            placement_candidate_pool[:] = select_diverse_placement_candidates(
+                placement_candidate_pool,
+                max_pool_size,
+            )
 
     def run_legal_repair_search():
         max_repair_candidates = max(0, int(args.legal_repair_candidates))
@@ -4338,6 +4677,23 @@ def main():
                     (int(base_clock[0]), int(repair_padding), int(base_clock[2])),
                     preferred_embedding_guidance=bool(base.get("preferred_embedding_guidance", False)),
                 )
+            if len(circuit.effective_edges) >= 60 and int(base_clock[0]) != 2:
+                phase2_padding = min(
+                    max_padding,
+                    max(int(base_clock[1]), int(args.padding) + 1),
+                )
+                phase2_positions = expand_node_positions(
+                    base["positions"],
+                    env.orientation,
+                    primary_scale=1,
+                    secondary_scale=2,
+                )
+                add_repair_record(
+                    f"{base['label']}_scale1x2_phase2_pad{phase2_padding}",
+                    phase2_positions,
+                    (2, int(phase2_padding), int(base_clock[2])),
+                    preferred_embedding_guidance=False,
+                )
 
         orientations = [env.orientation]
         alternate_orientation = TOP_DOWN if env.orientation == LEFT_RIGHT else LEFT_RIGHT
@@ -4406,6 +4762,37 @@ def main():
             for record in area_sorted[:compact_quota]:
                 add_diverse_record(selected, selected_signatures, record)
 
+            preferred_scale_shapes = (
+                (1, 2),
+                (1, 3),
+                (2, 2),
+                (2, 3),
+                (3, 2),
+                (3, 3),
+            )
+            phase2_family = [
+                record
+                for record in area_sorted
+                if int(record["clock_context"][0]) == 2
+            ]
+            if phase2_family and len(selected) < limit:
+                add_diverse_record(
+                    selected,
+                    selected_signatures,
+                    phase2_family[0],
+                )
+            for primary_scale, secondary_scale in preferred_scale_shapes:
+                if len(selected) >= limit:
+                    break
+                marker = f"scale{primary_scale}x{secondary_scale}"
+                family = [
+                    record
+                    for record in area_sorted
+                    if marker in record["label"]
+                ]
+                if family:
+                    add_diverse_record(selected, selected_signatures, family[0])
+
             def spacing_multiplier(record):
                 match = re.search(r"spacing(\d+)x", record["label"])
                 return int(match.group(1)) if match else 0
@@ -4465,7 +4852,144 @@ def main():
         )
         best_payload = None
         best_key = None
+        local_conflict_candidates = 0
         repair_start = time.perf_counter()
+
+        multi_output_nodes = {
+            int(node_id)
+            for node_id in circuit.effective_nodes
+            if str(circuit.getNodeTypeString(int(node_id))).lower()
+            in {"input", "fanout"}
+        }
+
+        def try_conflict_endpoint_shifts(source_result, source_record, repair_idx):
+            nonlocal local_conflict_candidates
+            failed_edges = {
+                (int(src), int(dst))
+                for src, dst in source_result.get("failed_edges", [])
+            }
+            if len(failed_edges) > 4:
+                return None
+            conflict_edges = find_direction_violation_edges(
+                source_result.get("routed_paths", {}),
+                multi_output_nodes,
+            )
+            problem_edges = set(failed_edges) | set(conflict_edges)
+            if not problem_edges:
+                return None
+
+            base_positions = clone_positions(source_result["node_positions"])
+            secondary_axis = 1 if env.orientation == LEFT_RIGHT else 0
+            occupied = set(base_positions.values())
+            failed_sources = sorted({int(src) for src, _dst in failed_edges})
+            conflict_targets = sorted(
+                {
+                    int(dst)
+                    for _src, dst in conflict_edges
+                    if sum(int(edge_dst) == int(dst) for _edge_src, edge_dst in conflict_edges) > 1
+                }
+            )
+            paired_nodes = (
+                failed_sources
+                if len(failed_sources) >= 2
+                else conflict_targets
+            )
+            pair_deltas = (-2, 1, 2, -1)
+            pair_attempts = 0
+            for first_idx, first_node in enumerate(paired_nodes[:3]):
+                for second_node in paired_nodes[first_idx + 1:3]:
+                    for first_delta in pair_deltas:
+                        for second_delta in pair_deltas:
+                            if pair_attempts >= 8:
+                                break
+                            shifted_positions = clone_positions(base_positions)
+                            first_coord = list(shifted_positions[first_node])
+                            second_coord = list(shifted_positions[second_node])
+                            first_coord[secondary_axis] += int(first_delta)
+                            second_coord[secondary_axis] += int(second_delta)
+                            if (
+                                tuple(first_coord) in occupied - {base_positions[first_node]} or
+                                tuple(second_coord) in occupied - {base_positions[second_node]} or
+                                tuple(first_coord) == tuple(second_coord)
+                            ):
+                                continue
+                            shifted_positions[first_node] = tuple(first_coord)
+                            shifted_positions[second_node] = tuple(second_coord)
+                            pair_attempts += 1
+                            local_conflict_candidates += 1
+                            payload = validate_exact_candidate(
+                                shifted_positions,
+                                source_record["clock_context"],
+                                (
+                                    f"legal_repair{repair_idx}_failed_sources"
+                                    f"{first_node}_{first_delta:+d}_"
+                                    f"{second_node}_{second_delta:+d}"
+                                ),
+                                preferred_embedding_guidance=False,
+                                timeout_sec=repair_timeout_sec,
+                            )
+                            if payload is not None and is_legal_layout_result(payload[1]):
+                                print(
+                                    "[Strict] Failed-source pair repair accepted: "
+                                    f"nodes=({first_node},{second_node}) "
+                                    f"deltas=({first_delta:+d},{second_delta:+d}) "
+                                    f"area={payload[1]['area']:.1f}"
+                                )
+                                return payload
+                        if pair_attempts >= 8:
+                            break
+                    if pair_attempts >= 8:
+                        break
+                if pair_attempts >= 8:
+                    break
+
+            conflict_frequency = Counter(
+                int(node_id)
+                for edge in problem_edges
+                for node_id in edge
+            )
+            ranked_nodes = sorted(
+                conflict_frequency,
+                key=lambda node_id: (
+                    0 if int(node_id) in multi_output_nodes else 1,
+                    -int(conflict_frequency[node_id]),
+                    int(node_id),
+                ),
+            )[:4]
+            for node_id in ranked_nodes:
+                base_coord = base_positions[int(node_id)]
+                for delta in (-2, 2, -1, 1):
+                    shifted_coord = [int(base_coord[0]), int(base_coord[1])]
+                    shifted_coord[secondary_axis] += int(delta)
+                    shifted_coord = tuple(shifted_coord)
+                    if shifted_coord in occupied:
+                        continue
+                    shifted_positions = clone_positions(base_positions)
+                    shifted_positions[int(node_id)] = shifted_coord
+                    local_conflict_candidates += 1
+                    payload = validate_exact_candidate(
+                        shifted_positions,
+                        source_record["clock_context"],
+                        (
+                            f"legal_repair{repair_idx}_conflict_node"
+                            f"{int(node_id)}_delta{int(delta):+d}"
+                        ),
+                        preferred_embedding_guidance=False,
+                        timeout_sec=repair_timeout_sec,
+                    )
+                    if payload is None:
+                        continue
+                    _result, compact, _cost, _record = payload
+                    if is_legal_layout_result(compact):
+                        print(
+                            "[Strict] Conflict-endpoint repair accepted: "
+                            f"node={int(node_id)} delta={int(delta):+d} "
+                            f"area={compact['area']:.1f} "
+                            f"size={compact['width']}x{compact['height']}"
+                        )
+                        return payload
+            return None
+
         for repair_idx, record in enumerate(repair_records, start=1):
             payload = validate_exact_candidate(
                 record["positions"],
@@ -4477,7 +5001,29 @@ def main():
             if payload is None:
                 continue
             exact_result, exact_compact, exact_cost, _validation_record = payload
-            if int(len(exact_compact["failed_edges"])) != 0:
+            if not is_legal_layout_result(exact_compact):
+                if (
+                    int(len(exact_compact["failed_edges"])) <= 4 and
+                    (
+                        int(len(exact_compact["failed_edges"])) > 0 or
+                        int(exact_compact["direction_violation_count"]) > 0
+                    )
+                ):
+                    shifted_payload = try_conflict_endpoint_shifts(
+                        exact_result,
+                        record,
+                        repair_idx,
+                    )
+                    if shifted_payload is not None:
+                        shifted_result, shifted_compact, shifted_cost, _shifted_record = shifted_payload
+                        shifted_key = layout_selection_key(
+                            shifted_compact,
+                            shifted_cost,
+                            args.best_selection_mode,
+                        )
+                        if best_key is None or shifted_key < best_key:
+                            best_payload = shifted_payload
+                            best_key = shifted_key
                 continue
             exact_key = layout_selection_key(exact_compact, exact_cost, args.best_selection_mode)
             if best_key is None or exact_key < best_key:
@@ -4496,6 +5042,7 @@ def main():
             "timeout_sec": int(repair_timeout_sec),
             "runtime_sec": float(time.perf_counter() - repair_start),
             "legal_found": bool(best_payload is not None),
+            "local_conflict_candidates": int(local_conflict_candidates),
         }
         return best_payload, repair_summary
 
@@ -4524,6 +5071,8 @@ def main():
         else:
             obs = env.reset()
         transitions = []
+        episode_step_row_start = len(step_rows)
+        episode_best_transition_idx = None
         episode_reward = 0.0
         episode_invalid_actions = 0
         episode_accepted_actions = 0
@@ -4547,6 +5096,8 @@ def main():
                 action_prior_logits=action_prior_logits,
             )
             next_obs, reward, done, info = env.step(action)
+            terminated = bool(info.get("terminated", False))
+            truncated = bool(done and not terminated)
             transitions.append(
                 Transition(
                     obs=obs,
@@ -4554,10 +5105,13 @@ def main():
                     logprob=logprob,
                     reward=reward,
                     value=value,
-                    done=done,
+                    done=terminated,
                     action_mask=action_mask,
+                    truncated=truncated,
                 )
             )
+            if float(info.get("reward_improvement_bonus", 0.0)) > 0.0:
+                episode_best_transition_idx = len(transitions) - 1
             obs = next_obs
             episode_reward += reward
             episode_invalid_actions += int(info["invalid_action"])
@@ -4601,6 +5155,7 @@ def main():
                     "reward_delta_clipped": float(info["reward_delta_clipped"]),
                     "reward_area_delta_clipped": float(info["reward_area_delta_clipped"]),
                     "reward_improvement_bonus": float(info["reward_improvement_bonus"]),
+                    "exact_feedback_reward": 0.0,
                     "previous_cost": float(info.get("previous_cost", env.current_cost)),
                     "current_cost": float(info["current_cost"]),
                     "best_cost": float(info["best_cost"]),
@@ -4641,21 +5196,11 @@ def main():
             if done:
                 break
 
-        ppo_metrics = ppo_update(
-            model,
-            optimizer,
-            transitions,
-            args,
-            device,
-            action_prior_logits=action_prior_logits,
-        ) if transitions else {
-            "policy_loss_mean": 0.0,
-            "value_loss_mean": 0.0,
-            "entropy_mean": 0.0,
-            "approx_kl_mean": 0.0,
-            "clipfrac_mean": 0.0,
-            "update_steps": 0,
-        }
+        bootstrap_value = (
+            estimate_state_value(model, obs, device)
+            if transitions and transitions[-1].truncated
+            else 0.0
+        )
 
         episode_best_compact = dict(env.best_result)
         episode_best_cost = float(env.best_cost)
@@ -4685,6 +5230,11 @@ def main():
             episode_best_compact = candidate_compact
             episode_best_cost = float(candidate_cost)
 
+        exact_feedback_reward = 0.0
+        exact_feedback_failed_edges = None
+        exact_feedback_direction_violations = None
+        exact_feedback_legal = False
+        exact_feedback_transition_idx = None
         if (
             env.train_eval_mode == "placement" and
             args.exact_validation_interval > 0 and
@@ -4699,21 +5249,89 @@ def main():
             if validation_payload is not None:
                 exact_result, exact_compact, exact_cost, _record = validation_payload
                 exact_key = layout_selection_key(exact_compact, exact_cost, args.best_selection_mode)
+                exact_feedback_failed_edges = int(len(exact_compact["failed_edges"]))
+                exact_feedback_direction_violations = int(
+                    exact_compact["direction_violation_count"]
+                )
+                exact_feedback_legal = is_legal_layout_result(exact_compact)
+                if exact_feedback_legal:
+                    raw_exact_feedback = 12.0
+                else:
+                    raw_exact_feedback = -min(
+                        12.0,
+                        0.75 * float(exact_feedback_failed_edges) +
+                        0.50 * float(exact_feedback_direction_violations) +
+                        (2.0 if exact_result.get("exact_evaluation_timeout", False) else 0.0),
+                    )
+                exact_feedback_reward = (
+                    max(0.0, float(args.exact_feedback_weight)) *
+                    raw_exact_feedback
+                )
                 if (
-                    int(len(exact_compact["failed_edges"])) == 0 and
+                    transitions
+                    and episode_best_transition_idx is not None
+                    and exact_feedback_reward != 0.0
+                ):
+                    exact_feedback_transition_idx = int(episode_best_transition_idx)
+                    transitions[exact_feedback_transition_idx].reward += exact_feedback_reward
+                    episode_reward += exact_feedback_reward
+                    feedback_row_idx = episode_step_row_start + exact_feedback_transition_idx
+                    if 0 <= feedback_row_idx < len(step_rows):
+                        step_rows[feedback_row_idx]["reward"] = float(
+                            step_rows[feedback_row_idx]["reward"] + exact_feedback_reward
+                        )
+                        step_rows[feedback_row_idx]["exact_feedback_reward"] = float(
+                            exact_feedback_reward
+                        )
+                        for row_idx in range(feedback_row_idx, len(step_rows)):
+                            step_rows[row_idx]["cumulative_reward"] = float(
+                                step_rows[row_idx]["cumulative_reward"] + exact_feedback_reward
+                            )
+                    print(
+                        "[Strict-RL] Added exact-routing feedback before PPO update: "
+                        f"reward={exact_feedback_reward:.2f} "
+                        f"transition={exact_feedback_transition_idx} "
+                        f"failed_edges={exact_feedback_failed_edges} "
+                        f"direction_violations={exact_feedback_direction_violations}"
+                    )
+                elif transitions and exact_feedback_reward != 0.0:
+                    print(
+                        "[Strict-RL] Exact result verified the reset state; "
+                        "no policy transition receives that reward."
+                    )
+                if (
+                    exact_feedback_legal and
                     (verified_best_key is None or exact_key < verified_best_key)
                 ):
                     verified_best_result = exact_result
                     verified_best_compact = exact_compact
                     verified_best_cost = exact_cost
                     verified_best_positions = clone_positions(env.best_positions)
-                verified_best_key = exact_key
-                print(
-                    "[Strict] New verified legal routed best: "
-                    f"area={exact_compact['area']:.1f} "
+                    verified_best_key = exact_key
+                    print(
+                        "[Strict] New verified legal routed best: "
+                        f"area={exact_compact['area']:.1f} "
                         f"size={exact_compact['width']}x{exact_compact['height']} "
                         f"cost={exact_cost:.1f}"
                     )
+
+        ppo_metrics = ppo_update(
+            model,
+            optimizer,
+            transitions,
+            args,
+            device,
+            action_prior_logits=action_prior_logits,
+            bootstrap_value=bootstrap_value,
+        ) if transitions else {
+            "policy_loss_mean": 0.0,
+            "value_loss_mean": 0.0,
+            "entropy_mean": 0.0,
+            "approx_kl_mean": 0.0,
+            "clipfrac_mean": 0.0,
+            "update_steps": 0,
+            "stopped_for_kl": False,
+        }
 
         episode_steps = len(transitions)
         episode_runtime_sec = time.perf_counter() - episode_start
@@ -4764,6 +5382,11 @@ def main():
                 "reward_delta_raw_sum": float(reward_delta_raw_sum),
                 "reward_delta_clipped_sum": float(reward_delta_clipped_sum),
                 "reward_improvement_bonus_sum": float(reward_improvement_bonus_sum),
+                "exact_feedback_reward": float(exact_feedback_reward),
+                "exact_feedback_failed_edges": exact_feedback_failed_edges,
+                "exact_feedback_direction_violations": exact_feedback_direction_violations,
+                "exact_feedback_legal": int(exact_feedback_legal),
+                "exact_feedback_transition_idx": exact_feedback_transition_idx,
                 "eval_calls_episode": int(env.eval_calls_episode),
                 "eval_cache_hits_episode": int(env.eval_cache_hits_episode),
                 "eval_cache_hit_rate_episode": (
@@ -4776,6 +5399,7 @@ def main():
                 "approx_kl_mean": float(ppo_metrics["approx_kl_mean"]),
                 "clipfrac_mean": float(ppo_metrics["clipfrac_mean"]),
                 "update_steps": int(ppo_metrics["update_steps"]),
+                "stopped_for_kl": int(ppo_metrics.get("stopped_for_kl", False)),
                 "episode_runtime_sec": float(episode_runtime_sec),
             }
         )
@@ -4939,7 +5563,10 @@ def main():
         global_best_key = verified_best_key
     elif args.final_exact_validation and env.train_eval_mode == "placement":
         max_final_candidates = max(1, int(args.final_exact_validation_candidates))
-        final_candidates = placement_candidate_pool[:max_final_candidates]
+        final_candidates = select_diverse_placement_candidates(
+            placement_candidate_pool,
+            max_final_candidates,
+        )
         strict_reference_fallback = {
             "label": "strict_reference_fallback",
             "positions": clone_positions(strict_reference_positions),
@@ -4980,7 +5607,7 @@ def main():
                 best_exact_payload = validation_payload
                 best_exact_key = exact_key
             if (
-                int(len(exact_compact["failed_edges"])) == 0 and
+                is_legal_layout_result(exact_compact) and
                 (verified_best_key is None or exact_key < verified_best_key)
             ):
                 verified_best_result = exact_result
@@ -5037,16 +5664,16 @@ def main():
             global_best_key = layout_selection_key(global_best_compact, global_best_cost, args.best_selection_mode)
             final_exact_validation["failed_edges"] = int(len(global_best_compact["failed_edges"]))
             final_exact_validation["area"] = float(global_best_compact["area"])
-            if int(len(global_best_compact["failed_edges"])) > 0:
+            if not is_legal_layout_result(global_best_compact):
                 print(
-                    "[Strict] No fully routed final exact candidate found; exporting partial "
+                    "[Strict] No fully legal final exact candidate found; exporting partial "
                     "result only because --no-require-legal-final was requested."
                 )
         elif verified_best_result is None:
-            print("[Strict] No fully routed final exact candidate found; no layout artifacts will be exported.")
+            print("[Strict] No fully legal final exact candidate found; no layout artifacts will be exported.")
     if (
         bool(args.require_legal_final) and
-        int(len(global_best_compact["failed_edges"])) > 0 and
+        not is_legal_layout_result(global_best_compact) and
         not bool(legal_repair_summary.get("ran", False))
     ):
         repair_payload, legal_repair_summary = run_legal_repair_search()
@@ -5063,7 +5690,7 @@ def main():
             verified_best_positions = clone_positions(exact_result["node_positions"])
             verified_best_key = global_best_key
 
-    if bool(args.require_legal_final) and int(len(global_best_compact["failed_edges"])) > 0:
+    if bool(args.require_legal_final) and not is_legal_layout_result(global_best_compact):
         run_time_sec = time.perf_counter() - train_start
         history_path = write_training_history(output_dir, benchmark_label, history_rows)
         step_log_path = None
@@ -5127,8 +5754,9 @@ def main():
             build_action_histogram(step_rows, top_k=32),
         )
         print(
-            "[Strict] Legal final layout required, but no candidate routed all edges. "
-            f"Best failed_edges={len(global_best_compact['failed_edges'])}. "
+            "[Strict] Legal final layout required, but no candidate satisfied routing and port constraints. "
+            f"Best failed_edges={len(global_best_compact['failed_edges'])}, "
+            f"direction_violations={global_best_compact['direction_violation_count']}. "
             "Layout .ifcn/.svg/.tex export skipped."
         )
         print(f"[RL] Training log written to: {history_path}")
@@ -5215,7 +5843,10 @@ def main():
         "failed_edges": int(len(strict_reference_compact["failed_edges"])),
         "cost": float(strict_reference_cost),
     }
-    summary["strict_success"] = bool(int(summary.get("best_failed_edges", 0)) == 0)
+    summary["strict_success"] = bool(
+        int(summary.get("best_failed_edges", 0)) == 0 and
+        int(summary.get("best_direction_violation_count", 0)) == 0
+    )
     summary["area_improved_vs_strict_reference"] = bool(
         summary["strict_success"] and
         float(summary.get("best_area", 0.0)) < float(strict_reference_compact["area"])

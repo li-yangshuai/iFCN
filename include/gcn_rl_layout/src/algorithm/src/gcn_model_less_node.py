@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import TransformerConv
+from torch_geometric.utils import negative_sampling, to_undirected
 from sklearn.decomposition import PCA
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,9 +11,26 @@ import os
 import os.path as osp
 from lib import iFCN_Lab
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 from collections import defaultdict
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+
+def safe_torch_device(preferred="auto"):
+    if preferred == "cpu":
+        return torch.device("cpu")
+    if preferred in ("auto", "cuda") and torch.cuda.is_available():
+        try:
+            probe = torch.empty(1, device="cuda")
+            probe = probe + 1
+            torch.cuda.synchronize()
+            return torch.device("cuda")
+        except Exception as exc:
+            print(f"[GCN] CUDA unavailable for this build/device, falling back to CPU: {exc}")
+            return torch.device("cpu")
+    if preferred == "cuda":
+        print("[GCN] CUDA requested but torch.cuda.is_available() is false, falling back to CPU.")
+    return torch.device("cpu")
 
 def _ema_smooth(values, alpha=0.18):
     if not values:
@@ -97,65 +115,161 @@ def _save_training_curve(loss_list, v_file_path=None):
     print(f"[GCN] Training curve saved: {svg_path}")
     print(f"[GCN] Training data saved: {csv_path}")
 
-# ----------- GCN 网络 -----------
+# ----------- Edge-aware directed graph encoder -----------
 class GCN(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels=32, out_channels=16):
-        super(GCN, self).__init__()
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, out_channels)
+    """Residual directed attention encoder kept under the legacy class name.
 
-    def forward(self, x, edge_index):
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = self.conv2(x, edge_index)
-        return x
+    ``CircuitParser`` already computes five edge features, but the old two-layer
+    ``GCNConv`` discarded them.  TransformerConv keeps source->target direction,
+    conditions messages on edge attributes, and remains compatible with graphs
+    built by ``build_simple_pyg_data`` where edge attributes are absent.
+    """
+
+    supports_edge_attr = True
+
+    def __init__(
+        self,
+        in_channels,
+        hidden_channels=48,
+        out_channels=24,
+        edge_channels=0,
+        dropout=0.10,
+    ):
+        super(GCN, self).__init__()
+        edge_dim = int(edge_channels) if int(edge_channels) > 0 else None
+        self.edge_channels = int(edge_channels)
+        self.conv1 = TransformerConv(
+            in_channels,
+            hidden_channels,
+            heads=2,
+            concat=False,
+            beta=True,
+            dropout=float(dropout),
+            edge_dim=edge_dim,
+        )
+        self.norm1 = torch.nn.LayerNorm(hidden_channels)
+        self.conv2 = TransformerConv(
+            hidden_channels,
+            out_channels,
+            heads=2,
+            concat=False,
+            beta=True,
+            dropout=float(dropout),
+            edge_dim=edge_dim,
+        )
+        self.norm2 = torch.nn.LayerNorm(out_channels)
+        self.residual = torch.nn.Linear(in_channels, out_channels, bias=False)
+        self.dropout = torch.nn.Dropout(float(dropout))
+
+    def forward(self, x, edge_index, edge_attr=None):
+        if self.edge_channels > 0:
+            if edge_attr is None:
+                raise ValueError("edge_attr is required by this edge-aware GCN")
+            edge_attr = edge_attr.to(dtype=x.dtype)
+        else:
+            edge_attr = None
+        hidden = self.conv1(x, edge_index, edge_attr)
+        hidden = self.dropout(F.gelu(self.norm1(hidden)))
+        output = self.conv2(hidden, edge_index, edge_attr)
+        return self.norm2(output + self.residual(x))
+
+
+def _data_edge_channels(data):
+    edge_attr = getattr(data, "edge_attr", None)
+    return int(edge_attr.shape[1]) if edge_attr is not None and edge_attr.ndim == 2 else 0
+
+
+def _forward_graph_encoder(model, data):
+    edge_attr = getattr(data, "edge_attr", None)
+    if getattr(model, "supports_edge_attr", False):
+        return model(data.x, data.edge_index, edge_attr)
+    return model(data.x, data.edge_index)
 
 # ----------- GCN 训练 -----------
 import matplotlib.pyplot as plt
 
-def train_gcn(model, data, v_file_path=None, epochs=200, lr=0.01, device='cpu'):
+def train_gcn(
+    model,
+    data,
+    v_file_path=None,
+    epochs=200,
+    lr=0.01,
+    device='cpu',
+    save_curve=True,
+    return_losses=False,
+    log_every=20,
+):
     epochs = int(os.environ.get("IFCN_GCN_EPOCHS", epochs))
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     model = model.to(device)
     data = data.to(device)
     edge_index = data.edge_index
     num_nodes = data.x.shape[0]
 
-    # 用set判定邻接
-    edge_tuples = zip(edge_index[0].cpu().numpy(), edge_index[1].cpu().numpy())
-    adj_set = set((int(u), int(v)) for u, v in edge_tuples)
+    if num_nodes < 2 or edge_index.numel() == 0:
+        # There is no link-prediction signal in an edgeless/singleton graph.
+        # Return a valid (untrained) encoder instead of propagating NaNs from an
+        # empty mean into the layout order.
+        loss_list = [0.0] * max(0, epochs)
+        if save_curve:
+            _save_training_curve(loss_list, v_file_path=v_file_path)
+        if return_losses:
+            return model, loss_list
+        return model
+
+    # The embedding objective is symmetric in node pairs, so both directions of
+    # every logical edge must be excluded from negative sampling.  The previous
+    # dense directed mask could label (v, u) as negative when (u, v) was a
+    # positive edge, producing contradictory distance targets and O(N^2) memory.
+    positive_edge_index = to_undirected(edge_index, num_nodes=num_nodes)
 
     model.train()
-    loss_list = []
+    loss_history = []
+    last_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
     for epoch in range(epochs):
         optimizer.zero_grad()
-        embeddings = model(data.x, data.edge_index)
+        embeddings = _forward_graph_encoder(model, data)
         source, target = edge_index
-        pos_dist = torch.norm(embeddings[source] - embeddings[target], dim=1).mean()
+        pos_dist = torch.norm(embeddings[source] - embeddings[target], dim=1)
 
-        neg_source = torch.randint(0, num_nodes, source.size(), device=device)
-        neg_target = torch.randint(0, num_nodes, target.size(), device=device)
+        negative_edge_index = negative_sampling(
+            positive_edge_index,
+            num_nodes=num_nodes,
+            num_neg_samples=max(1, int(source.numel())),
+            method="sparse",
+        )
+        neg_source, neg_target = negative_edge_index
 
-        neg_source_cpu = neg_source.cpu().numpy()
-        neg_target_cpu = neg_target.cpu().numpy()
-        neg_mask = [ (int(u), int(v)) not in adj_set for u, v in zip(neg_source_cpu, neg_target_cpu) ]
-        neg_mask = torch.tensor(neg_mask, dtype=torch.bool, device=device)
-        neg_source = neg_source[neg_mask]
-        neg_target = neg_target[neg_mask]
-
-        if len(neg_source) == 0:
-            loss_list.append(loss_list[-1] if loss_list else 0)
+        if neg_source.numel() == 0:
+            loss_history.append(last_loss.detach())
             continue
-        neg_dist = torch.norm(embeddings[neg_source] - embeddings[neg_target], dim=1).mean()
+        neg_dist = torch.norm(embeddings[neg_source] - embeddings[neg_target], dim=1)
         margin = 1.0
-        loss = pos_dist + torch.clamp(margin - neg_dist, min=0.0)
+        pair_count = min(int(pos_dist.numel()), int(neg_dist.numel()))
+        ranking_loss = F.relu(
+            margin + pos_dist[:pair_count] - neg_dist[:pair_count]
+        ).mean()
+        loss = (
+            ranking_loss
+            + 0.05 * pos_dist.mean()
+            + 1e-4 * embeddings.pow(2).mean()
+        )
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
         optimizer.step()
-        loss_list.append(loss.item())
-        if epoch % 20 == 0:
-            print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
+        last_loss = loss.detach()
+        loss_history.append(last_loss)
+        if log_every and epoch % log_every == 0:
+            print(f"Epoch {epoch}, Loss: {float(last_loss.detach().cpu()):.4f}")
 
-    _save_training_curve(loss_list, v_file_path=v_file_path)
+    if loss_history:
+        loss_list = torch.stack(loss_history).detach().cpu().numpy().astype(float).tolist()
+    else:
+        loss_list = []
+    if save_curve:
+        _save_training_curve(loss_list, v_file_path=v_file_path)
+    if return_losses:
+        return model, loss_list
     return model
 
 
@@ -164,7 +278,7 @@ def get_embeddings(model, data, device='cpu'):
     model.eval()
     data = data.to(device)
     with torch.no_grad():
-        embeddings = model(data.x, data.edge_index)
+        embeddings = _forward_graph_encoder(model, data)
     return embeddings.cpu().numpy()
 
 # ----------- PCA 排序 -----------
@@ -262,6 +376,371 @@ def minimize_crossing_barycenter_fully(layer_nodes, edges, iters=5):
         for i in range(len(sorted_layers)-2, -1, -1):   # 注意-1
             sorted_layers[i] = barycenter_sort_down(sorted_layers[i+1], sorted_layers[i], edges)
     return {i: sorted_layers[i] for i in range(len(sorted_layers))}
+
+
+def _normalize_layer_list(layer_nodes):
+    if isinstance(layer_nodes, dict):
+        return [list(layer_nodes[i]) for i in sorted(layer_nodes.keys())]
+    return [list(nodes) for nodes in layer_nodes]
+
+
+def _embedding_scores_by_layer(embeddings, layer_nodes, node_to_index, sign=1.0):
+    """Return a normalized one-dimensional GCN score for nodes in each layer."""
+    scores_by_layer = {}
+    scores_by_node = {}
+    if embeddings is None or node_to_index is None:
+        return scores_by_layer, scores_by_node
+
+    for layer_idx, nodes in enumerate(_normalize_layer_list(layer_nodes)):
+        nodes = [int(node) for node in nodes]
+        present = [node for node in nodes if node in node_to_index]
+        if len(present) <= 1:
+            layer_scores = {node: 0.0 for node in nodes}
+        else:
+            emb_idx = np.asarray([int(node_to_index[node]) for node in present], dtype=int)
+            layer_embeddings = np.asarray(embeddings[emb_idx], dtype=float)
+            try:
+                if (
+                    layer_embeddings.ndim != 2
+                    or not np.isfinite(layer_embeddings).all()
+                    or np.allclose(np.var(layer_embeddings, axis=0).sum(), 0.0)
+                ):
+                    raise ValueError("degenerate embeddings")
+                raw_scores = PCA(n_components=1).fit_transform(layer_embeddings).flatten()
+            except Exception:  # noqa: BLE001
+                raw_scores = layer_embeddings[:, 0] if layer_embeddings.ndim == 2 else np.zeros(len(present))
+
+            raw_scores = np.asarray(raw_scores, dtype=float) * float(sign)
+            if not np.isfinite(raw_scores).all():
+                raw_scores = np.zeros(len(present), dtype=float)
+            spread = float(np.max(raw_scores) - np.min(raw_scores))
+            if spread > 1e-12:
+                raw_scores = (raw_scores - float(np.min(raw_scores))) / spread
+            else:
+                raw_scores = np.zeros(len(present), dtype=float)
+            layer_scores = {node: float(score) for node, score in zip(present, raw_scores)}
+            for node in nodes:
+                layer_scores.setdefault(node, 0.5)
+
+        scores_by_layer[layer_idx] = layer_scores
+        scores_by_node.update(layer_scores)
+    return scores_by_layer, scores_by_node
+
+
+def _barycenter_sort_with_embedding(anchor_layer, curr_layer, edges, embedding_scores, reverse=False, bias=0.0):
+    idx_anchor = {int(n): i for i, n in enumerate(anchor_layer)}
+    curr_nodes = [int(n) for n in curr_layer]
+    curr_set = set(curr_nodes)
+    neighbor_idx = defaultdict(list)
+
+    for u, v in edges:
+        u = int(u)
+        v = int(v)
+        if not reverse:
+            if u in idx_anchor and v in curr_set:
+                neighbor_idx[v].append(idx_anchor[u])
+        else:
+            if u in curr_set and v in idx_anchor:
+                neighbor_idx[u].append(idx_anchor[v])
+
+    previous_rank = {node: rank for rank, node in enumerate(curr_nodes)}
+    decorated = []
+    for node in curr_nodes:
+        positions = neighbor_idx.get(node)
+        if positions:
+            center = float(np.mean(positions))
+        else:
+            center = float(previous_rank[node])
+        emb_score = float(embedding_scores.get(node, 0.5))
+        decorated.append((center + float(bias) * emb_score, emb_score, previous_rank[node], node))
+
+    decorated.sort()
+    return [node for _, _, _, node in decorated]
+
+
+def _build_adjacent_boundary_edges(layer_nodes, edges):
+    layers = _normalize_layer_list(layer_nodes)
+    node_layer = {
+        int(node): int(layer_idx)
+        for layer_idx, nodes in enumerate(layers)
+        for node in nodes
+    }
+    boundary_edges = defaultdict(list)
+    for u, v in edges:
+        u = int(u)
+        v = int(v)
+        lu = node_layer.get(u)
+        lv = node_layer.get(v)
+        if lu is None or lv is None:
+            continue
+        if lv == lu + 1:
+            boundary_edges[lu].append((u, v))
+    return boundary_edges
+
+
+def _layer_boundary_crossings(layers, boundary_edges, layer_idx):
+    total = 0
+    if layer_idx > 0:
+        total += count_crossings_fast(
+            layers[layer_idx - 1],
+            layers[layer_idx],
+            boundary_edges.get(layer_idx - 1, ()),
+        )
+    if layer_idx < len(layers) - 1:
+        total += count_crossings_fast(
+            layers[layer_idx],
+            layers[layer_idx + 1],
+            boundary_edges.get(layer_idx, ()),
+        )
+    return int(total)
+
+
+def total_adjacent_crossings(layer_nodes, edges):
+    layers = _normalize_layer_list(layer_nodes)
+    boundary_edges = _build_adjacent_boundary_edges(layers, edges)
+    total = 0
+    for layer_idx in range(len(layers) - 1):
+        total += count_crossings_fast(
+            layers[layer_idx],
+            layers[layer_idx + 1],
+            boundary_edges.get(layer_idx, ()),
+        )
+    return int(total)
+
+
+def _gcn_guided_local_sifting(
+    layer_nodes,
+    edges,
+    embedding_scores,
+    max_passes=1,
+    max_nodes_per_layer=64,
+    candidate_radius=8,
+):
+    """
+    Improve layer orders by moving nodes within their own layer.
+
+    GCN scores control the node visitation order and tie-breaks. A move is accepted
+    only when it reduces the exact adjacent-layer crossing count, so this stage is
+    monotone with respect to the crossing objective.
+    """
+    layers = _normalize_layer_list(layer_nodes)
+    if len(layers) <= 1:
+        return {i: layers[i] for i in range(len(layers))}
+
+    boundary_edges = _build_adjacent_boundary_edges(layers, edges)
+    degree = defaultdict(int)
+    for edges_on_boundary in boundary_edges.values():
+        for u, v in edges_on_boundary:
+            degree[int(u)] += 1
+            degree[int(v)] += 1
+
+    for _ in range(max_passes):
+        any_improved = False
+        layer_priorities = []
+        for layer_idx, nodes in enumerate(layers):
+            if len(nodes) <= 1:
+                continue
+            layer_priorities.append(
+                (_layer_boundary_crossings(layers, boundary_edges, layer_idx), layer_idx)
+            )
+        layer_priorities.sort(reverse=True)
+
+        for _, layer_idx in layer_priorities:
+            layer = list(layers[layer_idx])
+            if len(layer) <= 1:
+                continue
+
+            node_sequence = sorted(
+                layer,
+                key=lambda n: (-degree[int(n)], embedding_scores.get(int(n), 0.5), int(n)),
+            )[:max_nodes_per_layer]
+
+            for node in node_sequence:
+                layer = list(layers[layer_idx])
+                if node not in layer:
+                    continue
+                old_pos = layer.index(node)
+                base_cost = _layer_boundary_crossings(layers, boundary_edges, layer_idx)
+                best_pos = old_pos
+                best_cost = base_cost
+                best_tie = abs(
+                    old_pos / max(1, len(layer) - 1) - embedding_scores.get(int(node), 0.5)
+                )
+
+                target_pos = int(round(embedding_scores.get(int(node), 0.5) * max(1, len(layer) - 1)))
+                candidate_positions = {
+                    0,
+                    len(layer) - 1,
+                    old_pos,
+                    target_pos,
+                }
+                for center in (old_pos, target_pos):
+                    for delta in range(-candidate_radius, candidate_radius + 1):
+                        pos = center + delta
+                        if 0 <= pos < len(layer):
+                            candidate_positions.add(pos)
+                if len(layer) > 12:
+                    for frac in (0.25, 0.5, 0.75):
+                        candidate_positions.add(int(round(frac * (len(layer) - 1))))
+
+                for new_pos in sorted(candidate_positions):
+                    if new_pos == old_pos:
+                        continue
+                    candidate = layer[:old_pos] + layer[old_pos + 1 :]
+                    candidate.insert(new_pos, node)
+                    layers[layer_idx] = candidate
+                    cost = _layer_boundary_crossings(layers, boundary_edges, layer_idx)
+                    tie = abs(
+                        new_pos / max(1, len(candidate) - 1)
+                        - embedding_scores.get(int(node), 0.5)
+                    )
+                    if cost < best_cost or (cost == best_cost and tie < best_tie):
+                        best_pos = new_pos
+                        best_cost = cost
+                        best_tie = tie
+
+                if best_cost < base_cost:
+                    candidate = layer[:old_pos] + layer[old_pos + 1 :]
+                    candidate.insert(best_pos, node)
+                    layers[layer_idx] = candidate
+                    any_improved = True
+                else:
+                    layers[layer_idx] = layer
+
+        if not any_improved:
+            break
+
+    return {i: layers[i] for i in range(len(layers))}
+
+
+def minimize_crossing_gcn_guided(
+    layer_nodes,
+    edges,
+    embeddings,
+    node_to_index,
+    iters=10,
+    refine_passes=1,
+):
+    """
+    GCN-assisted crossing minimization.
+
+    The previous flow used GCN only to create the PCA initialization, which was
+    often washed out by barycenter sweeps. This routine keeps barycenter as the
+    exact graph-drawing workhorse, but also uses the trained embedding as a
+    layer-wise ordering signal for biased barycenter candidates and local sifting.
+    The final layout is selected by exact crossing count.
+    """
+    base_layers = _normalize_layer_list(layer_nodes)
+    if len(base_layers) <= 1:
+        return {i: base_layers[i] for i in range(len(base_layers))}
+
+    candidates = []
+    plain = minimize_crossing_barycenter_fully(base_layers, edges, iters=iters)
+    _, default_scores = _embedding_scores_by_layer(
+        embeddings,
+        base_layers,
+        node_to_index,
+        sign=1.0,
+    )
+    candidates.append((plain, default_scores))
+
+    for sign in (1.0, -1.0):
+        scores_by_layer, scores_by_node = _embedding_scores_by_layer(
+            embeddings,
+            base_layers,
+            node_to_index,
+            sign=sign,
+        )
+        for bias in (0.02, 0.05, 0.10, 0.20):
+            layers = [list(nodes) for nodes in base_layers]
+            for _ in range(iters):
+                for layer_idx in range(1, len(layers)):
+                    layers[layer_idx] = _barycenter_sort_with_embedding(
+                        layers[layer_idx - 1],
+                        layers[layer_idx],
+                        edges,
+                        scores_by_layer.get(layer_idx, {}),
+                        reverse=False,
+                        bias=bias,
+                    )
+                for layer_idx in range(len(layers) - 2, -1, -1):
+                    layers[layer_idx] = _barycenter_sort_with_embedding(
+                        layers[layer_idx + 1],
+                        layers[layer_idx],
+                        edges,
+                        scores_by_layer.get(layer_idx, {}),
+                        reverse=True,
+                        bias=bias,
+                    )
+
+            candidates.append(({i: list(layers[i]) for i in range(len(layers))}, scores_by_node))
+
+    best_layers = None
+    best_scores = default_scores
+    best_crossings = None
+    for candidate, candidate_scores in candidates:
+        crossing_count = total_adjacent_crossings(candidate, edges)
+        if best_crossings is None or crossing_count < best_crossings:
+            best_crossings = crossing_count
+            best_layers = candidate
+            best_scores = candidate_scores
+
+    refined_layers = _gcn_guided_local_sifting(
+        best_layers,
+        edges,
+        best_scores,
+        max_passes=refine_passes,
+    )
+    refined_crossings = total_adjacent_crossings(refined_layers, edges)
+    if refined_crossings < best_crossings:
+        best_layers = refined_layers
+
+    return {i: list(best_layers[i]) for i in range(len(best_layers))}
+
+
+def minimize_crossing_local_sifting(
+    layer_nodes,
+    edges,
+    iters=10,
+    refine_passes=1,
+):
+    """Barycenter plus the same local sifting search, but without GCN scores."""
+    base_layers = _normalize_layer_list(layer_nodes)
+    plain = minimize_crossing_barycenter_fully(base_layers, edges, iters=iters)
+    neutral_scores = {
+        int(node): 0.5
+        for nodes in _normalize_layer_list(plain)
+        for node in nodes
+    }
+    refined = _gcn_guided_local_sifting(
+        plain,
+        edges,
+        neutral_scores,
+        max_passes=refine_passes,
+    )
+    if total_adjacent_crossings(refined, edges) < total_adjacent_crossings(plain, edges):
+        return refined
+    return plain
+
+
+def minimize_crossing_sugiyama_fixed_layer(
+    layer_nodes,
+    edges,
+    iters=10,
+    refine_passes=1,
+):
+    """Classical Sugiyama-style fixed-layer crossing minimization baseline.
+
+    The rebuttal comparison keeps the same parser-provided logic layers for both
+    algorithms, so this baseline represents the complete non-learning Sugiyama
+    ordering step under the same crossing metric as the GCN-guided method.
+    """
+    return minimize_crossing_local_sifting(
+        layer_nodes,
+        edges,
+        iters=iters,
+        refine_passes=refine_passes,
+    )
 
 
 
@@ -615,6 +1094,12 @@ def visualize_layered_graph_sorted(
         compact_cols = max(1, len(xs))
         compact_rows = max(1, len(ys))
 
+    node_to_layer = {
+        int(node): int(layer)
+        for layer, nodes_sorted in sorted_nodes_per_layer.items()
+        for node in nodes_sorted
+    }
+
     if total_nodes <= 300:
         G = nx.DiGraph()
         pos = {}
@@ -655,8 +1140,19 @@ def visualize_layered_graph_sorted(
                     edge_color = '#000000'  # 默认为黑边
                 node_edgecolors.append(edge_color)
 
+        adjacent_edges = []
+        long_span_edges = []
         for u, v in edges:
-            G.add_edge(int(u), int(v))
+            u = int(u)
+            v = int(v)
+            if u not in pos or v not in pos:
+                continue
+            G.add_edge(u, v)
+            layer_span = abs(node_to_layer.get(v, 0) - node_to_layer.get(u, 0))
+            if layer_span > 1:
+                long_span_edges.append((u, v))
+            else:
+                adjacent_edges.append((u, v))
 
         if compact_pos is not None:
             fig_w = min(10, max(3.6, 0.95 * compact_cols + 1.8))
@@ -668,24 +1164,58 @@ def visualize_layered_graph_sorted(
             fig_h = min(10, max(2.8, 0.9 * layer_count + 1.0))
             node_size = 980 if total_nodes <= 20 else 620
             font_size = 12 if total_nodes <= 20 else 8
-        plt.figure(figsize=(fig_w, fig_h))
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-        nx.draw(
+        for layer, nodes_sorted in sorted_nodes_per_layer.items():
+            layer_nodes = [int(node) for node in nodes_sorted if int(node) in pos]
+            if not layer_nodes:
+                continue
+            y = float(np.mean([pos[node][1] for node in layer_nodes]))
+            ax.axhline(y, color="#e7ecf2", linewidth=0.8, zorder=0)
+
+        if adjacent_edges:
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                ax=ax,
+                edgelist=adjacent_edges,
+                arrows=True,
+                arrowstyle="-|>",
+                arrowsize=10,
+                width=0.8,
+                edge_color="#8996a8",
+                alpha=0.68,
+                connectionstyle="arc3,rad=0.0",
+            )
+        if long_span_edges:
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                ax=ax,
+                edgelist=long_span_edges,
+                arrows=True,
+                arrowstyle="-|>",
+                arrowsize=10,
+                width=0.85,
+                edge_color="#b6bfcc",
+                style="dashed",
+                alpha=0.55,
+                connectionstyle="arc3,rad=0.0",
+            )
+        nx.draw_networkx_nodes(
             G, pos,
+            ax=ax,
             nodelist=nodelist,
             node_color=node_colors,
             edgecolors=node_edgecolors,  # ✅ 新增边缘染色
             linewidths=1.0,
-            with_labels=False,
-            arrows=True,
             node_size=node_size,
-            width=0.8,
-            arrowsize=10
         )
-
         nx.draw_networkx_labels(
             G,
             pos,
+            ax=ax,
+            labels={node: str(node) for node in nodelist},
             font_size=font_size,
             font_weight="bold",
         )
@@ -694,6 +1224,14 @@ def visualize_layered_graph_sorted(
             mpatches.Patch(color=type2color[t], label=type2label[t])
             for t in used_types
         ]
+        if adjacent_edges:
+            handles.append(
+                Line2D([0], [0], color="#8996a8", linewidth=1.0, linestyle="-", label="Adj. edge")
+            )
+        if long_span_edges:
+            handles.append(
+                Line2D([0], [0], color="#b6bfcc", linewidth=1.0, linestyle="--", label="Long edge")
+            )
 
     else:
         xs = []
@@ -1123,14 +1661,30 @@ def visualize_scatter_layout(layer_nodes, sorted_nodes_per_layer):
     plt.show()
 
 
-# ================= 常规排序，不针对某一具体时钟方案 ===================
-def normal_generate(data, layer_nodes, edges, node_to_index,  v_file_path):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ================= 2DDWave normal graph flow ===================
+def normal_graph_generate_2ddwave(
+    data,
+    layer_nodes,
+    edges,
+    node_to_index,
+    v_file_path,
+    save_training_curve=True,
+):
+    device = safe_torch_device()
     print(f"-------------------GCN Trainning-------------------")
     print("Using device:", device)
     # 1. 训练GCN
-    model = GCN(in_channels=data.num_features)
-    trained_model = train_gcn(model, data,v_file_path, device=device)
+    model = GCN(
+        in_channels=data.num_features,
+        edge_channels=_data_edge_channels(data),
+    )
+    trained_model = train_gcn(
+        model,
+        data,
+        v_file_path,
+        device=device,
+        save_curve=save_training_curve,
+    )
     embeddings = get_embeddings(trained_model, data, device=device)
     
     # print(embeddings.shape, "embeddings shape")
@@ -1141,9 +1695,18 @@ def normal_generate(data, layer_nodes, edges, node_to_index,  v_file_path):
         sorted_nodes = sort_nodes_by_embedding(embeddings, nodes, node_to_index)
         sorted_nodes_per_layer[layer] = sorted_nodes
 
-    # 3. 多轮Barycenter全局优化
-    # 直接用原layer_nodes结构全局多轮barycenter优化
-    barycenter_opt_layers = minimize_crossing_barycenter_fully([sorted_nodes_per_layer[i] for i in range(len(layer_nodes))], edges, iters=10)
+    # 3. GCN辅助的多轮Barycenter + 局部sifting优化
+    # 旧流程只把GCN用于PCA初排，后续barycenter容易抹掉初排信息。
+    # 新流程把GCN embedding继续作为排序tie-break和局部移动优先级；
+    # 所有节点移动都以精确交叉线数量下降为接受条件。
+    barycenter_opt_layers = minimize_crossing_gcn_guided(
+        [sorted_nodes_per_layer[i] for i in range(len(layer_nodes))],
+        edges,
+        embeddings,
+        node_to_index,
+        iters=10,
+        refine_passes=1,
+    )
 
     print(f"-------------------Crossover optimize-------------------")
     # 4. 输出&统计交叉
@@ -1157,14 +1720,62 @@ def normal_generate(data, layer_nodes, edges, node_to_index,  v_file_path):
         # print(f"Layer {i}-{i+1} crossings: {cross} , Layer {i} nodes: {layer1}, Layer {i+1} nodes: {layer2}")
         total_crossings += cross
     print(f"Total crossings (all adjacent layers): {total_crossings}")
-    return embeddings, barycenter_opt_layers, crossings_per_layer, edges 
+    return embeddings, barycenter_opt_layers, crossings_per_layer, edges
+
+
+# ================= GCN+RL 常规排序 ===================
+def normal_generate(data, layer_nodes, edges, node_to_index, v_file_path, device="auto"):
+    device = safe_torch_device(device)
+    print(f"-------------------GCN Trainning-------------------")
+    print("Using device:", device)
+    model = GCN(
+        in_channels=data.num_features,
+        edge_channels=_data_edge_channels(data),
+    )
+    trained_model = train_gcn(model, data, v_file_path, device=device)
+    embeddings = get_embeddings(trained_model, data, device=device)
+
+    sorted_nodes_per_layer = {}
+    for layer, nodes in enumerate(layer_nodes):
+        sorted_nodes_per_layer[layer] = sort_nodes_by_embedding(
+            embeddings,
+            nodes,
+            node_to_index,
+        )
+
+    # Keep the GCN signal during crossing optimization.  The plain barycenter
+    # sweep used here before could completely overwrite the PCA warm order even
+    # though a monotone exact-crossing GCN-guided implementation already exists.
+    barycenter_opt_layers = minimize_crossing_gcn_guided(
+        [sorted_nodes_per_layer[i] for i in range(len(layer_nodes))],
+        edges,
+        embeddings,
+        node_to_index,
+        iters=10,
+        refine_passes=1,
+    )
+
+    print(f"-------------------Crossover optimize-------------------")
+    crossings_per_layer = {}
+    total_crossings = 0
+    for i in range(len(layer_nodes) - 1):
+        layer1 = barycenter_opt_layers[i]
+        layer2 = barycenter_opt_layers[i + 1]
+        cross = count_crossings_fast(layer1, layer2, edges)
+        crossings_per_layer[i] = cross
+        total_crossings += cross
+    print(f"Total crossings (all adjacent layers): {total_crossings}")
+    return embeddings, barycenter_opt_layers, crossings_per_layer, edges
 
 
 def normal_generate_optimize(data, layer_nodes,node_to_index, edges):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = safe_torch_device()
     print("Using device:", device)
     # 1. 训练GCN
-    model = GCN(in_channels=data.num_features)
+    model = GCN(
+        in_channels=data.num_features,
+        edge_channels=_data_edge_channels(data),
+    )
     trained_model = train_gcn(model, data, device=device)
     embeddings = get_embeddings(trained_model, data, device=device)
 
@@ -1176,9 +1787,14 @@ def normal_generate_optimize(data, layer_nodes,node_to_index, edges):
 
     # 3. 多轮Barycenter全局优化
     # 直接用原layer_nodes结构全局多轮barycenter优化
-    barycenter_opt_layers = minimize_crossing_barycenter_fully(
+    barycenter_opt_layers = minimize_crossing_gcn_guided(
         [sorted_nodes_per_layer[i] for i in range(len(layer_nodes))],
-        edges, iters=10)
+        edges,
+        embeddings,
+        node_to_index,
+        iters=10,
+        refine_passes=1,
+    )
 
     # 3. 优化：遍历删除
     layer_nodes_new = [list(barycenter_opt_layers[i]) for i in range(len(barycenter_opt_layers))]
@@ -1240,7 +1856,7 @@ def normal_generate_optimize(data, layer_nodes,node_to_index, edges):
 
 ##### 2DDwave #####
 def TDDwave_generate(data, layer_nodes, edges, v_file_path):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = safe_torch_device()
     print("Using device:", device)
     # 1. 训练GCN
     # model = GCN(in_channels=data.num_features)
@@ -1265,11 +1881,14 @@ def TDDwave_generate(data, layer_nodes, edges, v_file_path):
     return sorted_nodes_per_layer, x_pos, edges, crossings_per_layer, embeddings
 
 def TDDwave_generate_optimize(data, layer_nodes, edges):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = safe_torch_device()
     # device = torch.device("cpu")
     print("Using device:", device)
     # 1. 训练GCN
-    model = GCN(in_channels=data.num_features)
+    model = GCN(
+        in_channels=data.num_features,
+        edge_channels=_data_edge_channels(data),
+    )
     trained_model = train_gcn(model, data, device=device)
     embeddings = get_embeddings(trained_model, data, device=device)
 
@@ -1341,10 +1960,13 @@ def TDDwave_generate_optimize(data, layer_nodes, edges):
 ##### 2DDwave转折 #####
 def twoPart_TDDwave_generate(data, layer_nodes, edges):
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = safe_torch_device()
     print("Using device:", device)
     # 1. 训练GCN
-    model = GCN(in_channels=data.num_features)
+    model = GCN(
+        in_channels=data.num_features,
+        edge_channels=_data_edge_channels(data),
+    )
     trained_model = train_gcn(model, data, device=device)
     embeddings = get_embeddings(trained_model, data, device=device)
 

@@ -65,6 +65,7 @@ namespace fcngraph{
             bool initialized = false;
         };
         std::unordered_map<position, DeviateLookupEntry, MappingPositionHash> deviate_lookup;
+        std::unordered_set<position, MappingPositionHash> multi_output_not_input_boundaries;
         static std::uint16_t deviateTypeMask(const std::string& type);
         void updateDeviateLookup(const std::pair<position, position>& route_key,
                                  const std::vector<std::pair<position, std::string>>& route_entries);

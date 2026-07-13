@@ -33,6 +33,7 @@
 #include <type_traits>
 #include <random>
 #include <iostream>
+#include <stdexcept>
 
 #include <boost/algorithm/apply_permutation.hpp>
 #include <boost/graph/adjacency_list.hpp>
@@ -418,10 +419,8 @@ namespace simon
             auto &self = static_cast<const Host&>(*this);
             for (auto &layer1 : design) {
                 for (auto &cell1 : layer1) {
-
                     for (auto &layer2 : design) {
                         for (auto &cell2 : layer2) {
-
                             if (&cell1 != &cell2 &&
                                 calculate_inter_cell_distance(cell1, cell2, self.option) <= self.option.radius_effect) {
                                 neighbours(cell1).push_back(&cell2);
@@ -500,9 +499,9 @@ namespace simon
         QCABistableOption const &option;
 
         struct ExtrinsicProperty {
-            double lambda_x;
-            double lambda_y;
-            double lambda_z;
+            double lambda_x = 0.0;
+            double lambda_y = 0.0;
+            double lambda_z = 0.0;
             std::vector<double> kink_energies;
             std::vector<QCACell*>  neighbours;
         };
@@ -512,6 +511,7 @@ namespace simon
         void before_iterations(QCADesign &design, const Result &result) {
             (void)design;
             (void)result;
+            seed_simulation_random_generator(option.random_seed);
         }
 
         void compute_current_iteration(std::size_t j, QCADesign &design, Result &result) const {
@@ -549,7 +549,8 @@ namespace simon
 
                             polarization(cell) = new_pola;
 
-                            stable = (std::fabs(new_pola - old_pola) <= self.option.convergence_tolerance);
+                            stable = stable &&
+                                     (std::fabs(new_pola - old_pola) <= self.option.convergence_tolerance);
                         }
                     });
                 }
@@ -566,9 +567,9 @@ namespace simon
         QCACoherenceOption const &option;
 
         struct ExtrinsicProperty {
-            double lambda_x;
-            double lambda_y;
-            double lambda_z;
+            double lambda_x = 0.0;
+            double lambda_y = 0.0;
+            double lambda_z = 0.0;
             std::vector<double> kink_energies;
             std::vector<QCACell*>  neighbours;
         };
@@ -651,7 +652,9 @@ namespace simon
             double old_lambda_y = 0;
             double old_lambda_z = 0;
 
-            while(!stable) {
+            std::size_t iteration = 0;
+            while(!stable && iteration < option.max_steady_state_iterations) {
+                ++iteration;
                 stable = true;
                 for(auto &layer : design) {
                     for(auto &cell : layer) {
@@ -680,13 +683,16 @@ namespace simon
                         lambda_z(cell) = lambda_z_;
                         polarization(cell) = lambda_z_;
 
-                        stable = !(
-                                std::fabs(lambda_x_ - old_lambda_x) > 1e-7 ||
-                                std::fabs(lambda_y_ - old_lambda_y) > 1e-7 ||
-                                std::fabs(lambda_z_ - old_lambda_z) > 1e-7
-                        );
+                        const bool cell_stable =
+                                std::fabs(lambda_x_ - old_lambda_x) <= option.steady_state_tolerance &&
+                                std::fabs(lambda_y_ - old_lambda_y) <= option.steady_state_tolerance &&
+                                std::fabs(lambda_z_ - old_lambda_z) <= option.steady_state_tolerance;
+                        stable = stable && cell_stable;
                     }
                 }
+            }
+            if (!stable) {
+                throw std::runtime_error("coherence steady-state initialization did not converge");
             }
         }
 

@@ -62,3 +62,6 @@ target_compile_definitions(ifcn_mapping_metrics PRIVATE IFCN_PROJECT_SOURCE_DIR=
 add_executable(ifcn_energy_analysis app/ifcn_energy_analysis.cpp)
 target_link_libraries(ifcn_energy_analysis PRIVATE autopr simon)
 target_compile_definitions(ifcn_energy_analysis PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+add_executable(ifcn_physical_benchmark app/ifcn_physical_benchmark.cpp)
+target_link_libraries(ifcn_physical_benchmark PRIVATE simon)

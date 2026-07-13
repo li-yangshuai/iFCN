@@ -4,10 +4,13 @@ project(FCNX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(IFCN_BUILD_GCN_RL_BINDINGS "Build the bundled GCN/RL Python extension module" OFF)
+option(IFCN_BUILD_TESTS "Build iFCN regression tests" ON)
 
 # Set paths
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR})
-set(CMAKE_BUILD_TYPE "Debug")
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+endif()
 
 # Enable testing
 enable_testing()
@@ -17,7 +20,7 @@ if (WIN32)
     link_directories(C:/msys64/mingw64/bin C:/msys64/mingw64/lib)
     set(DCMAKE_SH "CMAKE_SH-NOTFOUND")
 elseif (UNIX)
-    add_compile_options(-W -Wall -Wextra -O2)
+    add_compile_options(-W -Wall -Wextra)
     add_compile_options(-w)  # Disable all warnings for GCC/Clang
 endif()
 
@@ -37,3 +40,6 @@ if(IFCN_BUILD_GCN_RL_BINDINGS)
     add_subdirectory(include/gcn_rl_layout)
 endif()
 add_subdirectory(src)
+if(IFCN_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()

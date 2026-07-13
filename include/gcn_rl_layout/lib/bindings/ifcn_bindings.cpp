@@ -10,6 +10,7 @@
 #include "CZMFunction.hpp"
 #include "MapChessboard.hpp"
 #include "MapPhaseAStar.h"
+#include "RightDownAStar.h"
 
 
 // ----------- Trampoline Class for ClockStrategy 虚函数支持 -----------
@@ -189,5 +190,11 @@ PYBIND11_MODULE(iFCN_Lab, m) {
              py::arg("end_dx"), py::arg("end_dy"),
              py::arg("use_start") = true, py::arg("use_end") = true)
         .def("reset", &iFCN_Lab::MapPhaseAStar::reset)
+        ;
+
+    py::class_<iFCN_Lab::RightDownAStar>(m, "RightDownAStar")
+        .def(py::init<iFCN_Lab::MapChessboard&>())
+        .def("route", &iFCN_Lab::RightDownAStar::route)
+        .def("reset", &iFCN_Lab::RightDownAStar::reset)
         ;
 }

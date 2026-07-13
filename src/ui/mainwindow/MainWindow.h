@@ -44,6 +44,10 @@ class CircuitSchematicView;
 class LayeredStructure3DView;
 class QDockWidget;
 class QDialog;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
+class QEvent;
 class QPlainTextEdit;
 
 class MainWindow : public QMainWindow
@@ -55,7 +59,7 @@ public:
         ~MainWindow();
 
         void loadFile(const QString &fileName);    //加载.qca文件
-        void mapIfcnFile(const QString &fileName); //加载.ifcn并映射
+        void mapIfcnFile(const QString &fileName, bool showStatusMessage = true); //加载.ifcn并映射
         void centerViewOnItems(bool fitToView = true);
         void beginSceneBatchUpdate();
         void endSceneBatchUpdate(bool recenter = true);
@@ -74,6 +78,10 @@ public:
                                                QMap<QPair<int,int>, QVector<QPoint>> mappedRouteCells,
                                                QMap<QString, QString> metadata = {});
         void updateVerilogSourceFile(const QString &fileName);
+        void setVerilogSourceContent(const QString &sourceText, const QString &filePath = QString());
+        QString verilogSourceContent() const;
+        QString verilogSourcePath() const;
+        void disableStartupRestore();
 
 public:
         void printToStatusBar(const QString &message);
@@ -99,6 +107,9 @@ private:
                               const QSize &size);
         void restoreDockContent(QDockWidget *dock, QDialog **floatWindowPtr);
         void closeDockContent(QDockWidget *dock, QDialog **floatWindowPtr);
+        bool currentCanvasHasItemsOrData() const;
+        void clearCanvasAndMappingData();
+        QString writeVerilogSourceRunFile(QString *errorMessage) const;
         QWidget* createCellWidget(const QString &text, CellType type);
         QWidget* createClockSchemeWidget(const QString &text, const QString &image);
         void setEditMode(EditMode mode);
@@ -127,14 +138,9 @@ public:
         QToolButton *insertModeButton;
         QToolButton *dragModeButton;
 
-        //verilog parse and three type P&R algorithm
-        QPushButton *verParseButton;
-        QPushButton *graphRenderButton;
-        QPushButton *gcnRlLayoutButton;
-        QPushButton *forceOrientedAlgorithmButton; 
-
-        //gate level mapping
-        QPushButton *gateLevelMappingButton;
+        // Placement-and-routing workflow selector.
+        QToolButton *placeRouteButton = nullptr;
+        QMenu *placeRouteMenu = nullptr;
         QToolButton *phaseCodecEncodeButton;
         QToolButton *phaseCodecCancelButton;
         QToolButton *phaseCodecShowAllButton;
@@ -156,6 +162,7 @@ public:
         CircuitSchematicView *circuitSchematicView = nullptr;
         LayeredStructure3DView *structure3DView = nullptr;
         QPlainTextEdit *verilogSourceEditor = nullptr;
+        QString verilogSourceFilePath;
 
         //view & scene
         QCADView *view;
@@ -185,15 +192,15 @@ private:
         QMenu *viewMenu;
         QMenu *toolsMenu;
         QMenu *simulationMenu;
-        QMenu *helpMenu;
 
         /********各项工具栏********/
-        QToolBar *fileTool;
-        QToolBar *editTool;
-        QToolBar *layersTool;
-        QToolBar *clockTool;
-        QToolBar *viewTool;
-        QToolBar *verilogTool;
+        QToolBar *fileTool = nullptr;
+        QToolBar *editTool = nullptr;
+        QToolBar *layersTool = nullptr;
+        QToolBar *clockTool = nullptr;
+        QToolBar *viewTool = nullptr;
+        QToolBar *workspaceTool = nullptr;
+        QToolBar *verilogTool = nullptr;
 
         /********各项菜单项*********************************/
         /********文件菜单项********/
@@ -209,8 +216,6 @@ private:
         QAction *deleteAction;
         QAction *undoAction;
         QAction *redoAction;
-        QAction *zoomInAction;
-        QAction *zoomOutAction;
 
         /********视图菜单项********/
         QAction *toggleClockGridAction;
@@ -222,8 +227,10 @@ private:
         /********仿真菜单项********/
         SimulationManager *simulationManager;
         QAction *startBistableSimAction;
+        QAction *startAcceleratedBistableSimAction;
         QAction *starBistableSimWithSelectiveAction;
         QAction *startCoherenceSimAction;
+        QAction *startAcceleratedCoherenceSimAction;
         QAction *startCoherenceSimWithSelectiveAction;
         QAction *energyAnalysisAction;
         QAction *SimWithSelective;
@@ -242,11 +249,13 @@ private:
         GateLevelMapping *gateLevelMapping;
 
 private:
+        bool prepareSimulationInput();
         void initialDesign();           //初始化layer[0]
         bool shouldMapIfcnFile(const QString &fileName) const;
         bool saveFile(const QString &fileName, bool updateCurrentFile = true, bool showStatus = true);    //保存.qca文件
         void setCurrentFile(const QString &fileName);   //保存文件名并setDirty(false)
         QString defaultQcaSavePath() const;
+        void openLayoutFilePath(const QString &fileName);
         bool maybeSave();   //判断文档是否保存
 
         /********初始化数据********/
@@ -255,6 +264,7 @@ private:
         TabbedMainWindow *tabHost = nullptr;
         bool isBatchUpdating = false;
         bool batchDirtyPending = false;
+        bool startupRestoreEnabled = true;
         QVector<QSet<quint64>> batchOccupiedByLayer;
 
         struct SnapshotCell {
@@ -324,6 +334,10 @@ private:
 
 protected:
         void closeEvent(QCloseEvent *event) override;   //重载关闭事件
+        bool eventFilter(QObject *watched, QEvent *event) override;
+        void dragEnterEvent(QDragEnterEvent *event) override;
+        void dragMoveEvent(QDragMoveEvent *event) override;
+        void dropEvent(QDropEvent *event) override;
 public slots:
         void setDirty(bool on=true);
         void slotAddLayer();
@@ -372,6 +386,7 @@ private slots:
         void slotCircuitNodeActivated(int nodeIndex);
         void slotCircuitEdgeActivated(int sourceNodeIndex, int sinkNodeIndex);
         void slotClearCircuitSelection();
+        void slotGenerateFromVerilogSource();
 
         //scene add cell item
         void slotCellItemInserted(QCADCellItem *cellItem);

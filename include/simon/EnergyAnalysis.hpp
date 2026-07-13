@@ -8,6 +8,7 @@
 #include <map>
 #include <tuple>
 #include <utility>
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <cassert>
@@ -168,28 +169,29 @@ namespace simon
             EnergyAnalysisOption const &eoption;
 
             struct ExtrinsicProperty : public CoherenceEngine<Host>::ExtrinsicProperty {
-                double diss_bath;
-                double diss_clk;
-                double diss_io;
-                double diss_in;
-                double diss_out;
-                double Old_Gamma;
-                double Old_PEK_io;
-                double Old_PEK_in;
-                double Old_PEK_out;
+                double diss_bath = 0.0;
+                double diss_clk = 0.0;
+                double diss_io = 0.0;
+                double diss_in = 0.0;
+                double diss_out = 0.0;
+                double Old_Gamma = 0.0;
+                double Old_PEK_io = 0.0;
+                double Old_PEK_in = 0.0;
+                double Old_PEK_out = 0.0;
                 std::vector<double> int_diss_bath;
                 std::vector<double> int_diss_clk;
                 std::vector<double> int_diss_io;
                 std::vector<double> int_diss_in;
                 std::vector<double> int_diss_out;
-                int diss_idx;
-                double old_next_clock_zone;
+                int diss_idx = -1;
+                double old_next_clock_zone = 0.0;
             };
 
             explicit EnergyAnalysisPolicy(const EnergyAnalysisOption &option) : CoherenceEngine<Host>(option), eoption{option}
             {}
 
             void initialize_design(QCADesign &design) const {
+                remove_duplicate_cells(design);
                 QCAEnginePolicy<Host>::initialize_design(design);
 
                 int clock_cycles = static_cast<int>(std::ceil(eoption.duration / eoption.clock_period));
@@ -224,7 +226,6 @@ namespace simon
                 double lambda_x_new = 0;
                 double lambda_y_new = 0;
                 double lambda_z_new = 0;
-                double clock_value  = 0;
                 //int num_neighbours = 0;
                 double t = eoption.time_step * static_cast<double>(j);
                 int clock_cycles = static_cast<int>(std::ceil(eoption.duration/eoption.clock_period));
@@ -247,6 +248,16 @@ namespace simon
                 double Pol_out     = 0;
 
                 auto &self = static_cast<const Host&>(*this);
+                std::array<double, 4> clock_values{};
+                for (std::size_t phase = 0; phase < clock_values.size(); ++phase) {
+                    clock_values[phase] = self.clock_generator(phase, j);
+                }
+                auto clock_value_for_phase = [&](int phase) -> double {
+                    if (phase >= 0 && phase < static_cast<int>(clock_values.size())) {
+                        return clock_values[static_cast<std::size_t>(phase)];
+                    }
+                    return self.clock_generator(static_cast<std::size_t>(phase), j);
+                };
 
                 for(auto &layer : design) {
                     for(auto &cell : layer) {
@@ -254,23 +265,13 @@ namespace simon
                         if(function(cell) == FCNCellFunction::INPUT || function(cell) == FCNCellFunction::FIXED)
                             continue;
 
-                        clock_value = self.clock_generator(simon::timezone(cell), j);
+                        const int cell_phase = simon::timezone(cell);
+                        const double clock_value = clock_value_for_phase(cell_phase);
                         PEK = 0;
 
                         //calculate the sum of neighboring polarizations
                         auto &vec_n = neighbours(cell);
                         auto &vec_k = kink_energies(cell);
-
-                        std::size_t neighbour_size = vec_n.size();
-                        for(std::size_t i=0; i<neighbour_size; ++i) {
-                            PEK += kink_energies(cell)[i] * polarization( *neighbours(cell)[i] );
-                        }
-
-                        //FST
-                        old_clock_value  = Old_Gamma(cell);
-                        Old_Gamma(cell)  = clock_value;
-                        old_PEK_io       = Old_PEK_io(cell);
-                        Old_PEK_io(cell) = PEK;
 
                         //FST: determine PEK of left cells = in and out
                         cell_x  = x(cell);
@@ -279,19 +280,31 @@ namespace simon
                         PEK_out = 0;
                         Pol_in  = 0;
                         Pol_out = 0;
+                        std::size_t neighbour_size = vec_n.size();
                         for(std::size_t i=0; i<neighbour_size; ++i) {
-                            cell_x_nb = x(*vec_n.at(i));
+                            QCACell *neighbour = vec_n[i];
+                            const double neighbour_polarization = polarization(*neighbour);
+                            const double kink_energy = vec_k[i];
+                            const double kinked_polarization = kink_energy * neighbour_polarization;
+                            PEK += kinked_polarization;
 
+                            cell_x_nb = x(*neighbour);
                             if (cell_x_nb < cell_x) {
-                                PEK_in += vec_k.at(i) * polarization(*vec_n.at(i));
-                                Pol_in += polarization(*vec_n.at(i));
+                                PEK_in += kinked_polarization;
+                                Pol_in += neighbour_polarization;
                             }
 
                             if (cell_x_nb > cell_x) {
-                                PEK_out += vec_k.at(i) * polarization(*vec_n.at(i));
-                                Pol_out += polarization(*vec_n.at(i));
+                                PEK_out += kinked_polarization;
+                                Pol_out += neighbour_polarization;
                             }
                         }
+
+                        //FST
+                        old_clock_value  = Old_Gamma(cell);
+                        Old_Gamma(cell)  = clock_value;
+                        old_PEK_io       = Old_PEK_io(cell);
+                        Old_PEK_io(cell) = PEK;
 
                         old_PEK_in        = Old_PEK_in(cell);
                         old_PEK_out       = Old_PEK_out(cell);
@@ -319,7 +332,7 @@ namespace simon
                         diss_out(cell)  = calculate_diss_io(lambda_z_, PEK_out, old_PEK_out);
 
                         //estimate clock of neighbour clock zone
-                        double next_clk_zone = self.clock_generator((simon::timezone(cell) + 1) % 4, j);
+                        double next_clk_zone = clock_value_for_phase((cell_phase + 1) % 4);
                         k_old_next_clock_zone = old_next_clock_zone(cell);
                         old_next_clock_zone(cell) = next_clk_zone;
 
@@ -481,6 +494,58 @@ namespace simon
             using CoherenceEngine<Host>::lambda_x;
             using CoherenceEngine<Host>::lambda_y;
             using CoherenceEngine<Host>::lambda_z;
+
+            static long long cell_coordinate_key(double value) {
+                return static_cast<long long>(std::llround(value * 1000.0));
+            }
+
+            static int function_priority(FCNCellFunction value) {
+                switch (value) {
+                    case FCNCellFunction::FIXED:
+                        return 3;
+                    case FCNCellFunction::INPUT:
+                    case FCNCellFunction::OUTPUT:
+                        return 2;
+                    case FCNCellFunction::NORMAL:
+                    default:
+                        return 1;
+                }
+            }
+
+            static void merge_duplicate_cell(QCACell &target, const QCACell &source) {
+                if (function_priority(source.function) > function_priority(target.function)) {
+                    target.function = source.function;
+                    target.name = source.name;
+                    target.polarization = source.polarization;
+                    target.timezone = source.timezone;
+                } else if (target.name.empty() && !source.name.empty()) {
+                    target.name = source.name;
+                }
+
+                if (target.cellMode == QCACellMode::NORMAL && source.cellMode != QCACellMode::NORMAL) {
+                    target.cellMode = source.cellMode;
+                }
+            }
+
+            static void remove_duplicate_cells(QCADesign &design) {
+                for (auto &layer : design) {
+                    std::map<std::pair<long long, long long>, std::size_t> indexByPosition;
+                    std::vector<QCACell> uniqueCells;
+                    uniqueCells.reserve(layer.cells.size());
+
+                    for (const auto &cell : layer.cells) {
+                        const auto key = std::make_pair(cell_coordinate_key(cell.x), cell_coordinate_key(cell.y));
+                        const auto [it, inserted] = indexByPosition.emplace(key, uniqueCells.size());
+                        if (inserted) {
+                            uniqueCells.push_back(cell);
+                        } else {
+                            merge_duplicate_cell(uniqueCells[it->second], cell);
+                        }
+                    }
+
+                    layer.cells = std::move(uniqueCells);
+                }
+            }
 
             static inline double &diss_bath(QCACell &cell) {
                 return std::any_cast<typename Host::ExtrinsicProperty>(&extrinsics(cell))->diss_bath;

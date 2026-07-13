@@ -93,6 +93,8 @@ LayerComboBox::LayerComboBox(QWidget *parent) : QComboBox(parent)
 {
     pLineEdit = new QLineEdit(this); 
     pLineEdit->setReadOnly(true);  
+    pLineEdit->setMinimumHeight(28);
+    pLineEdit->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     this->setLineEdit(pLineEdit);
     this->lineEdit()->disconnect(); 
 
@@ -106,7 +108,10 @@ LayerComboBox::LayerComboBox(QWidget *parent) : QComboBox(parent)
     pListView->viewport()->installEventFilter(this);
     pListView->installEventFilter(keyPressEater);
     this->setView(pListView);
-    pLineEdit->setStyleSheet("QLineEdit { padding: 4px 8px; }");
+    setMinimumSize(178, 30);
+    setMinimumContentsLength(15);
+    setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    pLineEdit->setStyleSheet("QLineEdit { padding: 3px 8px; background: #ffffff; }");
 
     parentWindow = parent;
 

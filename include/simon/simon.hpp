@@ -27,6 +27,9 @@
 #include "IO.hpp"
 #include "Option.hpp"
 #include "Simulation.hpp"
+#include "AcceleratedBistable.hpp"
+#include "AcceleratedCoherence.hpp"
+#include "SimulationMetrics.hpp"
 #include "EnergyAnalysis.hpp"
 
 #endif //HFUT_SIMON_HPP

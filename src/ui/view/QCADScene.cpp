@@ -1,9 +1,14 @@
 #include "QCADScene.h"
 #include <QAction>
+#include <QByteArray>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QGraphicsSceneMouseEvent>
+#include <QGraphicsSimpleTextItem>
 #include <QMenu>
 #include<QStandardItem>
 #include <QStyleOptionGraphicsItem>
+#include <QtGlobal>
 #include <algorithm>
 #include <cmath>
 #include "ui/mainwindow/MainWindow.h"
@@ -12,6 +17,30 @@ namespace {
 constexpr int kFastRenderTileSize = 800;
 constexpr int kCellHalfSize = 9;
 constexpr int kClockHalfSize = CLOCK_SCHEME_SIZE_5 / 2;
+constexpr qreal kCellLabelOffsetX = 12.0;
+constexpr qreal kCellLabelOffsetY = -5.0;
+constexpr int kCellLabelPointSize = 7;
+constexpr qreal kCellLabelMinLod = 0.45;
+constexpr qreal kFastRenderAggregateLod = 0.12;
+constexpr qulonglong kDefaultInteractiveFastLayerCellLimit = 20000;
+constexpr qulonglong kDefaultFastClockOverlayItemLimit = 12000;
+
+qulonglong environmentLimit(const char *name, qulonglong defaultValue)
+{
+    const QByteArray rawValue = qgetenv(name);
+    if (rawValue.isEmpty()) {
+        return defaultValue;
+    }
+
+    bool ok = false;
+    const qulonglong value = QString::fromLocal8Bit(rawValue).trimmed().toULongLong(&ok);
+    return ok ? value : defaultValue;
+}
+
+bool exceedsLimit(int value, qulonglong limit)
+{
+    return limit > 0 && static_cast<qulonglong>(qMax(0, value)) > limit;
+}
 
 QRectF cellRectForPosition(int x, int y)
 {
@@ -21,6 +50,67 @@ QRectF cellRectForPosition(int x, int y)
 QRectF clockRectForPosition(int x, int y)
 {
     return QRectF(x - kClockHalfSize, y - kClockHalfSize, CLOCK_SCHEME_SIZE_5, CLOCK_SCHEME_SIZE_5);
+}
+
+QRectF tileRectForIndex(int tileX, int tileY)
+{
+    return QRectF(tileX * kFastRenderTileSize,
+                  tileY * kFastRenderTileSize,
+                  kFastRenderTileSize,
+                  kFastRenderTileSize);
+}
+
+QRectF fastCellLabelRect(int x, int y, const QString &name)
+{
+    if (name.isEmpty()) {
+        return QRectF();
+    }
+
+    QFont font;
+    font.setPointSize(kCellLabelPointSize);
+    const QFontMetricsF metrics(font);
+    const QRectF tightText = metrics.tightBoundingRect(name);
+    const qreal leftBearing = qMin<qreal>(0.0, tightText.left());
+    const qreal tightWidth = qMax<qreal>(1.0, tightText.width());
+    return QRectF(x + kCellLabelOffsetX,
+                  y + kCellLabelOffsetY,
+                  qMax<qreal>(1.0, leftBearing + tightWidth),
+                  metrics.height());
+}
+
+QRectF tightSimpleTextSceneRect(const QGraphicsSimpleTextItem *textItem)
+{
+    if (textItem == nullptr || textItem->text().isEmpty()) {
+        return QRectF();
+    }
+
+    QRectF localBounds = textItem->boundingRect();
+    const QFontMetricsF metrics(textItem->font());
+    const qreal textWidth = metrics.horizontalAdvance(textItem->text());
+    if (textWidth > 0.0) {
+        localBounds.setRight(localBounds.left() + textWidth);
+    }
+    return textItem->mapRectToScene(localBounds).normalized();
+}
+
+void includeRect(QRectF &bounds, const QRectF &rect)
+{
+    if (!rect.isValid() || rect.isEmpty()) {
+        return;
+    }
+    bounds = bounds.isValid() ? bounds.united(rect) : rect;
+}
+
+QColor densityColorForLayer(int layer, int itemCount)
+{
+    static const QColor layerColors[] = {
+        QColor(64, 122, 245),
+        QColor(238, 150, 58),
+        QColor(122, 92, 214)
+    };
+    QColor color = layerColors[qBound(0, layer, 2)];
+    color.setAlpha(qBound(38, 44 + itemCount / 5, 170));
+    return color;
 }
 
 quint64 packSceneKey(int x, int y)
@@ -478,6 +568,61 @@ QRectF QCADScene::fastRenderBounds() const
     return fastBounds;
 }
 
+QRectF QCADScene::exportContentBounds() const
+{
+    if (!hasFastRender()) {
+        return itemsBoundingRect();
+    }
+
+    QRectF bounds;
+
+    if (clockGridVisible) {
+        for (const FastClockRecord &clock : fastClocks) {
+            includeRect(bounds, clockRectForPosition(clock.x, clock.y));
+        }
+    }
+
+    for (int layer = 0; layer < fastCellsPerLayer.size(); ++layer) {
+        if (!isFastLayerVisible(layer)) {
+            continue;
+        }
+        const bool layerDrawnByInteractiveItems =
+            layer == interactiveFastLayerIndex && !interactiveFastLayerItems.isEmpty();
+        for (const FastCellRecord &cell : fastCellsPerLayer[layer]) {
+            QRectF cellBounds = cellRectForPosition(cell.x, cell.y);
+            if (!layerDrawnByInteractiveItems && !cell.name.isEmpty()) {
+                cellBounds = cellBounds.united(fastCellLabelRect(cell.x, cell.y, cell.name));
+            }
+            includeRect(bounds, cellBounds);
+        }
+    }
+
+    for (QGraphicsItem *item : interactiveFastLayerItems) {
+        if (item == nullptr || !item->isVisible()) {
+            continue;
+        }
+        for (QGraphicsItem *child : item->childItems()) {
+            auto *label = qgraphicsitem_cast<QGraphicsSimpleTextItem *>(child);
+            if (label != nullptr && label->isVisible()) {
+                includeRect(bounds, tightSimpleTextSceneRect(label));
+            }
+        }
+    }
+
+    const auto sceneItems = items();
+    for (QGraphicsItem *item : sceneItems) {
+        if (item == nullptr || !item->isVisible()) {
+            continue;
+        }
+        if (item->data(FastClockRole).toBool() || item->data(FastLayerRole).isValid()) {
+            continue;
+        }
+        includeRect(bounds, item->sceneBoundingRect());
+    }
+
+    return bounds.isValid() ? bounds : itemsBoundingRect();
+}
+
 const QVector<QVector<QCADScene::FastCellRecord>>& QCADScene::fastCellsByLayer() const
 {
     return fastCellsPerLayer;
@@ -636,6 +781,47 @@ bool QCADScene::isClockGridVisible() const
     return clockGridVisible;
 }
 
+void QCADScene::renderForExport(QPainter *painter,
+                                const QRectF &target,
+                                const QRectF &source,
+                                Qt::AspectRatioMode aspectRatioMode)
+{
+    if (painter == nullptr) {
+        return;
+    }
+
+    const bool previousExportRenderMode = exportRenderMode;
+    const bool previousHighQualityMode = highQualityMode;
+
+    QVector<QPair<QGraphicsItem *, QGraphicsItem::CacheMode>> cachedModes;
+    const auto sceneItems = items();
+    cachedModes.reserve(sceneItems.size());
+    for (QGraphicsItem *item : sceneItems) {
+        if (item == nullptr) {
+            continue;
+        }
+        const auto cacheMode = item->cacheMode();
+        if (cacheMode != QGraphicsItem::NoCache) {
+            cachedModes.push_back(qMakePair(item, cacheMode));
+            item->setCacheMode(QGraphicsItem::NoCache);
+        }
+    }
+
+    exportRenderMode = true;
+    highQualityMode = true;
+    QGraphicsScene::render(painter, target, source, aspectRatioMode);
+    highQualityMode = previousHighQualityMode;
+    exportRenderMode = previousExportRenderMode;
+
+    for (const auto &entry : cachedModes) {
+        if (entry.first != nullptr) {
+            entry.first->setCacheMode(entry.second);
+        }
+    }
+
+    update();
+}
+
 QVector<QCADScene::ClockRegionRecord> QCADScene::clockRegions() const
 {
     QVector<ClockRegionRecord> regions;
@@ -697,6 +883,9 @@ void QCADScene::restoreClockRegions(const QVector<ClockRegionRecord> &regions)
 void QCADScene::drawBackground(QPainter *painter, const QRectF &rect)
 {
     painter->fillRect(rect, QColor("#FFFFFF"));
+    if (hasFastRender() && clockGridVisible && fastClockOverlayItems.isEmpty()) {
+        drawFastClockRecords(painter, rect);
+    }
 }
 
 void QCADScene::drawForeground(QPainter *painter, const QRectF &rect)
@@ -870,6 +1059,33 @@ QColor QCADScene::colorForPhase(int phase) const
 
 void QCADScene::drawFastClockRecords(QPainter *painter, const QRectF &rect)
 {
+    const qreal lod = exportRenderMode
+        ? qMax<qreal>(1.0, QStyleOptionGraphicsItem::levelOfDetailFromTransform(painter->worldTransform()))
+        : QStyleOptionGraphicsItem::levelOfDetailFromTransform(painter->worldTransform());
+    if (lod < kFastRenderAggregateLod) {
+        painter->save();
+        painter->setPen(Qt::NoPen);
+        const int minTileX = static_cast<int>(std::floor(rect.left() / kFastRenderTileSize));
+        const int maxTileX = static_cast<int>(std::floor(rect.right() / kFastRenderTileSize));
+        const int minTileY = static_cast<int>(std::floor(rect.top() / kFastRenderTileSize));
+        const int maxTileY = static_cast<int>(std::floor(rect.bottom() / kFastRenderTileSize));
+
+        for (int tileX = minTileX; tileX <= maxTileX; ++tileX) {
+            for (int tileY = minTileY; tileY <= maxTileY; ++tileY) {
+                const auto it = fastClockTiles.constFind(packTileKey(tileX, tileY));
+                if (it == fastClockTiles.constEnd() || it.value().isEmpty()) {
+                    continue;
+                }
+                QColor color(128, 128, 128);
+                color.setAlpha(qBound(18, 24 + it.value().size() / 6, 90));
+                painter->setBrush(color);
+                painter->drawRect(tileRectForIndex(tileX, tileY).intersected(rect));
+            }
+        }
+        painter->restore();
+        return;
+    }
+
     const QPen hdClockPen(QColor(120, 120, 120, highQualityMode ? 96 : 48),
                           highQualityMode ? 0.8 : 0.4);
     painter->setPen(highQualityMode ? hdClockPen : Qt::NoPen);
@@ -909,11 +1125,36 @@ void QCADScene::drawFastClockRecords(QPainter *painter, const QRectF &rect)
 
 void QCADScene::drawFastCellRecords(QPainter *painter, const QRectF &rect)
 {
-    const qreal lod = QStyleOptionGraphicsItem::levelOfDetailFromTransform(painter->worldTransform());
+    const qreal lod = exportRenderMode
+        ? qMax<qreal>(1.0, QStyleOptionGraphicsItem::levelOfDetailFromTransform(painter->worldTransform()))
+        : QStyleOptionGraphicsItem::levelOfDetailFromTransform(painter->worldTransform());
     const int minTileX = static_cast<int>(std::floor(rect.left() / kFastRenderTileSize));
     const int maxTileX = static_cast<int>(std::floor(rect.right() / kFastRenderTileSize));
     const int minTileY = static_cast<int>(std::floor(rect.top() / kFastRenderTileSize));
     const int maxTileY = static_cast<int>(std::floor(rect.bottom() / kFastRenderTileSize));
+
+    if (lod < kFastRenderAggregateLod) {
+        painter->save();
+        painter->setPen(Qt::NoPen);
+        for (int layer = 0; layer < fastCellsPerLayer.size(); ++layer) {
+            if (!isFastLayerVisible(layer)) {
+                continue;
+            }
+            const auto &tileMap = fastCellTilesPerLayer[layer];
+            for (int tileX = minTileX; tileX <= maxTileX; ++tileX) {
+                for (int tileY = minTileY; tileY <= maxTileY; ++tileY) {
+                    const auto it = tileMap.constFind(packTileKey(tileX, tileY));
+                    if (it == tileMap.constEnd() || it.value().isEmpty()) {
+                        continue;
+                    }
+                    painter->setBrush(densityColorForLayer(layer, it.value().size()));
+                    painter->drawRect(tileRectForIndex(tileX, tileY).intersected(rect));
+                }
+            }
+        }
+        painter->restore();
+        return;
+    }
 
     QPen pen(Qt::black);
     pen.setWidthF(highQualityMode ? 1.0 : 0.8);
@@ -995,18 +1236,42 @@ void QCADScene::drawFastCell(QPainter *painter, const FastCellRecord &cell, qrea
         painter->drawEllipse(QPointF(cell.x - 4.5, cell.y - 4.5), 2.5, 2.5);
     }
 
-    if (!cell.name.isEmpty() && detailLod >= (highQualityMode ? 0.8 : 0.95)) {
-        painter->drawText(QPointF(cell.x + 12, cell.y - 5), cell.name);
+    if (!cell.name.isEmpty() && detailLod >= kCellLabelMinLod) {
+        painter->save();
+        QFont font = painter->font();
+        font.setPointSize(kCellLabelPointSize);
+        painter->setFont(font);
+        painter->setPen(QPen(Qt::black));
+        const QFontMetricsF metrics(font);
+        const QRectF labelRect(cell.x + kCellLabelOffsetX,
+                               cell.y + kCellLabelOffsetY,
+                               qMax<qreal>(80.0, metrics.horizontalAdvance(cell.name) + 4.0),
+                               metrics.height() + 4.0);
+        painter->drawText(labelRect, Qt::AlignLeft | Qt::AlignTop, cell.name);
+        painter->restore();
     }
 }
 
 bool QCADScene::shouldUseInteractiveFastLayer() const
 {
-    return fastRenderEnabled
-        && currentMode != EditMode::DragScene
-        && currentLayerIndex >= 0
+    const bool layerIsAvailable = currentLayerIndex >= 0
         && currentLayerIndex < fastCellsPerLayer.size()
         && isFastLayerVisible(currentLayerIndex);
+    if (!fastRenderEnabled || currentMode == EditMode::DragScene || !layerIsAvailable) {
+        return false;
+    }
+
+    const qulonglong interactiveLimit = environmentLimit(
+        "IFCN_FAST_INTERACTIVE_LAYER_CELL_LIMIT",
+        kDefaultInteractiveFastLayerCellLimit
+    );
+    if (exceedsLimit(fastCellsPerLayer[currentLayerIndex].size(), interactiveLimit)) {
+        return false;
+    }
+
+    return fastRenderEnabled
+        && currentMode != EditMode::DragScene
+        && layerIsAvailable;
 }
 
 void QCADScene::clearFastClockOverlay()
@@ -1024,6 +1289,15 @@ void QCADScene::rebuildFastClockOverlay()
 {
     clearFastClockOverlay();
     if (!clockGridVisible || !fastRenderEnabled) {
+        return;
+    }
+
+    const qulonglong overlayLimit = environmentLimit(
+        "IFCN_FAST_CLOCK_OVERLAY_ITEM_LIMIT",
+        kDefaultFastClockOverlayItemLimit
+    );
+    if (exceedsLimit(fastClocks.size(), overlayLimit)) {
+        update(fastBounds);
         return;
     }
 

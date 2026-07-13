@@ -1,5 +1,4 @@
 #include "ui/mainwindow/MainWindow.h"
-#include <QCoreApplication>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QTableWidgetItem>
@@ -29,7 +28,6 @@ void appendIfPresent(QVector<QPair<QString, QString>> &rows,
 void MainWindow::printToStatusBar(const QString &message)
 {
     customStatusBar->addMessage(message);
-    QCoreApplication::processEvents();
 }
 
 qulonglong MainWindow::currentSceneCellCount() const
@@ -80,6 +78,9 @@ void MainWindow::setLayoutInfoRows(const QVector<QPair<QString, QString>> &rows)
 
 void MainWindow::refreshLayoutInfoPanel()
 {
+    if (view != nullptr) {
+        view->setEmptyStateVisible(currentSceneCellCount() == 0);
+    }
     QVector<QPair<QString, QString>> rows;
     rows.push_back({tr("Mode"), tr("Manual design")});
     if (!curFile.isEmpty() && curFile != tr("Unnamed")) {
@@ -95,6 +96,9 @@ void MainWindow::refreshLayoutInfoPanel()
 
 void MainWindow::updateLayoutInfoFromMapping(const GateLevelMapping &mapping)
 {
+    if (view != nullptr) {
+        view->setEmptyStateVisible(currentSceneCellCount() == 0);
+    }
     QVector<QPair<QString, QString>> rows;
     rows.push_back({tr("Mode"), tr("Mapped .ifcn")});
     appendIfPresent(rows, tr("Circuit"), mapping.circuitName);

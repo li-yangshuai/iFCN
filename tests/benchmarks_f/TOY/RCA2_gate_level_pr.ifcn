@@ -1,8 +1,9 @@
 #circuit name: RCA2.v
 
-#designed by graph render algorithm with encoded 4-phase clock tiles.
+#designed by graph P&R algorithm with encoded 4-phase clock tiles.
 
 #gate level placement and routing infomation
+#algorithm: graph P&R algorithm
 #gates number: 39
 #input/output: 5 / 3
 #edges number: 52
@@ -12,7 +13,7 @@
 #cross count: 40
 #phase origin: top-left=(4,4), saved coordinates are normalized to (0,0)
 #phase count: 4
-#runtime: 5.358s
+#runtime: 7.192s
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###

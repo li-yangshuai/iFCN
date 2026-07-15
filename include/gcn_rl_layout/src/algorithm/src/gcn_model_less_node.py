@@ -15,6 +15,10 @@ from matplotlib.lines import Line2D
 from collections import defaultdict
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+from src.graphviz_sifting import (
+    deterministic_layout_embeddings,
+    graphviz_sifting_order,
+)
 
 def safe_torch_device(preferred="auto"):
     if preferred == "cpu":
@@ -1661,6 +1665,40 @@ def visualize_scatter_layout(layer_nodes, sorted_nodes_per_layer):
     plt.show()
 
 
+# ================= Graphviz + exact-gain sifting production flow ===================
+def _graphviz_sifting_generate(layer_nodes, edges, node_to_index):
+    print("-------------------Graphviz + exact-gain sifting-------------------")
+    ordered_layers, diagnostics = graphviz_sifting_order(
+        layer_nodes,
+        edges,
+        count_crossings_fast,
+    )
+    ordered_list = [ordered_layers[index] for index in range(len(ordered_layers))]
+    embeddings = deterministic_layout_embeddings(ordered_list, edges, node_to_index)
+    crossings_per_layer = {}
+    total_crossings = 0
+    for layer_index in range(len(ordered_list) - 1):
+        value = count_crossings_fast(
+            ordered_list[layer_index],
+            ordered_list[layer_index + 1],
+            edges,
+        )
+        crossings_per_layer[layer_index] = value
+        total_crossings += value
+    print(
+        "[Graphviz+sifting] crossings={} (removed {} after dot), "
+        "dot={:.3f}s, sift={:.3f}s, evaluations={}, fallback={}".format(
+            total_crossings,
+            diagnostics["crossings_removed"],
+            diagnostics["graphviz_seconds"],
+            diagnostics["seconds"],
+            diagnostics["evaluations"],
+            diagnostics["graphviz_fallback_to_raw"],
+        )
+    )
+    return embeddings, ordered_layers, crossings_per_layer, edges
+
+
 # ================= 2DDWave normal graph flow ===================
 def normal_graph_generate_2ddwave(
     data,
@@ -1670,102 +1708,17 @@ def normal_graph_generate_2ddwave(
     v_file_path,
     save_training_curve=True,
 ):
-    device = safe_torch_device()
-    print(f"-------------------GCN Trainning-------------------")
-    print("Using device:", device)
-    # 1. 训练GCN
-    model = GCN(
-        in_channels=data.num_features,
-        edge_channels=_data_edge_channels(data),
-    )
-    trained_model = train_gcn(
-        model,
-        data,
-        v_file_path,
-        device=device,
-        save_curve=save_training_curve,
-    )
-    embeddings = get_embeddings(trained_model, data, device=device)
-    
-    # print(embeddings.shape, "embeddings shape")
-
-    # 2. 每层初排（可选：按GCN+PCA排序作为初始）
-    sorted_nodes_per_layer = {}
-    for layer, nodes in enumerate(layer_nodes):
-        sorted_nodes = sort_nodes_by_embedding(embeddings, nodes, node_to_index)
-        sorted_nodes_per_layer[layer] = sorted_nodes
-
-    # 3. GCN辅助的多轮Barycenter + 局部sifting优化
-    # 旧流程只把GCN用于PCA初排，后续barycenter容易抹掉初排信息。
-    # 新流程把GCN embedding继续作为排序tie-break和局部移动优先级；
-    # 所有节点移动都以精确交叉线数量下降为接受条件。
-    barycenter_opt_layers = minimize_crossing_gcn_guided(
-        [sorted_nodes_per_layer[i] for i in range(len(layer_nodes))],
-        edges,
-        embeddings,
-        node_to_index,
-        iters=10,
-        refine_passes=1,
-    )
-
-    print(f"-------------------Crossover optimize-------------------")
-    # 4. 输出&统计交叉
-    crossings_per_layer = {}
-    total_crossings = 0
-    for i in range(len(layer_nodes) - 1):
-        layer1 = barycenter_opt_layers[i]
-        layer2 = barycenter_opt_layers[i+1]
-        cross = count_crossings_fast(layer1, layer2, edges)
-        crossings_per_layer[i] = cross
-        # print(f"Layer {i}-{i+1} crossings: {cross} , Layer {i} nodes: {layer1}, Layer {i+1} nodes: {layer2}")
-        total_crossings += cross
-    print(f"Total crossings (all adjacent layers): {total_crossings}")
-    return embeddings, barycenter_opt_layers, crossings_per_layer, edges
+    # ``data``, ``v_file_path`` and ``save_training_curve`` remain in the
+    # signature so GUI/RL callers do not need a migration.  No neural training
+    # is performed in the production ordering path anymore.
+    _ = (data, v_file_path, save_training_curve)
+    return _graphviz_sifting_generate(layer_nodes, edges, node_to_index)
 
 
-# ================= GCN+RL 常规排序 ===================
+# ================= Backward-compatible RL warm-order entry ===================
 def normal_generate(data, layer_nodes, edges, node_to_index, v_file_path, device="auto"):
-    device = safe_torch_device(device)
-    print(f"-------------------GCN Trainning-------------------")
-    print("Using device:", device)
-    model = GCN(
-        in_channels=data.num_features,
-        edge_channels=_data_edge_channels(data),
-    )
-    trained_model = train_gcn(model, data, v_file_path, device=device)
-    embeddings = get_embeddings(trained_model, data, device=device)
-
-    sorted_nodes_per_layer = {}
-    for layer, nodes in enumerate(layer_nodes):
-        sorted_nodes_per_layer[layer] = sort_nodes_by_embedding(
-            embeddings,
-            nodes,
-            node_to_index,
-        )
-
-    # Keep the GCN signal during crossing optimization.  The plain barycenter
-    # sweep used here before could completely overwrite the PCA warm order even
-    # though a monotone exact-crossing GCN-guided implementation already exists.
-    barycenter_opt_layers = minimize_crossing_gcn_guided(
-        [sorted_nodes_per_layer[i] for i in range(len(layer_nodes))],
-        edges,
-        embeddings,
-        node_to_index,
-        iters=10,
-        refine_passes=1,
-    )
-
-    print(f"-------------------Crossover optimize-------------------")
-    crossings_per_layer = {}
-    total_crossings = 0
-    for i in range(len(layer_nodes) - 1):
-        layer1 = barycenter_opt_layers[i]
-        layer2 = barycenter_opt_layers[i + 1]
-        cross = count_crossings_fast(layer1, layer2, edges)
-        crossings_per_layer[i] = cross
-        total_crossings += cross
-    print(f"Total crossings (all adjacent layers): {total_crossings}")
-    return embeddings, barycenter_opt_layers, crossings_per_layer, edges
+    _ = (data, v_file_path, device)
+    return _graphviz_sifting_generate(layer_nodes, edges, node_to_index)
 
 
 def normal_generate_optimize(data, layer_nodes,node_to_index, edges):

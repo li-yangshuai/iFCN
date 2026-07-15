@@ -65,7 +65,7 @@ struct GcnRlSettings {
     QString checkpoint = "auto";
     QString clockMode = "stochastic-bands";
     QString device = "auto";
-    QString startStrategy = "gcn";
+    QString startStrategy = "structural";
     QString startOrientation = "auto";
     QString trainEvalMode = "auto";
     QString parseMode = "auto";
@@ -80,7 +80,9 @@ struct GcnRlSettings {
     int runs = 2;
     int workers = 2;
     int baseSeed = 7;
-    int gcnEpochs = 120;
+    int graphvizTimeoutSeconds = 60;
+    int siftTimeoutSeconds = 20;
+    int siftEvaluationBudget = 200000;
     int episodes = 80;
     int stepsPerEpisode = 8;
     int ppoEpochs = 4;
@@ -341,7 +343,12 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     settings.allowExactMemoryRetrieval = persisted.value(QStringLiteral("allowExactMemoryRetrieval"), settings.allowExactMemoryRetrieval).toBool();
     settings.runs = persisted.value(QStringLiteral("runs"), settings.runs).toInt();
     settings.workers = persisted.value(QStringLiteral("workers"), settings.workers).toInt();
-    settings.gcnEpochs = persisted.value(QStringLiteral("gcnEpochs"), settings.gcnEpochs).toInt();
+    settings.graphvizTimeoutSeconds = persisted.value(
+        QStringLiteral("graphvizTimeoutSeconds"), settings.graphvizTimeoutSeconds).toInt();
+    settings.siftTimeoutSeconds = persisted.value(
+        QStringLiteral("siftTimeoutSeconds"), settings.siftTimeoutSeconds).toInt();
+    settings.siftEvaluationBudget = persisted.value(
+        QStringLiteral("siftEvaluationBudget"), settings.siftEvaluationBudget).toInt();
     settings.episodes = persisted.value(QStringLiteral("episodes"), settings.episodes).toInt();
     settings.ppoEpochs = persisted.value(QStringLiteral("ppoEpochs"), settings.ppoEpochs).toInt();
     settings.minibatchSize = persisted.value(QStringLiteral("minibatchSize"), settings.minibatchSize).toInt();
@@ -366,6 +373,12 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     settings.clockAlignedStart = environmentBoolOrDefault("IFCN_GCN_RL_CLOCK_ALIGNED_START", settings.clockAlignedStart);
     settings.stochasticActions = environmentBoolOrDefault("IFCN_GCN_RL_STOCHASTIC_ACTIONS", settings.stochasticActions);
     settings.allowExactMemoryRetrieval = environmentBoolOrDefault("IFCN_GCN_RL_ALLOW_EXACT_MEMORY", settings.allowExactMemoryRetrieval);
+    settings.graphvizTimeoutSeconds = environmentIntOrDefault(
+        "IFCN_GRAPHVIZ_TIMEOUT", settings.graphvizTimeoutSeconds);
+    settings.siftTimeoutSeconds = environmentIntOrDefault(
+        "IFCN_SIFT_TIMEOUT", settings.siftTimeoutSeconds);
+    settings.siftEvaluationBudget = environmentIntOrDefault(
+        "IFCN_SIFT_EVALUATIONS", settings.siftEvaluationBudget);
 
     QDialog dialog(parent);
     dialog.setObjectName(QStringLiteral("gcnRlOptionsDialog"));
@@ -534,7 +547,9 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     legacyModeCombo->setCurrentIndex(settings.memoryOnlyInference ? 1 : 0);
     auto *runsSpin = createSpin(1, 16, settings.runs);
     auto *workersSpin = createSpin(1, 16, settings.workers);
-    auto *gcnEpochSpin = createSpin(1, 1000, settings.gcnEpochs, 10);
+    auto *graphvizTimeoutSpin = createSpin(1, 3600, settings.graphvizTimeoutSeconds, 5);
+    auto *siftTimeoutSpin = createSpin(0, 3600, settings.siftTimeoutSeconds, 5);
+    auto *siftEvaluationSpin = createSpin(1, 100000000, settings.siftEvaluationBudget, 10000);
     auto *episodesSpin = createSpin(1, 10000, settings.episodes);
     auto *ppoEpochsSpin = createSpin(1, 1000, settings.ppoEpochs);
     auto *minibatchSpin = createSpin(1, 4096, settings.minibatchSize);
@@ -563,7 +578,9 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     legacyForm->addRow(QObject::tr("Run mode:"), legacyModeCombo);
     legacyForm->addRow(QObject::tr("Parallel runs:"), runsSpin);
     legacyForm->addRow(QObject::tr("Workers:"), workersSpin);
-    legacyForm->addRow(QObject::tr("GCN epochs:"), gcnEpochSpin);
+    legacyForm->addRow(QObject::tr("Graphviz timeout (s):"), graphvizTimeoutSpin);
+    legacyForm->addRow(QObject::tr("Sifting timeout (s):"), siftTimeoutSpin);
+    legacyForm->addRow(QObject::tr("Sifting evaluation budget:"), siftEvaluationSpin);
     legacyForm->addRow(QObject::tr("RL episodes:"), episodesSpin);
     legacyForm->addRow(QObject::tr("PPO epochs:"), ppoEpochsSpin);
     legacyForm->addRow(QObject::tr("Minibatch:"), minibatchSpin);
@@ -715,7 +732,9 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     settings.memoryOnlyInference = legacyModeCombo->currentData().toBool();
     settings.runs = runsSpin->value();
     settings.workers = workersSpin->value();
-    settings.gcnEpochs = gcnEpochSpin->value();
+    settings.graphvizTimeoutSeconds = graphvizTimeoutSpin->value();
+    settings.siftTimeoutSeconds = siftTimeoutSpin->value();
+    settings.siftEvaluationBudget = siftEvaluationSpin->value();
     settings.episodes = episodesSpin->value();
     settings.ppoEpochs = ppoEpochsSpin->value();
     settings.minibatchSize = minibatchSpin->value();
@@ -759,7 +778,9 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     persisted.setValue(QStringLiteral("allowExactMemoryRetrieval"), settings.allowExactMemoryRetrieval);
     persisted.setValue(QStringLiteral("runs"), settings.runs);
     persisted.setValue(QStringLiteral("workers"), settings.workers);
-    persisted.setValue(QStringLiteral("gcnEpochs"), settings.gcnEpochs);
+    persisted.setValue(QStringLiteral("graphvizTimeoutSeconds"), settings.graphvizTimeoutSeconds);
+    persisted.setValue(QStringLiteral("siftTimeoutSeconds"), settings.siftTimeoutSeconds);
+    persisted.setValue(QStringLiteral("siftEvaluationBudget"), settings.siftEvaluationBudget);
     persisted.setValue(QStringLiteral("episodes"), settings.episodes);
     persisted.setValue(QStringLiteral("ppoEpochs"), settings.ppoEpochs);
     persisted.setValue(QStringLiteral("minibatchSize"), settings.minibatchSize);
@@ -1710,7 +1731,13 @@ bool writeMappingMetricsToIfcn(const QString &ifcnPath)
     }
 
     const QString output = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
-    const QStringList parts = output.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    const QStringList parts = output.split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+#else
+    const QStringList parts = output.split(
+        QRegularExpression(QStringLiteral("\\s+")), QString::SkipEmptyParts);
+#endif
     if (parts.size() < 2) {
         qWarning() << "[GCN+RL] ifcn_mapping_metrics returned invalid output:" << output;
         return false;
@@ -1899,8 +1926,14 @@ void VerilogHandler::runNormalGraphDrawLayoutForFile(const QString &filePath,
 
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     prependPythonPath(environment, QDir(rootPath).filePath("src/algorithm"));
-    if (environment.value(QStringLiteral("IFCN_GCN_EPOCHS")).isEmpty()) {
-        environment.insert(QStringLiteral("IFCN_GCN_EPOCHS"), QStringLiteral("60"));
+    if (environment.value(QStringLiteral("IFCN_GRAPHVIZ_TIMEOUT")).isEmpty()) {
+        environment.insert(QStringLiteral("IFCN_GRAPHVIZ_TIMEOUT"), QStringLiteral("60"));
+    }
+    if (environment.value(QStringLiteral("IFCN_SIFT_TIMEOUT")).isEmpty()) {
+        environment.insert(QStringLiteral("IFCN_SIFT_TIMEOUT"), QStringLiteral("20"));
+    }
+    if (environment.value(QStringLiteral("IFCN_SIFT_EVALUATIONS")).isEmpty()) {
+        environment.insert(QStringLiteral("IFCN_SIFT_EVALUATIONS"), QStringLiteral("200000"));
     }
     environment.insert(QStringLiteral("MPLBACKEND"), QStringLiteral("Agg"));
     process.setProcessEnvironment(environment);
@@ -2192,7 +2225,9 @@ void VerilogHandler::runGcnRlLayoutForFile(const QString &filePath,
 
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     prependPythonPath(environment, QDir(rootPath).filePath("src/algorithm"));
-    environment.insert(QStringLiteral("IFCN_GCN_EPOCHS"), QString::number(settings.gcnEpochs));
+    environment.insert(QStringLiteral("IFCN_GRAPHVIZ_TIMEOUT"), QString::number(settings.graphvizTimeoutSeconds));
+    environment.insert(QStringLiteral("IFCN_SIFT_TIMEOUT"), QString::number(settings.siftTimeoutSeconds));
+    environment.insert(QStringLiteral("IFCN_SIFT_EVALUATIONS"), QString::number(settings.siftEvaluationBudget));
     environment.insert(QStringLiteral("IFCN_GCN_RL_LAYOUT_MEMORY_DIR"), layoutMemoryDir);
     environment.insert(QStringLiteral("PYTHONHASHSEED"), QStringLiteral("0"));
     environment.insert(QStringLiteral("PYTHONUNBUFFERED"), QStringLiteral("1"));

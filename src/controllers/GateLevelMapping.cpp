@@ -10,6 +10,7 @@
 #include <QShowEvent>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QWindow>
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
@@ -19,6 +20,18 @@
 #include "ui/mainwindow/MainWindow.h"
 
 namespace {
+QScreen *screenForWidget(QWidget *widget)
+{
+    if (widget != nullptr) {
+        QWidget *topLevel = widget->window();
+        if (topLevel != nullptr && topLevel->windowHandle() != nullptr
+            && topLevel->windowHandle()->screen() != nullptr) {
+            return topLevel->windowHandle()->screen();
+        }
+    }
+    return QApplication::primaryScreen();
+}
+
 struct ShiftedPosition {
     position pos{0, 0};
     bool valid = false;
@@ -149,7 +162,7 @@ private:
         QScreen *screen = nullptr;
         if (target != nullptr) {
             centerPoint = target->mapToGlobal(target->rect().center());
-            screen = target->screen();
+            screen = screenForWidget(target);
         } else {
             screen = QApplication::primaryScreen();
             if (screen != nullptr) {
@@ -185,6 +198,10 @@ void showCenteredMessageBox(QWidget *parent,
                             const QString &title,
                             const QString &text)
 {
+    if (qEnvironmentVariableIntValue("IFCN_NONINTERACTIVE") != 0) {
+        qInfo().noquote() << "[GateLevelMapping]" << title << "-" << text;
+        return;
+    }
     CenteredMessageBox box(parent, icon, title, text);
     box.exec();
 }

@@ -1,5 +1,6 @@
 set(CMAKE_AUTOMOC ON)
 find_package(Qt5 REQUIRED COMPONENTS Widgets PrintSupport Svg)
+find_package(Threads REQUIRED)
 
 ##graph render libraries##
 find_package(PkgConfig REQUIRED)
@@ -50,7 +51,7 @@ add_executable(
     ui/widgets/GaChessboardInputDialog.cpp
     ${RES_RCC})
     
-target_link_libraries(fcnx_gui PRIVATE autopr simon  ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg 
+target_link_libraries(fcnx_gui PRIVATE autopr simon Threads::Threads ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg
                        ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
 
 target_compile_definitions(fcnx_gui PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

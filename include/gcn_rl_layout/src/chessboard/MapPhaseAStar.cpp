@@ -84,6 +84,7 @@ std::vector<std::pair<int,int>> MapPhaseAStar::routeInternal(
     }
 
     std::unordered_set<State, StateHash> closed;
+    int expandedStates = 0;
     const int dx[4] = {1, -1, 0, 0};
     const int dy[4] = {0, 0, 1, -1};
 
@@ -97,6 +98,10 @@ std::vector<std::pair<int,int>> MapPhaseAStar::routeInternal(
             continue;
         }
         closed.insert(current);
+        ++expandedStates;
+        if (expansionLimit > 0 && expandedStates > expansionLimit) {
+            return {};
+        }
 
         std::pair<int,int> curCoord{current.x, current.y};
         if (curCoord == goal) {

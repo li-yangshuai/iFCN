@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,6 +28,10 @@ public:
 
     void reset() {
         finishedRoutes.clear();
+    }
+
+    void setExpansionLimit(int limit) {
+        expansionLimit = std::max(0, limit);
     }
 
 private:
@@ -68,6 +73,7 @@ private:
     int phaseCycle;
     int padding;
     int maxSamePhase;
+    int expansionLimit = 0;
 
     std::unordered_map<std::pair<int,int>, std::vector<std::pair<int,int>>, CoordHash> finishedRoutes;
 

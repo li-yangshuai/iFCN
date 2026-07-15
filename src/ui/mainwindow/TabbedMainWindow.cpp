@@ -13,8 +13,21 @@
 #include <QSize>
 #include <QTimer>
 #include <QUrl>
+#include <QWindow>
 
 namespace {
+const QScreen *screenForWidget(const QWidget *widget)
+{
+    if (widget != nullptr) {
+        const QWidget *topLevel = widget->window();
+        if (topLevel != nullptr && topLevel->windowHandle() != nullptr
+            && topLevel->windowHandle()->screen() != nullptr) {
+            return topLevel->windowHandle()->screen();
+        }
+    }
+    return qApp != nullptr ? qApp->primaryScreen() : nullptr;
+}
+
 QSize initialMainWindowSize(const QScreen *screen)
 {
     constexpr double kPreferredWidthRatio = 0.92;
@@ -106,10 +119,7 @@ TabbedMainWindow::TabbedMainWindow(QWidget *parent)
 
     openNewTab();
 
-    const QScreen *targetScreen = screen();
-    if (targetScreen == nullptr && qApp != nullptr) {
-        targetScreen = qApp->primaryScreen();
-    }
+    const QScreen *targetScreen = screenForWidget(this);
     const QSize initialSize = initialMainWindowSize(targetScreen);
     resize(initialSize);
     setMinimumSize(qMin(1080, initialSize.width()), qMin(680, initialSize.height()));
@@ -238,7 +248,7 @@ void TabbedMainWindow::centerPopupWidget(QWidget *popup) const
     QPoint topLeft(hostRect.center().x() - popupSize.width() / 2,
                    hostRect.center().y() - popupSize.height() / 2);
 
-    const QScreen *screen = this->screen();
+    const QScreen *screen = screenForWidget(this);
     if (screen != nullptr) {
         const QRect available = screen->availableGeometry();
         topLeft.setX(qBound(available.left(), topLeft.x(), available.right() - popupSize.width() + 1));

@@ -8,13 +8,16 @@ from src.gcn_model_less_node import (
 )
 import numpy as np
 from sklearn.cluster import KMeans
-from collections import defaultdict
+from collections import Counter, defaultdict
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from lib import iFCN_Lab
 import torch
+import math
 import os
+import time
+import itertools
 
 class NormalGraphDraw:
     def __init__(self, v_file_path, save_training_curve=True):
@@ -63,9 +66,32 @@ class NormalGraphDraw:
             "ml_max_shift": 8,
             "global_ml_max_nodes": 12,
             "global_ml_max_shift": 6,
-            "route_insert_max_ops": 6,
-            "phase_insert_max_ops": 4,
+            "route_insert_max_ops": 24,
+            "phase_insert_max_ops": 12,
         }
+        self.route_expansion_rounds = max(
+            1, int(os.environ.get("IFCN_ROUTE_EXPANSION_ROUNDS", "96"))
+        )
+        self.route_expansion_timeout_sec = max(
+            1.0, float(os.environ.get("IFCN_ROUTE_EXPANSION_TIMEOUT", "240"))
+        )
+        self.template_expansion_rounds = max(
+            1, int(os.environ.get("IFCN_TEMPLATE_EXPANSION_ROUNDS", "24"))
+        )
+        self.route_expansion_history = []
+        self.route_expansion_exhausted = False
+        self.route_incompatibility_reason = ""
+        self.right_down_port_capacity_nodes = self._right_down_port_capacity_nodes()
+        self._last_route_priority = set()
+        self._last_route_reverse_priority = False
+        self._last_route_reverse_remaining = False
+        self._last_route_explicit_priority = tuple()
+        self.contraction_history = []
+        self.contraction_evaluations = 0
+        self.contraction_global_evaluations = 0
+        self.contraction_recursive_evaluations = 0
+        self.contraction_empty_line_evaluations = 0
+        self.contraction_exhausted = False
         self.clock_template_ok = False
         self.clock_template_conflict_count = 0
         self.phase_assignment_ok = False
@@ -444,6 +470,41 @@ class NormalGraphDraw:
             self.move_col_right(real_c, 1)
             col_shift += 1  # 每插入一列，后面列号整体右移一格
 
+    def _right_down_invariant_violations(self):
+        """Return edges whose sink is no longer strictly below/right-reachable."""
+        self._ensure_coord_cache()
+        violations = []
+        for src, dst in self.edges:
+            src = int(src)
+            dst = int(dst)
+            if src not in self._node_coord or dst not in self._node_coord:
+                continue
+            src_x, src_y = self._node_coord[src]
+            dst_x, dst_y = self._node_coord[dst]
+            if dst_x < src_x or dst_y <= src_y:
+                violations.append((src, dst))
+        return violations
+
+    def _right_down_port_capacity_nodes(self):
+        """Nodes likely to create high sink-port pressure in right/down flow."""
+        violations = []
+        effective_nodes = {int(node_id) for node_id in self.parse.effective_nodes}
+        for node_id in self.parse.effective_nodes:
+            fanins = {
+                int(src)
+                for src in self.parse.get_fanins(int(node_id))
+                if int(src) in effective_nodes
+            }
+            if len(fanins) > 2:
+                violations.append(
+                    {
+                        "node": int(node_id),
+                        "fanin_count": int(len(fanins)),
+                        "node_type": str(self.parse.getNodeTypeString(int(node_id))),
+                    }
+                )
+        return violations
+
     def move_rows_up_after(self, r: int, delta: int = 1):
         """
         将严格位于 r 下方的所有行整体上移 delta。
@@ -463,60 +524,230 @@ class NormalGraphDraw:
     def _refresh_fanin_directions_for_current_coords(self):
         self.fanin_directions = self.get_fanin_directions()
 
-    def _line_span(self, axis: str):
+    def legalize_right_down_ports(self, max_passes=8):
+        """Create the geometric margin required by every selected sink port.
+
+        A left-entry sink needs ``dst.x >= src.x + 1``; a top-entry sink needs
+        ``dst.x >= src.x``.  Global column insertion cannot separate nodes that
+        initially share an x coordinate, so this deterministic pre-route pass
+        shifts the affected target row segment while preserving its node order.
+        """
+        moves = 0
+        for _ in range(max(1, int(max_passes))):
+            self._refresh_fanin_directions_for_current_coords()
+            changed = False
+            self._ensure_coord_cache()
+            node_order = sorted(
+                self._node_coord,
+                key=lambda node: (
+                    self._node_coord[node][1],
+                    self._node_coord[node][0],
+                    int(node),
+                ),
+            )
+            for dst in node_order:
+                dst_x, dst_y = self.get_node_coord(dst)
+                required_x = int(dst_x)
+                for src in self.parse.get_fanins(int(dst)):
+                    src = int(src)
+                    if src not in self._node_id_to_idx:
+                        continue
+                    src_x, _ = self.get_node_coord(src)
+                    direction = self.fanin_directions.get((src, int(dst)), (0, -1))
+                    margin = 1 if tuple(direction) == (-1, 0) else 0
+                    required_x = max(required_x, int(src_x) + margin)
+                if required_x <= dst_x:
+                    continue
+                self._move_row_segment_right(dst_y, dst_x, required_x - dst_x)
+                moves += 1
+                changed = True
+            if not changed:
+                break
+        self._refresh_fanin_directions_for_current_coords()
+        return moves
+
+    def _wire_owners_by_coord(self):
+        """Return the routed edges occupying every non-endpoint wire cell."""
+        owners = defaultdict(set)
+        for node_pair, path in self.mapChessboard.nodePairRoutes.items():
+            edge = (int(node_pair[0]), int(node_pair[1]))
+            norm_path = [(int(x), int(y)) for x, y in path]
+            for coord in norm_path[1:-1]:
+                owners[coord].add(edge)
+        return owners
+
+    def _node_move_preserves_right_down(self, node_id: int, target) -> bool:
+        """Check the geometric 2DDWave partial order before an expensive reroute."""
+        node_id = int(node_id)
+        target_x, target_y = int(target[0]), int(target[1])
+        for fanin in self.parse.get_fanins(node_id):
+            fanin = int(fanin)
+            if fanin not in self._node_id_to_idx:
+                continue
+            fanin_x, fanin_y = self.get_node_coord(fanin)
+            if target_x < fanin_x or target_y <= fanin_y:
+                return False
+        for fanout in self.parse.get_fanouts(node_id):
+            fanout = int(fanout)
+            if fanout not in self._node_id_to_idx:
+                continue
+            fanout_x, fanout_y = self.get_node_coord(fanout)
+            if fanout_x < target_x or fanout_y <= target_y:
+                return False
+        return True
+
+    def _phase_node_move_candidates(
+        self,
+        sweep: str,
+        center_twice: int,
+        y_bounds=None,
+        direction_locks=None,
+        recursive_depth=0,
+    ):
+        """Find nodes that can absorb one cell of their own single wire.
+
+        ``top_down`` moves an upper-half node down into the first cell of one
+        of its outgoing routes.  ``bottom_up`` moves a lower-half node up into
+        the last vertical cell of one of its incoming routes.  The target must
+        contain exactly one wire and no node, matching the physical contraction
+        rule rather than deleting an otherwise empty global row or column.
+        """
+        if sweep not in {"top_down", "bottom_up"}:
+            raise ValueError(f"Unknown phase contraction sweep: {sweep}")
+
         self._ensure_coord_cache()
-        if not self._node_coord:
-            return None
-        if axis == "x":
-            values = [coord[0] for coord in self._node_coord.values()]
-        elif axis == "y":
-            values = [coord[1] for coord in self._node_coord.values()]
-        else:
-            raise ValueError(f"Unknown axis: {axis}")
-        return int(min(values)), int(max(values))
-
-    def _has_node_overlap_after_cut_compaction(self, axis: str, cut: int) -> bool:
-        self._ensure_coord_cache()
-        shifted = set()
-        for x, y in self._node_coord.values():
-            nx, ny = int(x), int(y)
-            if axis == "x" and nx > cut:
-                nx -= 1
-            elif axis == "y" and ny > cut:
-                ny -= 1
-            coord = (nx, ny)
-            if coord in shifted:
-                return True
-            shifted.add(coord)
-        return False
-
-    def _rank_cut_candidates(self, axis: str):
-        span = self._line_span(axis)
-        if span is None:
-            return []
-        lo, hi = span
-        if lo >= hi:
-            return []
-
-        used_coords = self._collect_used_coords()
+        wire_owners = self._wire_owners_by_coord()
+        node_order = sorted(
+            self._node_coord,
+            key=lambda node: (
+                self._node_coord[node][1],
+                self._node_coord[node][0],
+                int(node),
+            ),
+            reverse=sweep == "bottom_up",
+        )
         candidates = []
-        for cut in range(int(lo), int(hi)):
-            if self._has_node_overlap_after_cut_compaction(axis, cut):
+        for node_id in node_order:
+            x, y = self._node_coord[int(node_id)]
+            if y_bounds is not None:
+                lower_y, upper_y = int(y_bounds[0]), int(y_bounds[1])
+                if int(y) < lower_y or int(y) > upper_y:
+                    continue
+            if (
+                direction_locks
+                and int(node_id) in direction_locks
+                and direction_locks[int(node_id)] != sweep
+            ):
+                continue
+            delta_y = 1 if sweep == "top_down" else -1
+            target = (int(x), int(y + delta_y))
+            if y_bounds is not None and not (
+                lower_y <= target[1] <= upper_y
+            ):
+                continue
+            old_distance = abs(2 * int(y) - int(center_twice))
+            new_distance = abs(2 * int(target[1]) - int(center_twice))
+            if new_distance >= old_distance or target in self._coord_set:
                 continue
 
-            if axis == "x":
-                pressure = sum(1 for x, _ in used_coords if x == cut or x == cut + 1)
+            owners = wire_owners.get(target, set())
+            if len(owners) != 1:
+                continue
+            route_edge = next(iter(owners))
+            path = [
+                (int(px), int(py))
+                for px, py in self.mapChessboard.nodePairRoutes.get(route_edge, [])
+            ]
+            if sweep == "top_down":
+                owns_target = (
+                    route_edge[0] == int(node_id)
+                    and len(path) >= 3
+                    and path[1] == target
+                )
             else:
-                pressure = sum(1 for _, y in used_coords if y == cut or y == cut + 1)
-            candidates.append((pressure, abs(cut - (lo + hi) / 2.0), int(cut)))
+                owns_target = (
+                    route_edge[1] == int(node_id)
+                    and len(path) >= 3
+                    and path[-2] == target
+                    and target[0] == int(x)
+                )
+            if not owns_target:
+                continue
+            if not self._node_move_preserves_right_down(node_id, target):
+                continue
 
-        candidates.sort()
-        return [cut for _, _, cut in candidates]
+            candidates.append(
+                {
+                    "sweep": str(sweep),
+                    "node": int(node_id),
+                    "from_coord": (int(x), int(y)),
+                    "to_coord": target,
+                    "route_edge": route_edge,
+                    "phase_from": int(self.mapChessboard.getPhase((int(x), int(y)))),
+                    "phase_target": int(self.mapChessboard.getPhase(target)),
+                    "center_distance_before": int(old_distance),
+                    "center_distance_after": int(new_distance),
+                    "recursive_depth": int(recursive_depth),
+                    "y_window": (
+                        [int(y_bounds[0]), int(y_bounds[1])]
+                        if y_bounds is not None else []
+                    ),
+                }
+            )
+        return candidates
+
+    def _recursive_phase_contraction_windows(self, min_y: int, max_y: int):
+        """Return global-to-local vertical windows for hierarchical contraction."""
+        windows = []
+
+        def visit(lower_y, upper_y, depth):
+            lower_y, upper_y = int(lower_y), int(upper_y)
+            if upper_y - lower_y < 2:
+                return
+            windows.append(
+                {
+                    "min_y": lower_y,
+                    "max_y": upper_y,
+                    "center_twice": lower_y + upper_y,
+                    "depth": int(depth),
+                }
+            )
+            if upper_y - lower_y < 4:
+                return
+            middle = (lower_y + upper_y) // 2
+            visit(lower_y, middle, depth + 1)
+            visit(middle + 1, upper_y, depth + 1)
+
+        visit(min_y, max_y, 0)
+        # Breadth-first ordering gives both halves an opportunity before a
+        # deep sub-window can consume the remaining reroute budget.
+        windows.sort(key=lambda item: (item["depth"], item["min_y"]))
+        return windows
 
     def _reroute_and_validate_current_coords(self, verbose=False):
         self._refresh_fanin_directions_for_current_coords()
-        self.place_all_nodes_on_chessboard()
-        failed_pairs = self.sequence_route_all_edges(verbose=verbose)
+        if self._last_route_explicit_priority:
+            failed_pairs = self.reroute_with_priority_pairs(
+                self._last_route_explicit_priority,
+                verbose=verbose,
+                explicit_priority_order=self._last_route_explicit_priority,
+            )
+        elif self._last_route_priority:
+            failed_pairs = self.reroute_with_priority_pairs(
+                self._last_route_priority,
+                verbose=verbose,
+                reverse_priority=self._last_route_reverse_priority,
+                reverse_remaining=self._last_route_reverse_remaining,
+            )
+        elif self._last_route_reverse_remaining:
+            failed_pairs = self.reroute_with_priority_pairs(
+                (),
+                verbose=verbose,
+                reverse_remaining=True,
+            )
+        else:
+            self.place_all_nodes_on_chessboard()
+            failed_pairs = self.sequence_route_all_edges(verbose=verbose)
         if failed_pairs:
             self.clock_template_ok = False
             self.clock_template_conflict_count = 0
@@ -526,61 +757,433 @@ class NormalGraphDraw:
         template_ok, _ = self.verify_clock_template_consistency(verbose=verbose)
         return bool(template_ok)
 
-    def _try_compact_cut(self, axis: str, cut: int, verbose=False):
-        if self._has_node_overlap_after_cut_compaction(axis, cut):
-            return False, None
+    def _current_phase_contraction_metrics(self):
+        width, height = self.mapChessboard.computeLayoutArea()
+        width, height = max(0, int(width)), max(0, int(height))
+        routed_wire_cells = sum(
+            max(0, len(path) - 2)
+            for path in self.mapChessboard.nodePairRoutes.values()
+        )
+        return {
+            "width": width,
+            "height": height,
+            "area": width * height,
+            "used_cell_count": len(self._collect_used_coords()),
+            "routed_wire_cells": int(routed_wire_cells),
+        }
 
+    def _try_phase_node_move(self, candidate, verbose=False):
+        """Move one node into its own wire cell and accept only a legal contraction."""
         prev_coords = self.coords.clone()
         prev_fanin_directions = dict(self.fanin_directions)
+        prev_route_priority = set(self._last_route_priority)
+        prev_reverse_priority = bool(self._last_route_reverse_priority)
+        prev_reverse_remaining = bool(self._last_route_reverse_remaining)
+        prev_explicit_priority = tuple(self._last_route_explicit_priority)
+        prev_metrics = self._current_phase_contraction_metrics()
 
-        if axis == "x":
-            self.move_cols_left_after(int(cut), 1)
-        elif axis == "y":
-            self.move_rows_up_after(int(cut), 1)
-        else:
-            raise ValueError(f"Unknown axis: {axis}")
+        node_id = int(candidate["node"])
+        target = tuple(int(value) for value in candidate["to_coord"])
+        node_index = self._node_id_to_idx[node_id]
+        self.coords[node_index, 0] = target[0]
+        self.coords[node_index, 1] = target[1]
+        self._coord_cache_dirty = True
 
-        if self._reroute_and_validate_current_coords(verbose=verbose):
-            return True, self.mapChessboard.computeLayoutArea()
+        geometry_ok = not self._right_down_invariant_violations()
+        if geometry_ok and self._reroute_and_validate_current_coords(verbose=verbose):
+            new_metrics = self._current_phase_contraction_metrics()
+            area_reduced = new_metrics["area"] < prev_metrics["area"]
+            neutral_inward_move = (
+                new_metrics["area"] == prev_metrics["area"]
+                and new_metrics["used_cell_count"] <= prev_metrics["used_cell_count"]
+                and int(candidate["center_distance_after"])
+                < int(candidate["center_distance_before"])
+            )
+            if area_reduced or neutral_inward_move:
+                new_metrics["phase_after"] = int(
+                    self.mapChessboard.getPhase(target)
+                )
+                return True, prev_metrics, new_metrics
 
         self.coords = prev_coords
         self._coord_cache_dirty = True
         self.fanin_directions = prev_fanin_directions
-        return False, None
+        self._last_route_priority = prev_route_priority
+        self._last_route_reverse_priority = prev_reverse_priority
+        self._last_route_reverse_remaining = prev_reverse_remaining
+        self._last_route_explicit_priority = prev_explicit_priority
+        # Candidate routing mutates the board.  Rebuild the preceding legal
+        # node placement immediately so a rejection cannot poison the next move.
+        restored = self._reroute_and_validate_current_coords(verbose=False)
+        if not restored:
+            raise RuntimeError(
+                "failed to restore legal layout after rejected phase-node move"
+            )
+        return False, prev_metrics, None
 
-    def compact_layout(self, max_iters=8, verbose=False):
+    def _empty_line_candidates(self):
+        """Return node-empty rows/columns inside the physical bounding box.
+
+        Wires may cross the candidate line: they are discarded and rerouted
+        after the coordinate collapse.  A line containing a node is never a
+        blank-line candidate.
+        """
+        min_x, min_y, max_x, max_y = self.mapChessboard.findLayoutBoard()
+        if max_x < min_x or max_y < min_y:
+            return []
+        self._ensure_coord_cache()
+        node_x = {int(x) for x, _ in self._node_coord.values()}
+        node_y = {int(y) for _, y in self._node_coord.values()}
+        empty_rows = [
+            int(y) for y in range(int(min_y) + 1, int(max_y)) if y not in node_y
+        ]
+        empty_cols = [
+            int(x) for x in range(int(min_x) + 1, int(max_x)) if x not in node_x
+        ]
+        width = int(max_x) - int(min_x) + 1
+        height = int(max_y) - int(min_y) + 1
+        axis_order = ("y", "x") if width >= height else ("x", "y")
+        by_axis = {"y": empty_rows, "x": empty_cols}
+        return [
+            (axis, line)
+            for axis in axis_order
+            for line in by_axis[axis]
+        ]
+
+    def _try_delete_empty_line(self, axis: str, line: int, verbose=False):
+        """Delete one node-empty row/column and restore on any legal failure."""
+        axis, line = str(axis), int(line)
+        if axis not in {"x", "y"}:
+            raise ValueError(f"Unknown empty-line axis: {axis}")
+        self._ensure_coord_cache()
+        if any(
+            (int(x) == line if axis == "x" else int(y) == line)
+            for x, y in self._node_coord.values()
+        ):
+            return False, None, None
+
+        prev_coords = self.coords.clone()
+        prev_fanin_directions = dict(self.fanin_directions)
+        prev_route_priority = set(self._last_route_priority)
+        prev_reverse_priority = bool(self._last_route_reverse_priority)
+        prev_reverse_remaining = bool(self._last_route_reverse_remaining)
+        prev_explicit_priority = tuple(self._last_route_explicit_priority)
+        prev_metrics = self._current_phase_contraction_metrics()
+
+        if axis == "x":
+            self.move_cols_left_after(line, 1)
+        else:
+            self.move_rows_up_after(line, 1)
+
+        geometry_ok = not self._right_down_invariant_violations()
+        if geometry_ok and self._reroute_and_validate_current_coords(verbose=verbose):
+            new_metrics = self._current_phase_contraction_metrics()
+            if new_metrics["area"] < prev_metrics["area"]:
+                return True, prev_metrics, new_metrics
+
+        self.coords = prev_coords
+        self._coord_cache_dirty = True
+        self.fanin_directions = prev_fanin_directions
+        self._last_route_priority = prev_route_priority
+        self._last_route_reverse_priority = prev_reverse_priority
+        self._last_route_reverse_remaining = prev_reverse_remaining
+        self._last_route_explicit_priority = prev_explicit_priority
+        restored = self._reroute_and_validate_current_coords(verbose=False)
+        if not restored:
+            raise RuntimeError(
+                "failed to restore legal layout after rejected empty-line deletion"
+            )
+        return False, prev_metrics, None
+
+    def compact_layout(self, max_iters=64, verbose=False):
+        """Contract a top-down layout by moving nodes into their own wire cells.
+
+        The full vertical interval is contracted first, followed recursively
+        by its internal layer intervals.  Every interval has a local center;
+        upper nodes move downward and lower nodes move upward.  Each accepted
+        local move is rerouted and phase-verified.  A final fixed-point stage
+        deletes rows and columns that contain no nodes.  Wires may cross those
+        lines: they are discarded and rerouted after every coordinate collapse.
+        """
         max_iters = max(0, int(max_iters))
         if max_iters <= 0:
             return 0
 
+        global_evaluation_budget = max(
+            1, int(os.environ.get("IFCN_CONTRACTION_EVALUATIONS", "256"))
+        )
+        recursive_evaluation_budget = max(
+            1,
+            int(
+                os.environ.get(
+                    "IFCN_RECURSIVE_CONTRACTION_EVALUATIONS",
+                    str(global_evaluation_budget),
+                )
+            ),
+        )
+        global_time_limit = max(
+            1.0, float(os.environ.get("IFCN_CONTRACTION_TIMEOUT", "120"))
+        )
+        recursive_time_limit = max(
+            1.0,
+            float(
+                os.environ.get(
+                    "IFCN_RECURSIVE_CONTRACTION_TIMEOUT",
+                    str(global_time_limit),
+                )
+            ),
+        )
+        empty_line_evaluation_budget = max(
+            1,
+            int(
+                os.environ.get(
+                    "IFCN_EMPTY_LINE_CONTRACTION_EVALUATIONS",
+                    str(global_evaluation_budget),
+                )
+            ),
+        )
+        empty_line_time_limit = max(
+            1.0,
+            float(
+                os.environ.get(
+                    "IFCN_EMPTY_LINE_CONTRACTION_TIMEOUT",
+                    str(global_time_limit),
+                )
+            ),
+        )
+        window_evaluation_limit = max(
+            1, int(os.environ.get("IFCN_CONTRACTION_WINDOW_EVALUATIONS", "4"))
+        )
         reductions = 0
-        for _ in range(max_iters):
-            width, height = self.mapChessboard.computeLayoutArea()
-            if width <= 0 or height <= 0:
-                break
+        last_legal_coords = self.coords.clone()
+        self.contraction_history = []
+        self.contraction_evaluations = 0
+        self.contraction_global_evaluations = 0
+        self.contraction_recursive_evaluations = 0
+        self.contraction_empty_line_evaluations = 0
+        self.contraction_exhausted = False
+        _, min_y, _, max_y = self.mapChessboard.findLayoutBoard()
+        if max_y < min_y:
+            return 0
+        windows = self._recursive_phase_contraction_windows(min_y, max_y)
+        direction_locks = {}
 
-            # Shrinking height saves width area cells first; shrinking width saves height cells.
-            axis_order = ["y", "x"] if width >= height else ["x", "y"]
-            improved = False
+        def record_accepted_move(candidate, sweep, old_metrics, new_metrics):
+            nonlocal reductions, last_legal_coords
+            reductions += 1
+            direction_locks[int(candidate["node"])] = sweep
+            last_legal_coords = self.coords.clone()
+            mode_prefix = (
+                "global" if int(candidate["recursive_depth"]) == 0
+                else "recursive"
+            )
+            self.contraction_history.append(
+                {
+                    "step": int(reductions),
+                    "mode": "phase_node_{}_{}".format(mode_prefix, sweep),
+                    "recursive_depth": int(candidate["recursive_depth"]),
+                    "y_window": list(candidate["y_window"]),
+                    "node": int(candidate["node"]),
+                    "from_coord": list(candidate["from_coord"]),
+                    "to_coord": list(candidate["to_coord"]),
+                    "route_edge": list(candidate["route_edge"]),
+                    "phase_from": int(candidate["phase_from"]),
+                    "phase_target_before": int(candidate["phase_target"]),
+                    "phase_after": int(new_metrics["phase_after"]),
+                    "old_width": int(old_metrics["width"]),
+                    "old_height": int(old_metrics["height"]),
+                    "width": int(new_metrics["width"]),
+                    "height": int(new_metrics["height"]),
+                    "area": int(new_metrics["area"]),
+                    "old_used_cell_count": int(old_metrics["used_cell_count"]),
+                    "used_cell_count": int(new_metrics["used_cell_count"]),
+                    "old_routed_wire_cells": int(old_metrics["routed_wire_cells"]),
+                    "routed_wire_cells": int(new_metrics["routed_wire_cells"]),
+                }
+            )
+            if verbose:
+                print(
+                    "[verified phase contract:{}:{}] node {}: {} -> {}, "
+                    "phase {} -> {}, area={}x{}".format(
+                        candidate["recursive_depth"],
+                        sweep,
+                        candidate["node"],
+                        tuple(candidate["from_coord"]),
+                        tuple(candidate["to_coord"]),
+                        candidate["phase_from"],
+                        new_metrics["phase_after"],
+                        new_metrics["width"],
+                        new_metrics["height"],
+                    )
+                )
 
-            for axis in axis_order:
-                for cut in self._rank_cut_candidates(axis):
-                    success, new_area = self._try_compact_cut(axis, cut, verbose=False)
+        # Stage 1: complete the original whole-layout inward sweeps first.
+        global_window = windows[0] if windows else None
+        global_started = time.perf_counter()
+        global_reductions = 0
+        global_exhausted = False
+        while global_window is not None and global_reductions < max_iters:
+            improved_this_round = False
+            for sweep in ("top_down", "bottom_up"):
+                candidates = self._phase_node_move_candidates(
+                    sweep,
+                    global_window["center_twice"],
+                    y_bounds=(global_window["min_y"], global_window["max_y"]),
+                    direction_locks=direction_locks,
+                    recursive_depth=0,
+                )
+                for candidate in candidates:
+                    if (
+                        self.contraction_global_evaluations
+                        >= global_evaluation_budget
+                        or time.perf_counter() - global_started >= global_time_limit
+                    ):
+                        global_exhausted = True
+                        break
+                    self.contraction_global_evaluations += 1
+                    self.contraction_evaluations += 1
+                    success, old_metrics, new_metrics = self._try_phase_node_move(
+                        candidate,
+                        verbose=False,
+                    )
                     if not success:
                         continue
-                    reductions += 1
-                    improved = True
-                    if verbose:
-                        axis_name = "row" if axis == "y" else "col"
-                        print(f"[layout compact] remove {axis_name} gap after {cut}, new area={new_area}")
+                    global_reductions += 1
+                    improved_this_round = True
+                    record_accepted_move(candidate, sweep, old_metrics, new_metrics)
                     break
-                if improved:
+                if global_exhausted or global_reductions >= max_iters:
                     break
-
-            if not improved:
+            if global_exhausted or not improved_this_round:
                 break
 
-        self._reroute_and_validate_current_coords(verbose=False)
+        # Stage 2: recursively contract internal physical-layer intervals from
+        # the checkpoint produced above.  It has an independent budget so the
+        # recursive search can never replace or truncate the global result.
+        recursive_windows = [window for window in windows if window["depth"] > 0]
+        recursive_started = time.perf_counter()
+        recursive_reductions = 0
+        recursive_exhausted = False
+        while recursive_windows and recursive_reductions < max_iters:
+            improved_this_round = False
+            for window in recursive_windows:
+                for sweep in ("top_down", "bottom_up"):
+                    candidates = self._phase_node_move_candidates(
+                        sweep,
+                        window["center_twice"],
+                        y_bounds=(window["min_y"], window["max_y"]),
+                        direction_locks=direction_locks,
+                        recursive_depth=window["depth"],
+                    )
+                    window_evaluations = 0
+                    for candidate in candidates:
+                        if window_evaluations >= window_evaluation_limit:
+                            break
+                        if (
+                            self.contraction_recursive_evaluations
+                            >= recursive_evaluation_budget
+                            or time.perf_counter() - recursive_started
+                            >= recursive_time_limit
+                        ):
+                            recursive_exhausted = True
+                            break
+                        window_evaluations += 1
+                        self.contraction_recursive_evaluations += 1
+                        self.contraction_evaluations += 1
+                        success, old_metrics, new_metrics = self._try_phase_node_move(
+                            candidate,
+                            verbose=False,
+                        )
+                        if not success:
+                            continue
+                        recursive_reductions += 1
+                        improved_this_round = True
+                        record_accepted_move(candidate, sweep, old_metrics, new_metrics)
+                        break
+                    if recursive_exhausted or recursive_reductions >= max_iters:
+                        break
+                if recursive_exhausted or recursive_reductions >= max_iters:
+                    break
+            if recursive_exhausted or not improved_this_round:
+                break
+
+        # Stage 3: delete node-empty rows/columns to a fixed point.  Existing
+        # wires on a candidate line are discarded and rerouted; removing one
+        # changes coordinates and phases, so every deletion is followed by a
+        # complete legal reroute.
+        empty_line_started = time.perf_counter()
+        empty_line_reductions = 0
+        empty_line_exhausted = False
+        while empty_line_reductions < max_iters:
+            empty_candidates = self._empty_line_candidates()
+            if not empty_candidates:
+                break
+            improved_this_round = False
+            for axis, line in empty_candidates:
+                if (
+                    self.contraction_empty_line_evaluations
+                    >= empty_line_evaluation_budget
+                    or time.perf_counter() - empty_line_started
+                    >= empty_line_time_limit
+                ):
+                    empty_line_exhausted = True
+                    break
+                self.contraction_empty_line_evaluations += 1
+                self.contraction_evaluations += 1
+                success, old_metrics, new_metrics = self._try_delete_empty_line(
+                    axis,
+                    line,
+                    verbose=False,
+                )
+                if not success:
+                    continue
+
+                reductions += 1
+                empty_line_reductions += 1
+                improved_this_round = True
+                last_legal_coords = self.coords.clone()
+                self.contraction_history.append(
+                    {
+                        "step": int(reductions),
+                        "mode": (
+                            "empty_row_delete" if axis == "y"
+                            else "empty_col_delete"
+                        ),
+                        "axis": str(axis),
+                        "line": int(line),
+                        "old_width": int(old_metrics["width"]),
+                        "old_height": int(old_metrics["height"]),
+                        "width": int(new_metrics["width"]),
+                        "height": int(new_metrics["height"]),
+                        "area": int(new_metrics["area"]),
+                        "old_used_cell_count": int(old_metrics["used_cell_count"]),
+                        "used_cell_count": int(new_metrics["used_cell_count"]),
+                        "old_routed_wire_cells": int(old_metrics["routed_wire_cells"]),
+                        "routed_wire_cells": int(new_metrics["routed_wire_cells"]),
+                    }
+                )
+                if verbose:
+                    print(
+                        "[verified phase contract:empty-{}] line {}, area={}x{}".format(
+                            "row" if axis == "y" else "col",
+                            line,
+                            new_metrics["width"],
+                            new_metrics["height"],
+                        )
+                    )
+                break
+            if empty_line_exhausted or not improved_this_round:
+                break
+
+        self.contraction_exhausted = bool(
+            global_exhausted or recursive_exhausted or empty_line_exhausted
+        )
+
+        if not self._reroute_and_validate_current_coords(verbose=False):
+            self.coords = last_legal_coords
+            self._coord_cache_dirty = True
+            if not self._reroute_and_validate_current_coords(verbose=False):
+                raise RuntimeError("failed to restore last legal phase-contracted layout")
         return reductions
 
     # 获取虚拟节点坐标
@@ -755,9 +1358,24 @@ class NormalGraphDraw:
             if int(fout) in self._node_id_to_idx
         ]
         fanout_count = len(fanouts)
+        fanin_count = sum(
+            int(fanin) in self._node_id_to_idx
+            for fanin in self.parse.get_fanins(dst)
+        )
         horizontal_span = abs(dst_x - src_x)
         vertical_span = max(0, dst_y - src_y)
-        return (-fanout_count, -horizontal_span, -vertical_span, src, dst)
+        # Reserve scarce sink ports before long transit wires can occupy them.
+        # The previous long-edge-first order was the dominant cause of final
+        # source/sink port blockage in the full-circuit diagnostics.
+        return (
+            -fanin_count,
+            horizontal_span + vertical_span,
+            -fanout_count,
+            horizontal_span,
+            vertical_span,
+            src,
+            dst,
+        )
 
     # 对每一层的布线对 (start, end) 按 |x_end - x_start| 从小到大排序。
     def sort_route_sequence(self):
@@ -817,21 +1435,22 @@ class NormalGraphDraw:
             )
         return failed_pairs
 
-    def reroute_with_priority_pairs(self, priority_pairs, verbose=False):
+    def reroute_with_priority_pairs(
+        self,
+        priority_pairs,
+        verbose=False,
+        reverse_priority=False,
+        reverse_remaining=False,
+        explicit_priority_order=None,
+    ):
         """
         清空并重布线：优先布线 priority_pairs，并且优先边尝试两种扇入方向。
         """
-        self.sort_route_sequence()
-        priority = {(int(s), int(d)) for s, d in priority_pairs}
-        all_pairs = []
-
-        for layer in sorted(self.parse.same_layer_route_pairs.keys()):
-            all_pairs.extend((int(src), int(dst)) for src, dst in self.parse.same_layer_route_pairs[layer])
-        all_pairs.extend((int(src), int(dst)) for src, dst in self.parse.differ_layer_route_pairs)
-
-        all_pairs = sorted(
-            all_pairs,
-            key=lambda p: (0 if p in priority else 1),
+        all_pairs = self._materialize_priority_route_order(
+            priority_pairs,
+            reverse_priority=reverse_priority,
+            reverse_remaining=reverse_remaining,
+            explicit_priority_order=explicit_priority_order,
         )
 
         self.place_all_nodes_on_chessboard()
@@ -856,6 +1475,370 @@ class NormalGraphDraw:
                 f"失败数量: {len(failed_pairs)}"
             )
         return failed_pairs
+
+    def _materialize_priority_route_order(
+        self,
+        priority_pairs,
+        reverse_priority=False,
+        reverse_remaining=False,
+        explicit_priority_order=None,
+    ):
+        priority = {(int(s), int(d)) for s, d in priority_pairs}
+        all_pairs = self._all_route_pairs()
+        if explicit_priority_order:
+            seen_priority = set()
+            priority_pairs_ordered = []
+            all_pair_set = set(all_pairs)
+            for src, dst in explicit_priority_order:
+                pair = (int(src), int(dst))
+                if pair in all_pair_set and pair not in seen_priority:
+                    priority_pairs_ordered.append(pair)
+                    seen_priority.add(pair)
+            priority_pairs_ordered.extend(
+                pair
+                for pair in all_pairs
+                if pair in priority and pair not in seen_priority
+            )
+        else:
+            priority_pairs_ordered = [pair for pair in all_pairs if pair in priority]
+        remaining_pairs = [pair for pair in all_pairs if pair not in priority]
+        if reverse_priority:
+            priority_pairs_ordered.reverse()
+        if reverse_remaining:
+            remaining_pairs.reverse()
+        return priority_pairs_ordered + remaining_pairs
+
+    def _all_route_pairs(self):
+        self.sort_route_sequence()
+        all_pairs = []
+        for layer in sorted(self.parse.same_layer_route_pairs.keys()):
+            all_pairs.extend(
+                (int(src), int(dst))
+                for src, dst in self.parse.same_layer_route_pairs[layer]
+            )
+        all_pairs.extend(
+            (int(src), int(dst))
+            for src, dst in self.parse.differ_layer_route_pairs
+        )
+        return all_pairs
+
+    def _net_grouped_route_order(self):
+        return sorted(
+            self._all_route_pairs(),
+            key=lambda pair: (
+                self.parse.get_layer_of_node(int(pair[0])),
+                -len(self.parse.get_fanouts(int(pair[0]))),
+                int(pair[0]),
+                self._route_priority_key(pair),
+            ),
+        )
+
+    def _sink_grouped_route_order(self):
+        return sorted(
+            self._all_route_pairs(),
+            key=lambda pair: (
+                -len(self.parse.get_fanins(int(pair[1]))),
+                self.parse.get_layer_of_node(int(pair[1])),
+                int(pair[1]),
+                self._route_priority_key(pair),
+            ),
+        )
+
+    def _blocking_route_pairs(self, failed_pairs):
+        critical_coords = set()
+        problem_nodes = set()
+        for src, dst in failed_pairs:
+            src = int(src)
+            dst = int(dst)
+            problem_nodes.update((src, dst))
+            src_x, src_y = self.get_node_coord(src)
+            dst_x, dst_y = self.get_node_coord(dst)
+            critical_coords.add((int(src_x), int(src_y + 1)))
+            critical_coords.add((int(dst_x - 1), int(dst_y)))
+            critical_coords.add((int(dst_x), int(dst_y - 1)))
+
+        blockers = set()
+        for edge, path in self.mapChessboard.nodePairRoutes.items():
+            normalized = (int(edge[0]), int(edge[1]))
+            if normalized in failed_pairs:
+                continue
+            if any((int(x), int(y)) in critical_coords for x, y in path[1:-1]):
+                blockers.add(normalized)
+            elif normalized[0] in problem_nodes or normalized[1] in problem_nodes:
+                blockers.add(normalized)
+        return blockers
+
+    def targeted_ripup_reroute(
+        self,
+        failed_pairs,
+        max_attempts=16,
+        verbose=False,
+        baseline_order=None,
+    ):
+        """Search a small deterministic ordering of failed edges and blockers."""
+        if not failed_pairs or len(failed_pairs) > 8:
+            return failed_pairs
+
+        failed_list = sorted(
+            ((int(src), int(dst)) for src, dst in failed_pairs),
+            key=self._route_priority_key,
+        )
+        blockers = sorted(
+            self._blocking_route_pairs(failed_pairs),
+            key=self._route_priority_key,
+        )
+        candidates = []
+        seen = set()
+
+        def add_candidate(order):
+            order = tuple(order)
+            if order and order not in seen:
+                seen.add(order)
+                candidates.append(order)
+
+        add_candidate(baseline_order or ())
+        # Preserve the successful part of the checkpoint ordering and promote
+        # a residual edge only as far as the wire that blocks its critical
+        # port/corridor.  Moving every blocker to the front can solve the local
+        # edge but needlessly destabilizes the already-routed global design.
+        if baseline_order:
+            stable_order = [
+                (int(src), int(dst)) for src, dst in baseline_order
+            ]
+            stable_positions = {
+                pair: index for index, pair in enumerate(stable_order)
+            }
+            stable_blockers = sorted(
+                (pair for pair in blockers if pair in stable_positions),
+                key=lambda pair: stable_positions[pair],
+            )
+            for failed_pair in failed_list:
+                if failed_pair not in stable_positions:
+                    continue
+                for blocker_pair in stable_blockers:
+                    promoted = [
+                        pair for pair in stable_order if pair != failed_pair
+                    ]
+                    insert_at = promoted.index(blocker_pair)
+                    promoted.insert(insert_at, failed_pair)
+                    add_candidate(promoted)
+        add_candidate(failed_list + blockers)
+        add_candidate(list(reversed(failed_list)) + blockers)
+        add_candidate(failed_list + list(reversed(blockers)))
+        if len(failed_list) <= 6:
+            for permutation in itertools.islice(
+                itertools.permutations(failed_list),
+                max(0, int(max_attempts)),
+            ):
+                add_candidate(list(permutation) + blockers)
+        for offset in range(1, min(len(blockers), max(0, int(max_attempts))) + 1):
+            add_candidate(
+                failed_list + blockers[offset:] + blockers[:offset]
+            )
+
+        best_order = None
+        best_failed = failed_pairs
+        for order in candidates[:max(1, int(max_attempts))]:
+            attempt_failed = self.reroute_with_priority_pairs(
+                order,
+                verbose=False,
+                explicit_priority_order=order,
+            )
+            if verbose:
+                print(
+                    "[targeted rip-up attempt] priority_head={} failed={}".format(
+                        list(order[:min(6, len(order))]),
+                        sorted((int(src), int(dst)) for src, dst in attempt_failed),
+                    )
+                )
+            if best_order is None or len(attempt_failed) < len(best_failed):
+                best_failed = attempt_failed
+                best_order = order
+            if not attempt_failed:
+                self._last_route_priority = set(order)
+                self._last_route_reverse_priority = False
+                self._last_route_reverse_remaining = False
+                self._last_route_explicit_priority = tuple(order)
+                if verbose:
+                    print(
+                        "[targeted rip-up] legal after {} explicit priority edges".format(
+                            len(order)
+                        )
+                    )
+                return attempt_failed
+
+        if best_order is not None:
+            best_failed = self.reroute_with_priority_pairs(
+                best_order,
+                verbose=False,
+                explicit_priority_order=best_order,
+            )
+        return best_failed
+
+    def targeted_corridor_expansion(
+        self,
+        failed_pairs,
+        baseline_order,
+        max_candidates=4,
+        timeout_sec=5.0,
+        verbose=False,
+    ):
+        """Open a small set of dedicated corridors around a residual failure.
+
+        Global failure-driven expansion is effective while many nets are
+        blocked, but it can oscillate once only one or two saturated monotone
+        corridors remain.  Try several bounded endpoint/mid-span cuts from the
+        same checkpoint, reroute the complete design, and retain only the best
+        legal candidate.  This makes the operation transactional: an
+        unsuccessful local repair cannot enlarge or degrade the saved layout.
+        """
+        if not failed_pairs or len(failed_pairs) > 4:
+            return failed_pairs
+
+        started = time.perf_counter()
+        checkpoint_coords = self.coords.clone()
+        checkpoint_order = tuple(baseline_order or self._all_route_pairs())
+        best_coords = checkpoint_coords.clone()
+        best_order = checkpoint_order
+        best_failed = failed_pairs
+        plans = []
+        seen_plans = set()
+
+        def add_plan(row_ops, col_ops, label):
+            normalized = (
+                tuple(sorted(set(int(value) for value in row_ops))),
+                tuple(sorted(set(int(value) for value in col_ops))),
+            )
+            if (not normalized[0] and not normalized[1]) or normalized in seen_plans:
+                return
+            seen_plans.add(normalized)
+            plans.append((normalized[0], normalized[1], label))
+
+        launch_rows = []
+        sink_rows = []
+        sink_cols = []
+        midpoint_rows = []
+        midpoint_cols = []
+        launch_cols = []
+        for (src, dst), direction in failed_pairs.items():
+            src_x, src_y = self.get_node_coord(int(src))
+            dst_x, dst_y = self.get_node_coord(int(dst))
+            launch_rows.append(int(src_y + 1))
+            if dst_x > src_x:
+                launch_cols.append(int(src_x + 1))
+                midpoint_cols.append(int((src_x + dst_x + 1) // 2))
+            if dst_y > src_y + 1:
+                midpoint_rows.append(int((src_y + dst_y + 1) // 2))
+            if tuple(direction) == (0, -1):
+                sink_rows.append(int(dst_y))
+            else:
+                sink_cols.append(int(dst_x))
+
+        # First reserve only endpoint capacity; then add one orthogonal bypass.
+        # The last candidate combines both axes for a completely saturated
+        # monotone rectangle.
+        add_plan(launch_rows + sink_rows, sink_cols, "endpoint")
+        add_plan(
+            launch_rows + midpoint_rows + sink_rows,
+            sink_cols,
+            "horizontal-bypass",
+        )
+        add_plan(
+            launch_rows + sink_rows,
+            launch_cols + midpoint_cols + sink_cols,
+            "vertical-bypass",
+        )
+        add_plan(
+            launch_rows + midpoint_rows + sink_rows,
+            launch_cols + midpoint_cols + sink_cols,
+            "two-axis-bypass",
+        )
+
+        for row_ops, col_ops, label in plans[:max(1, int(max_candidates))]:
+            if time.perf_counter() - started >= max(0.1, float(timeout_sec)):
+                break
+            self.coords = checkpoint_coords.clone()
+            self._coord_cache_dirty = True
+            self.move_rows_and_cols(row_ops, col_ops)
+            if self._right_down_invariant_violations():
+                continue
+            self._refresh_fanin_directions_for_current_coords()
+            if verbose:
+                # Distinguish a geometric/port-capacity impossibility from an
+                # ordering conflict.  The probe is discarded by the complete
+                # reroute immediately below.
+                self.place_all_nodes_on_chessboard()
+                isolated = {}
+                for src, dst in failed_pairs:
+                    preferred = self._infer_route_direction(src, dst)
+                    path, used_direction = self._route_edge_with_direction_options(
+                        src, dst, preferred
+                    )
+                    isolated[(int(src), int(dst))] = {
+                        "path_length": int(len(path)),
+                        "direction": tuple(int(value) for value in used_direction),
+                    }
+                print("[targeted corridor probe] {} {}".format(label, isolated))
+            attempt_failed = self.reroute_with_priority_pairs(
+                checkpoint_order,
+                verbose=False,
+                explicit_priority_order=checkpoint_order,
+            )
+            attempt_failed = self.targeted_ripup_reroute(
+                attempt_failed,
+                max_attempts=12,
+                verbose=False,
+                baseline_order=checkpoint_order,
+            )
+            width, height = self.mapChessboard.computeLayoutArea()
+            event = {
+                "round": int(len(self.route_expansion_history) + 1),
+                "previous_failed": int(len(failed_pairs)),
+                "failed": int(len(attempt_failed)),
+                "inserted_rows": [int(value) for value in row_ops],
+                "inserted_cols": [int(value) for value in col_ops],
+                "shifted_target_rows": 0,
+                "propagated_right_down_moves": 0,
+                "route_variant": "targeted-corridor-{}".format(label),
+                "width": int(max(0, width)),
+                "height": int(max(0, height)),
+                "elapsed_sec": float(time.perf_counter() - started),
+            }
+            self.route_expansion_history.append(event)
+            if verbose:
+                print(
+                    "[targeted corridor] {} failed {}->{} rows={} cols={} area={}x{} edges={}".format(
+                        label,
+                        len(failed_pairs),
+                        len(attempt_failed),
+                        list(row_ops),
+                        list(col_ops),
+                        event["width"],
+                        event["height"],
+                        sorted((int(src), int(dst)) for src, dst in attempt_failed),
+                    )
+                )
+            if len(attempt_failed) < len(best_failed):
+                best_failed = attempt_failed
+                best_coords = self.coords.clone()
+                best_order = tuple(
+                    self._last_route_explicit_priority or checkpoint_order
+                )
+            if not attempt_failed:
+                self._last_route_explicit_priority = tuple(
+                    self._last_route_explicit_priority or checkpoint_order
+                )
+                return attempt_failed
+
+        self.coords = best_coords
+        self._coord_cache_dirty = True
+        self._refresh_fanin_directions_for_current_coords()
+        best_failed = self.reroute_with_priority_pairs(
+            best_order,
+            verbose=False,
+            explicit_priority_order=best_order,
+        )
+        return best_failed
 
     def _collect_used_coords(self):
         self._ensure_coord_cache()
@@ -966,39 +1949,53 @@ class NormalGraphDraw:
         return self.verify_clock_template_consistency(verbose=verbose)
 
     def failed_pairs_to_insert_ops(self, failed_pairs, max_ops_per_iter=4):
-        row_ops = []
-        col_ops = []
+        row_pressure = Counter()
+        col_pressure = Counter()
         for (src, dst), direction in failed_pairs.items():
             src_x, src_y = self.get_node_coord(src)
             dst_x, dst_y = self.get_node_coord(dst)
             launch_blocked = self._is_launch_blocked(src, dst, direction)
             sink_blocked = self._is_sink_blocked(src, dst, direction)
 
+            # Every right/down route launches below its source.  Repeated
+            # failures sharing a source row therefore vote strongly for one
+            # dedicated horizontal corridor immediately below that row.
+            row_pressure[int(src_y + 1)] += 8 if launch_blocked else 4
+
             if launch_blocked:
-                # Source-side congestion is usually more harmful than destination spacing:
-                # shift the source column/right half to carve a dedicated launch corridor.
-                col_ops.append(src_x)
-                if src_y + 1 < dst_y:
-                    row_ops.append(src_y + 1)
+                if src_x < dst_x:
+                    col_pressure[int(src_x + 1)] += 5
 
             if sink_blocked:
                 if direction == (0, -1):
-                    row_ops.append(dst_y)
+                    row_pressure[int(dst_y)] += 8
                 elif direction == (-1, 0):
-                    col_ops.append(dst_x)
+                    col_pressure[int(dst_x)] += 8
 
             if direction == (0, -1):
-                row_ops.append(dst_y)
+                row_pressure[int(dst_y)] += 5
             elif direction == (-1, 0):
-                col_ops.append(dst_x)
+                col_pressure[int(dst_x)] += 5
             else:
-                row_ops.append(dst_y)
-            if abs(dst_x - src_x) > 1:
-                col_ops.append(min(src_x, dst_x) + 1)
+                row_pressure[int(dst_y)] += 3
+
+            # Mid-span cuts create a bypass through the congested rectangle,
+            # while endpoint cuts reserve legal launch/sink ports.
+            if dst_x - src_x > 1:
+                col_pressure[int((src_x + dst_x + 1) // 2)] += 3
+                col_pressure[int(src_x + 1)] += 2
             if dst_y - src_y > 1:
-                row_ops.append(src_y + 1)
-        row_ops = sorted(set(int(r) for r in row_ops))[:max_ops_per_iter]
-        col_ops = sorted(set(int(c) for c in col_ops))[:max_ops_per_iter]
+                row_pressure[int((src_y + dst_y + 1) // 2)] += 3
+
+        limit = max(1, int(max_ops_per_iter))
+        row_ops = [
+            cut for cut, _ in sorted(row_pressure.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        ]
+        col_ops = [
+            cut for cut, _ in sorted(col_pressure.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        ]
+        row_ops.sort()
+        col_ops.sort()
         return row_ops, col_ops
 
     def _move_row_segment_right(self, row_y, start_x, delta):
@@ -1024,7 +2021,9 @@ class NormalGraphDraw:
 
     def ml_guided_node_reposition(self, failed_pairs, max_nodes=None, max_shift=None):
         """
-        使用 GCN embedding 估计失败边“修复收益”，优先移动高收益目的节点。
+        使用确定性结构特征估计失败边“修复收益”，优先移动高收益目的节点。
+
+        方法名为兼容既有调用保留；生产排序已不再训练 GCN。
         """
         if max_nodes is None:
             max_nodes = int(self.ml_tuning["ml_max_nodes"])
@@ -1067,6 +2066,42 @@ class NormalGraphDraw:
 
         return moved
 
+    def separate_failed_vertical_channels(self, failed_pairs, max_nodes=8):
+        """Open horizontal freedom for failed near-vertical connections.
+
+        A purely global column insertion cannot separate a source and sink that
+        share the same x coordinate.  Shift the sink row segment just enough to
+        provide a left-entry port and a one-column detour; later outer-in
+        contraction removes the margin when it is not required.
+        """
+        pressure = Counter()
+        for src, dst in failed_pairs:
+            src_x, _ = self.get_node_coord(src)
+            dst_x, _ = self.get_node_coord(dst)
+            if dst_x - src_x < 2:
+                pressure[int(dst)] += 1
+
+        moved = 0
+        for dst, _ in sorted(pressure.items(), key=lambda item: (-item[1], item[0])):
+            if moved >= max(1, int(max_nodes)):
+                break
+            dst_x, dst_y = self.get_node_coord(dst)
+            required_x = dst_x
+            for src in self.parse.get_fanins(int(dst)):
+                src = int(src)
+                if src not in self._node_id_to_idx:
+                    continue
+                src_x, _ = self.get_node_coord(src)
+                required_x = max(required_x, int(src_x) + 2)
+            shift = max(0, int(required_x - dst_x))
+            if shift <= 0:
+                continue
+            self._move_row_segment_right(dst_y, dst_x, shift)
+            moved += 1
+        if moved:
+            self._refresh_fanin_directions_for_current_coords()
+        return moved
+
     def clock_template_conflicts_to_insert_ops(self, conflicts, max_ops_per_iter=4):
         row_ops = []
         col_ops = []
@@ -1083,46 +2118,286 @@ class NormalGraphDraw:
             max_ops_per_iter=max_ops_per_iter,
         )
 
-    def _route_with_repair(self, verbose=False, repair_iters=2, use_ml_reposition=True):
+    def route_until_success(
+        self,
+        verbose=False,
+        max_expansion_rounds=None,
+        timeout_sec=None,
+    ):
+        """Route all edges, expanding failed regions until legal or exhausted.
+
+        Row/column insertion preserves the right/down partial order.  Expansion
+        is intentionally not rolled back merely because one round reaches a
+        plateau: a new corridor can require several cuts before it connects
+        both endpoint ports.
+        """
+        max_rounds = (
+            self.route_expansion_rounds
+            if max_expansion_rounds is None
+            else max(0, int(max_expansion_rounds))
+        )
+        time_limit = (
+            self.route_expansion_timeout_sec
+            if timeout_sec is None
+            else max(0.1, float(timeout_sec))
+        )
+        violations = self._right_down_invariant_violations()
+        if violations:
+            raise RuntimeError(
+                "right/down placement invariant violated for {} edges".format(len(violations))
+            )
+
+        started = time.perf_counter()
+        self.route_expansion_exhausted = False
+        self.place_all_nodes_on_chessboard()
         failed_pairs = self.sequence_route_all_edges(verbose=verbose)
-        for _ in range(max(0, int(repair_iters))):
+        if not failed_pairs:
+            self._last_route_priority = set()
+            self._last_route_reverse_priority = False
+            self._last_route_reverse_remaining = False
+            self._last_route_explicit_priority = tuple()
+
+        best_failed_count = len(failed_pairs)
+        rounds_without_improvement = 0
+        failure_signature_hits = Counter()
+        if failed_pairs:
+            failure_signature_hits[
+                tuple(sorted((int(src), int(dst)) for src, dst in failed_pairs))
+            ] += 1
+        best_failed_coords = self.coords.clone()
+        best_failed_order = tuple(self._all_route_pairs())
+
+        for round_index in range(max_rounds):
             if not failed_pairs:
                 break
-            priority_retry = self.reroute_with_priority_pairs(set(failed_pairs.keys()), verbose=False)
-            if len(priority_retry) < len(failed_pairs):
-                failed_pairs = priority_retry
+            elapsed = time.perf_counter() - started
+            if elapsed >= time_limit:
+                self.route_expansion_exhausted = True
+                break
+
+            per_axis_limit = min(
+                int(self.ml_tuning["route_insert_max_ops"]),
+                max(2, int(math.ceil(math.sqrt(len(failed_pairs))))),
+            )
+            shifted_targets = self.separate_failed_vertical_channels(
+                failed_pairs,
+                max_nodes=per_axis_limit,
+            )
+            # A local sink-row shift can also move unrelated gates on that
+            # row.  Propagate every new x requirement through the downstream
+            # DAG before inserting global corridors; otherwise those moved
+            # gates may end up to the right of their fanouts.
+            propagated_moves = 0
+            if shifted_targets:
+                propagated_moves = self.legalize_right_down_ports(
+                    max_passes=max(8, len(self.parse.layer_nodes))
+                )
+            row_ops, col_ops = self.failed_pairs_to_insert_ops(
+                failed_pairs,
+                max_ops_per_iter=per_axis_limit,
+            )
+            if not row_ops and not col_ops:
+                self.route_expansion_exhausted = True
+                break
+
+            previous_count = len(failed_pairs)
+            self.move_rows_and_cols(row_ops, col_ops)
+            violations = self._right_down_invariant_violations()
+            if violations:
+                raise RuntimeError(
+                    "row/column expansion broke right/down invariant for {} edges".format(
+                        len(violations)
+                    )
+                )
+            self._refresh_fanin_directions_for_current_coords()
+
+            # Alternate failed-first and global congestion order.  Failed-first
+            # opens the new local corridor; the global order prevents that edge
+            # from permanently starving unrelated high-fanout nets.
+            route_variant = round_index % 6
+            if route_variant in (0, 2):
+                attempt_priority = set(failed_pairs.keys())
+                current_route_order = tuple(
+                    self._materialize_priority_route_order(
+                        attempt_priority,
+                        reverse_priority=(route_variant == 2),
+                    )
+                )
+                failed_pairs = self.reroute_with_priority_pairs(
+                    attempt_priority,
+                    verbose=False,
+                    reverse_priority=(route_variant == 2),
+                )
                 if not failed_pairs:
-                    break
+                    self._last_route_priority = attempt_priority
+                    self._last_route_reverse_priority = route_variant == 2
+                    self._last_route_reverse_remaining = False
+                    self._last_route_explicit_priority = tuple()
+            elif route_variant == 1:
+                current_route_order = tuple(self._all_route_pairs())
+                self.place_all_nodes_on_chessboard()
+                failed_pairs = self.sequence_route_all_edges(verbose=False)
+                if not failed_pairs:
+                    self._last_route_priority = set()
+                    self._last_route_reverse_priority = False
+                    self._last_route_reverse_remaining = False
+                    self._last_route_explicit_priority = tuple()
+            elif route_variant == 3:
+                current_route_order = tuple(
+                    self._materialize_priority_route_order(
+                        (),
+                        reverse_remaining=True,
+                    )
+                )
+                failed_pairs = self.reroute_with_priority_pairs(
+                    (),
+                    verbose=False,
+                    reverse_remaining=True,
+                )
+                if not failed_pairs:
+                    self._last_route_priority = set()
+                    self._last_route_reverse_priority = False
+                    self._last_route_reverse_remaining = True
+                    self._last_route_explicit_priority = tuple()
+            else:
+                explicit_order = (
+                    self._net_grouped_route_order()
+                    if route_variant == 4 else
+                    self._sink_grouped_route_order()
+                )
+                current_route_order = tuple(explicit_order)
+                failed_pairs = self.reroute_with_priority_pairs(
+                    explicit_order,
+                    verbose=False,
+                    explicit_priority_order=explicit_order,
+                )
+                if not failed_pairs:
+                    self._last_route_priority = set(explicit_order)
+                    self._last_route_reverse_priority = False
+                    self._last_route_reverse_remaining = False
+                    self._last_route_explicit_priority = tuple(explicit_order)
 
-            prev_coords = self.coords.clone()
-            prev_failed_pairs = failed_pairs
+            current_failed_count = len(failed_pairs)
+            current_signature = tuple(
+                sorted((int(src), int(dst)) for src, dst in failed_pairs)
+            )
+            failure_signature_hits[current_signature] += 1
+            if current_failed_count < best_failed_count:
+                best_failed_count = current_failed_count
+                rounds_without_improvement = 0
+                best_failed_coords = self.coords.clone()
+                best_failed_order = tuple(current_route_order)
+            else:
+                rounds_without_improvement += 1
 
-            moved_nodes = 0
-            if use_ml_reposition:
-                moved_nodes = self.ml_guided_node_reposition(failed_pairs)
+            width, height = self.mapChessboard.computeLayoutArea()
+            event = {
+                "round": int(len(self.route_expansion_history) + 1),
+                "previous_failed": int(previous_count),
+                "failed": int(len(failed_pairs)),
+                "inserted_rows": [int(value) for value in row_ops],
+                "inserted_cols": [int(value) for value in col_ops],
+                "shifted_target_rows": int(shifted_targets),
+                "propagated_right_down_moves": int(propagated_moves),
+                "route_variant": (
+                    "failed-first"
+                    if route_variant == 0 else
+                    "global"
+                    if route_variant == 1 else
+                    "failed-first-reverse"
+                    if route_variant == 2 else
+                    "global-reverse"
+                    if route_variant == 3 else
+                    "net-grouped"
+                    if route_variant == 4 else
+                    "sink-grouped"
+                ),
+                "width": int(max(0, width)),
+                "height": int(max(0, height)),
+                "elapsed_sec": float(time.perf_counter() - started),
+            }
+            self.route_expansion_history.append(event)
+            if verbose:
+                print(
+                    "[route expand] round={} failed {}->{} rows={} cols={} area={}x{}".format(
+                        event["round"],
+                        previous_count,
+                        len(failed_pairs),
+                        row_ops,
+                        col_ops,
+                        event["width"],
+                        event["height"],
+                    )
+                )
 
-            row_ops = []
-            col_ops = []
-            if moved_nodes == 0:
-                row_ops, col_ops = self.failed_pairs_to_insert_ops(failed_pairs)
-                if not row_ops and not col_ops:
-                    break
-                self.move_rows_and_cols(row_ops, col_ops)
+            # Expansion is useful through short plateaus, but a repeated
+            # failure set with no new best for many rounds is a routing-order
+            # or port-capacity impasse.  Continuing only produces a huge board.
+            if (
+                failed_pairs
+                and rounds_without_improvement >= 12
+                and failure_signature_hits[current_signature] >= 3
+            ):
+                self.route_expansion_exhausted = True
+                pressure_note = (
+                    "; {} node(s) have more than two fanins"
+                ).format(len(self.right_down_port_capacity_nodes)) if (
+                    self.right_down_port_capacity_nodes
+                ) else ""
+                self.route_incompatibility_reason = (
+                    "routing stagnated at best_failed={} for {} rounds{}"
+                ).format(
+                    best_failed_count,
+                    rounds_without_improvement,
+                    pressure_note,
+                )
+                if verbose:
+                    print("[route expand stop] " + self.route_incompatibility_reason)
+                break
 
-            self.place_all_nodes_on_chessboard()
-            new_failed_pairs = self.sequence_route_all_edges(verbose=verbose)
-
-            if len(new_failed_pairs) < len(prev_failed_pairs):
-                failed_pairs = new_failed_pairs
-                continue
-
-            # 没有改善则回滚本轮操作
-            self.coords = prev_coords
+        if failed_pairs and best_failed_order:
+            # Restore the smallest observed failure core before targeted
+            # rip-up.  Without this checkpoint a later route-order trial can
+            # overwrite a one-edge near-solution with a much worse board.
+            self.coords = best_failed_coords
             self._coord_cache_dirty = True
-            self.place_all_nodes_on_chessboard()
-            failed_pairs = self.sequence_route_all_edges(verbose=False)
-            break
+            self._refresh_fanin_directions_for_current_coords()
+            failed_pairs = self.reroute_with_priority_pairs(
+                best_failed_order,
+                verbose=False,
+                explicit_priority_order=best_failed_order,
+            )
+            failed_pairs = self.targeted_ripup_reroute(
+                failed_pairs,
+                max_attempts=16,
+                verbose=verbose,
+                baseline_order=best_failed_order,
+            )
+            if failed_pairs:
+                failed_pairs = self.targeted_corridor_expansion(
+                    failed_pairs,
+                    baseline_order=best_failed_order,
+                    max_candidates=4,
+                    timeout_sec=min(5.0, max(1.0, time_limit * 0.2)),
+                    verbose=verbose,
+                )
+            if not failed_pairs:
+                self.route_expansion_exhausted = False
+                self.route_incompatibility_reason = ""
+
+        if failed_pairs and (
+            len(self.route_expansion_history) >= max_rounds
+            or time.perf_counter() - started >= time_limit
+        ):
+            self.route_expansion_exhausted = True
         return failed_pairs
+
+    def _route_with_repair(self, verbose=False, repair_iters=2, use_ml_reposition=True):
+        _ = use_ml_reposition  # compatibility with legacy callers
+        return self.route_until_success(
+            verbose=verbose,
+            max_expansion_rounds=max(0, int(repair_iters)),
+        )
 
     def print_latex(self, filePath=None, failed_pairs=None):
         filePath = filePath or './results/normal_Latex'
@@ -1139,7 +2414,7 @@ class NormalGraphDraw:
         route_repair_iters=3,
         phase_repair_iters=2,
         global_place_iters=5,
-        compact_iters=8,
+        compact_iters=64,
         ml_tuning=None,
         snapshot_dir=None,
     ):
@@ -1147,142 +2422,97 @@ class NormalGraphDraw:
         self.clock_template_conflict_count = 0
         self._sync_legacy_phase_status()
         self._stage_snapshot_counter = 0
+        self.route_expansion_history = []
+        self.route_expansion_exhausted = False
+        self.route_incompatibility_reason = ""
+        self._last_route_priority = set()
+        self._last_route_reverse_priority = False
+        self._last_route_reverse_remaining = False
+        self._last_route_explicit_priority = tuple()
+        self.contraction_history = []
+        self.contraction_evaluations = 0
+        self.contraction_global_evaluations = 0
+        self.contraction_recursive_evaluations = 0
+        self.contraction_empty_line_evaluations = 0
+        self.contraction_exhausted = False
         if ml_tuning:
             self.set_ml_tuning(**ml_tuning)
 
+        # 1) Graphviz+sifting order has already been computed.  Materialize a
+        # compact placement whose every fanout remains strictly right/down.
         self.caculate_rough_placement()
         self.caculate_ports_reservation()
-        failed_pairs = {}
-        best_failed_pairs = None
-        best_coords = self.coords.clone()
-
-        # 阶段1：先把布线失败数降到最小（优先全布通）
-        for _ in range(max(1, int(global_place_iters))):
-            self.place_all_nodes_on_chessboard()
-            failed_pairs = self._route_with_repair(
-                verbose=verbose,
-                repair_iters=route_repair_iters,
-                use_ml_reposition=True,
-            )
-            self._snapshot_stage_heatmap(
-                snapshot_dir,
-                f"stage1_route_iter_failed_{len(failed_pairs)}",
-                failed_pairs=failed_pairs,
+        port_legalization_moves = self.legalize_right_down_ports()
+        if verbose and port_legalization_moves:
+            print("[port legalize] shifted row segments: {}".format(port_legalization_moves))
+        violations = self._right_down_invariant_violations()
+        if violations:
+            raise RuntimeError(
+                "initial 2DDWave placement is not right/down reachable for {} edges".format(
+                    len(violations)
+                )
             )
 
-            if best_failed_pairs is None or len(failed_pairs) < len(best_failed_pairs):
-                best_failed_pairs = dict(failed_pairs)
-                best_coords = self.coords.clone()
-                if verbose:
-                    print(f"[布局搜索] 当前最优失败边数量: {len(best_failed_pairs)}")
-
-            if not failed_pairs:
-                break
-
-            moved_nodes = self.ml_guided_node_reposition(
-                failed_pairs,
-                max_nodes=int(self.ml_tuning["global_ml_max_nodes"]),
-                max_shift=int(self.ml_tuning["global_ml_max_shift"]),
-            )
-            if moved_nodes > 0:
-                if verbose:
-                    print(f"布线失败修复：ML移动节点数量 {moved_nodes}")
-                continue
-
-            row_ops, col_ops = self.failed_pairs_to_insert_ops(
-                failed_pairs,
-                max_ops_per_iter=int(self.ml_tuning["route_insert_max_ops"]),
-            )
-            if not row_ops and not col_ops:
-                break
-            if verbose:
-                print(f"布线失败修复：插入行{row_ops}, 列{col_ops}")
-            self.move_rows_and_cols(row_ops, col_ops)
-
-        # 回滚到历史最佳布局并重新路由，防止坏动作累积
-        if best_failed_pairs is not None:
-            self.coords = best_coords.clone()
-            self._coord_cache_dirty = True
-            self.place_all_nodes_on_chessboard()
-            failed_pairs = self._route_with_repair(
-                verbose=False,
-                repair_iters=max(1, int(route_repair_iters // 2)),
-                use_ml_reposition=False,
-            )
-            self._snapshot_stage_heatmap(
-                snapshot_dir,
-                f"stage1_converged_failed_{len(failed_pairs)}",
-                failed_pairs=failed_pairs,
-            )
-            if verbose:
-                print(f"[布局收敛] 最终失败边数量: {len(failed_pairs)}")
-
-        # 阶段2：未全布通则不允许做 2DDWave 模板一致性校验
+        # 2) Route, and on every failure insert rows/columns selected from the
+        # failed endpoint pressure map.  Legacy finite repair/global-move knobs
+        # are accepted for CLI compatibility but no longer terminate a plateau.
+        _ = (route_repair_iters, global_place_iters)
+        failed_pairs = self.route_until_success(verbose=verbose)
+        self._snapshot_stage_heatmap(
+            snapshot_dir,
+            "stage2_route_{}".format("success" if not failed_pairs else "exhausted"),
+            failed_pairs=failed_pairs,
+        )
         if failed_pairs:
-            self._snapshot_stage_heatmap(
-                snapshot_dir,
-                "stage2_skip_template_check_due_to_route_fail",
-                failed_pairs=failed_pairs,
-            )
             if verbose:
-                print(f"仍有未完成布线，跳过 2DDWave 模板一致性校验，失败边数量: {len(failed_pairs)}")
+                print(
+                    "路由扩容预算耗尽，仍有失败边 {}，不导出为合法版图".format(
+                        len(failed_pairs)
+                    )
+                )
             self._record_failed_pairs(failed_pairs)
             return failed_pairs
 
-        # 阶段3：在全布通前提下做 2DDWave 模板一致性校验/修复
-        for _ in range(max(0, int(phase_repair_iters)) + 1):
+        # 3) Validate the 2DDWave phase template.  A phase conflict triggers
+        # geometric expansion followed by the same all-edge routing closure.
+        template_rounds = max(
+            self.template_expansion_rounds,
+            max(0, int(phase_repair_iters)) + 1,
+        )
+        conflicts = []
+        for template_round in range(template_rounds):
             template_ok, conflicts = self.verify_clock_template_consistency(verbose=verbose)
             if template_ok:
+                # 4) Only a completely legal result may be contracted.  Nodes
+                # absorb adjacent cells of their own single wires in top-down
+                # and bottom-up sweeps, recursively compact internal layers,
+                # then delete blank rows/columns; every rejected action restores
+                # and reroutes the preceding legal state.
                 compact_reductions = self.compact_layout(
                     max_iters=compact_iters,
                     verbose=verbose,
                 )
-                if compact_reductions > 0:
-                    self._snapshot_stage_heatmap(
-                        snapshot_dir,
-                        f"stage4_compacted_{compact_reductions}",
-                        failed_pairs=failed_pairs,
-                    )
-                self._snapshot_stage_heatmap(
-                    snapshot_dir,
-                    "stage3_template_check_success",
-                    failed_pairs=failed_pairs,
-                )
-                self._record_failed_pairs(failed_pairs)
-                return failed_pairs
-
-            conflict_pairs = {tuple(map(int, node_pair)) for _, _, node_pair, _, _ in conflicts}
-            if conflict_pairs:
-                new_failed = self.reroute_with_priority_pairs(conflict_pairs, verbose=False)
-                if not new_failed:
-                    template_ok, conflicts = self.verify_clock_template_consistency(verbose=verbose)
-                    if template_ok:
-                        compact_reductions = self.compact_layout(
-                            max_iters=compact_iters,
-                            verbose=verbose,
-                        )
-                        if compact_reductions > 0:
-                            self._snapshot_stage_heatmap(
-                                snapshot_dir,
-                                f"stage4_compacted_{compact_reductions}",
-                                failed_pairs=failed_pairs,
-                            )
+                # ``compact_layout`` validates and reroutes every accepted cut;
+                # rerouting once more with a different edge order can destroy
+                # a legal dense solution and trigger needless re-expansion.
+                template_ok, conflicts = self.verify_clock_template_consistency(verbose=False)
+                if not template_ok:
+                    # Compaction changed path parity; expand at the conflict in
+                    # the next loop instead of returning a stale success flag.
+                    if verbose:
+                        print("紧凑化后模板需要重新扩容，冲突数: {}".format(len(conflicts)))
+                else:
+                    if compact_reductions > 0:
                         self._snapshot_stage_heatmap(
                             snapshot_dir,
-                            "stage3_template_check_success_after_priority_reroute",
+                            f"stage4_compacted_{compact_reductions}",
                             failed_pairs=failed_pairs,
                         )
-                        self._record_failed_pairs(failed_pairs)
-                        return failed_pairs
-                else:
-                    failed_pairs = new_failed
                     self._snapshot_stage_heatmap(
                         snapshot_dir,
-                        f"stage3_route_degrade_failed_{len(failed_pairs)}",
+                        "stage4_legal_cell_layout",
                         failed_pairs=failed_pairs,
                     )
-                    if verbose:
-                        print(f"模板冲突边优先重布线后出现失败边: {len(failed_pairs)}")
                     self._record_failed_pairs(failed_pairs)
                     return failed_pairs
 
@@ -1293,33 +2523,31 @@ class NormalGraphDraw:
             if not row_ops and not col_ops:
                 break
             if verbose:
-                print(f"2DDWave 模板冲突修复：插入行{row_ops}, 列{col_ops}")
+                print(
+                    "[template expand] round={} rows={} cols={} conflicts={}".format(
+                        template_round + 1,
+                        row_ops,
+                        col_ops,
+                        len(conflicts),
+                    )
+                )
             self.move_rows_and_cols(row_ops, col_ops)
-            self.place_all_nodes_on_chessboard()
-            failed_pairs = self._route_with_repair(
-                verbose=False,
-                repair_iters=max(1, int(route_repair_iters // 2)),
-                use_ml_reposition=False,
-            )
+            failed_pairs = self.route_until_success(verbose=False)
             self._snapshot_stage_heatmap(
                 snapshot_dir,
-                f"stage3_template_repair_route_failed_{len(failed_pairs)}",
+                f"stage3_template_expand_{template_round + 1}_failed_{len(failed_pairs)}",
                 failed_pairs=failed_pairs,
             )
             if failed_pairs:
-                if verbose:
-                    print(f"模板一致性修复触发布线退化，失败边数量: {len(failed_pairs)}")
                 self._record_failed_pairs(failed_pairs)
                 return failed_pairs
 
         self.clock_template_ok = False
-        self.clock_template_conflict_count = (
-            len(conflicts) if "conflicts" in locals() else self.clock_template_conflict_count
-        )
+        self.clock_template_conflict_count = len(conflicts)
         self._sync_legacy_phase_status()
         self._snapshot_stage_heatmap(
             snapshot_dir,
-            f"stage3_template_check_failed_conflicts_{self.clock_template_conflict_count}",
+            f"stage3_template_expansion_exhausted_{len(conflicts)}",
             failed_pairs=failed_pairs,
         )
         self._record_failed_pairs(failed_pairs)

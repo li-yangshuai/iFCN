@@ -1,6 +1,6 @@
 {
-  "benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41.v",
-  "resolved_benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41.v",
+  "benchmark": "/home/lys/project/github/iFCN/tests/benchmarks_f/TOY/mux41.v",
+  "resolved_benchmark": "/home/lys/project/github/iFCN/tests/benchmarks_f/TOY/mux41.v",
   "parser_safe_generated": false,
   "seed": 1,
   "seed_attempts": [
@@ -9,20 +9,219 @@
       "failed_edge_count": 0,
       "clock_template_ok": true,
       "clock_template_conflicts": 0,
-      "area": 120
+      "area": 361,
+      "route_expansion_rounds": 5,
+      "route_expansion_exhausted": false
     }
   ],
-  "output_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw",
-  "ifcn": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_normal_graph_draw.ifcn",
-  "encoded_ifcn": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_normal_graph_draw_encoded.ifcn",
-  "raw_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_raw.svg",
-  "ordered_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41.svg",
-  "physical_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_physical.svg",
-  "stage_tex_dir": "seed_1",
+  "output_dir": "/home/lys/project/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw",
+  "ifcn": "/home/lys/project/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_normal_graph_draw.ifcn",
+  "encoded_ifcn": "/home/lys/project/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_normal_graph_draw_encoded.ifcn",
+  "raw_svg": "/home/lys/project/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_raw.svg",
+  "ordered_svg": "/home/lys/project/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41.svg",
+  "physical_svg": "/home/lys/project/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_physical.svg",
+  "stage_tex_dir": "",
   "failed_edge_count": 0,
-  "width": 12,
-  "height": 10,
-  "area": 120,
-  "run_time_sec": 2.1700112179969437,
-  "algorithm_description": "normal graph draw algorithm based on GCN embedding + barycenter ordering, right-down reachable initialization, ML-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
+  "failed_edges": [],
+  "layout_legal": true,
+  "route_expansion_round_count": 5,
+  "route_expansion_exhausted": false,
+  "route_incompatibility_reason": "",
+  "right_down_port_capacity_nodes": [],
+  "route_expansion_history": [
+    {
+      "round": 1,
+      "previous_failed": 7,
+      "failed": 6,
+      "inserted_rows": [
+        1,
+        3,
+        4
+      ],
+      "inserted_cols": [
+        7,
+        8,
+        10
+      ],
+      "shifted_target_rows": 1,
+      "propagated_right_down_moves": 1,
+      "route_variant": "failed-first",
+      "width": 16,
+      "height": 11,
+      "elapsed_sec": 0.004907802998786792
+    },
+    {
+      "round": 2,
+      "previous_failed": 6,
+      "failed": 2,
+      "inserted_rows": [
+        4,
+        7,
+        8
+      ],
+      "inserted_cols": [
+        9,
+        12,
+        16
+      ],
+      "shifted_target_rows": 1,
+      "propagated_right_down_moves": 3,
+      "route_variant": "global",
+      "width": 20,
+      "height": 14,
+      "elapsed_sec": 0.010139506004634313
+    },
+    {
+      "round": 3,
+      "previous_failed": 2,
+      "failed": 2,
+      "inserted_rows": [
+        9,
+        10
+      ],
+      "inserted_cols": [
+        10,
+        17
+      ],
+      "shifted_target_rows": 0,
+      "propagated_right_down_moves": 0,
+      "route_variant": "failed-first-reverse",
+      "width": 22,
+      "height": 16,
+      "elapsed_sec": 0.01206920700496994
+    },
+    {
+      "round": 4,
+      "previous_failed": 2,
+      "failed": 1,
+      "inserted_rows": [
+        1,
+        10
+      ],
+      "inserted_cols": [
+        11,
+        19
+      ],
+      "shifted_target_rows": 0,
+      "propagated_right_down_moves": 0,
+      "route_variant": "global-reverse",
+      "width": 24,
+      "height": 18,
+      "elapsed_sec": 0.014285008001024835
+    },
+    {
+      "round": 5,
+      "previous_failed": 1,
+      "failed": 0,
+      "inserted_rows": [
+        13,
+        14
+      ],
+      "inserted_cols": [
+        15,
+        21
+      ],
+      "shifted_target_rows": 0,
+      "propagated_right_down_moves": 0,
+      "route_variant": "net-grouped",
+      "width": 26,
+      "height": 20,
+      "elapsed_sec": 0.01822380999510642
+    }
+  ],
+  "contraction_step_count": 8,
+  "contraction_evaluations": 156,
+  "contraction_exhausted": false,
+  "contraction_history": [
+    {
+      "step": 1,
+      "axis": "x",
+      "cut": 24,
+      "old_width": 26,
+      "old_height": 20,
+      "width": 25,
+      "height": 20,
+      "area": 500
+    },
+    {
+      "step": 2,
+      "axis": "y",
+      "cut": 17,
+      "old_width": 25,
+      "old_height": 20,
+      "width": 25,
+      "height": 19,
+      "area": 475
+    },
+    {
+      "step": 3,
+      "axis": "x",
+      "cut": 22,
+      "old_width": 25,
+      "old_height": 19,
+      "width": 24,
+      "height": 19,
+      "area": 456
+    },
+    {
+      "step": 4,
+      "axis": "x",
+      "cut": 21,
+      "old_width": 24,
+      "old_height": 19,
+      "width": 23,
+      "height": 19,
+      "area": 437
+    },
+    {
+      "step": 5,
+      "axis": "x",
+      "cut": 20,
+      "old_width": 23,
+      "old_height": 19,
+      "width": 22,
+      "height": 19,
+      "area": 418
+    },
+    {
+      "step": 6,
+      "axis": "x",
+      "cut": 19,
+      "old_width": 22,
+      "old_height": 19,
+      "width": 21,
+      "height": 19,
+      "area": 399
+    },
+    {
+      "step": 7,
+      "axis": "x",
+      "cut": 16,
+      "old_width": 21,
+      "old_height": 19,
+      "width": 20,
+      "height": 19,
+      "area": 380
+    },
+    {
+      "step": 8,
+      "axis": "x",
+      "cut": 15,
+      "old_width": 20,
+      "old_height": 19,
+      "width": 19,
+      "height": 19,
+      "area": 361
+    }
+  ],
+  "pre_contraction_width": 26,
+  "pre_contraction_height": 20,
+  "pre_contraction_area": 520,
+  "contraction_area_reduction": 159,
+  "contraction_area_reduction_percent": 30.576923076923077,
+  "width": 19,
+  "height": 19,
+  "area": 361,
+  "run_time_sec": 0.7437611170025775,
+  "algorithm_description": "normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, right-down reachable initialization, structural-feature-guided node reposition, failure-directed row/column expansion, legality-verified outer-in contraction, and post-routing 2DDWave template consistency verification"
 }

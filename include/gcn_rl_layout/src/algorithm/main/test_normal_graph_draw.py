@@ -28,9 +28,12 @@ import torch
 
 
 ALGO_DESC = (
-    "normal graph draw algorithm based on GCN embedding + barycenter ordering, "
-    "right-down reachable initialization, ML-guided node reposition, "
-    "iterative routing repair, greedy post-route compaction, and post-routing "
+    "normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, "
+    "right-down reachable initialization, structural-feature-guided node reposition, "
+    "failure-directed row/column expansion, legality-verified recursive "
+    "top-down/bottom-up phase-aware node-to-wire contraction, fixed-point "
+    "blank-row/column deletion, and "
+    "post-routing "
     "2DDWave template consistency verification"
 )
 
@@ -217,6 +220,9 @@ def run_layout_trial(args, benchmark_path, output_dir, stage_tex_dir, seed, atte
         output_dir,
         save_training_curve=not args.skip_training_curve,
     )
+    draw.route_expansion_rounds = max(1, int(args.max_expansion_rounds))
+    draw.route_expansion_timeout_sec = max(1.0, float(args.route_expansion_timeout_sec))
+    draw.template_expansion_rounds = max(1, int(args.template_expansion_rounds))
     failed_pairs = draw.one_step_optimization(
         verbose=args.verbose,
         route_repair_iters=args.route_repair_iters,
@@ -272,7 +278,7 @@ def default_benchmark_path():
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run the normal GCN graph-draw placement and routing flow.",
+        description="Run the Graphviz+sifting graph-draw placement and routing flow.",
     )
     parser.add_argument(
         "--benchmark",
@@ -292,18 +298,36 @@ def parse_args():
     parser.add_argument("--route-repair-iters", type=int, default=3)
     parser.add_argument("--phase-repair-iters", type=int, default=2)
     parser.add_argument("--global-place-iters", type=int, default=5)
-    parser.add_argument("--compact-iters", type=int, default=8)
+    parser.add_argument("--compact-iters", type=int, default=64)
+    parser.add_argument(
+        "--max-expansion-rounds",
+        type=int,
+        default=int(os.environ.get("IFCN_ROUTE_EXPANSION_ROUNDS", "96")),
+        help="Maximum failure-directed row/column expansion rounds per routing closure.",
+    )
+    parser.add_argument(
+        "--route-expansion-timeout-sec",
+        type=float,
+        default=float(os.environ.get("IFCN_ROUTE_EXPANSION_TIMEOUT", "240")),
+        help="Time budget for each route-until-success closure.",
+    )
+    parser.add_argument(
+        "--template-expansion-rounds",
+        type=int,
+        default=int(os.environ.get("IFCN_TEMPLATE_EXPANSION_ROUNDS", "24")),
+        help="Maximum 2DDWave template-conflict expansion rounds.",
+    )
     parser.add_argument(
         "--seed",
         type=int,
         default=int(os.environ.get("IFCN_NORMAL_GRAPH_SEED", "1")),
-        help="Random seed for the GCN-guided normal graph flow.",
+        help="Random seed for downstream placement/routing retries.",
     )
     parser.add_argument(
         "--seed-retries",
         type=int,
-        default=int(os.environ.get("IFCN_NORMAL_GRAPH_SEED_RETRIES", "4")),
-        help="Extra sequential seeds to try if a legal 2DDWave layout is not found.",
+        default=int(os.environ.get("IFCN_NORMAL_GRAPH_SEED_RETRIES", "0")),
+        help="Extra sequential seeds (normally unnecessary for deterministic Graphviz+sifting).",
     )
     parser.add_argument("--skip-figures", action="store_true")
     parser.add_argument("--skip-latex", action="store_true")
@@ -371,13 +395,47 @@ def main():
     if not args.skip_latex:
         draw.print_latex(output_dir)
 
-    ifcn_path = generate_gate_level_mapping_file(
-        draw,
-        output_dir=output_dir,
-        filename_stem=f"{stem}_normal_graph_draw",
-        verbose=True,
+    layout_legal = bool(
+        not failed_pairs and getattr(draw, "clock_template_ok", False)
     )
+    if layout_legal:
+        ifcn_path = generate_gate_level_mapping_file(
+            draw,
+            output_dir=output_dir,
+            filename_stem=f"{stem}_normal_graph_draw",
+            verbose=True,
+        )
+    else:
+        # A partially routed board is not a publishable cell-level layout.
+        # Preserve the exact failure core in JSON/logs and avoid spending most
+        # of a large-circuit timeout serializing misleading phase artifacts.
+        ifcn_path = ""
+        print(
+            "[IFCN] Illegal layout artifacts skipped; failure core retained in summary."
+        )
     encoded_ifcn_path = os.path.join(output_dir, f"{stem}_normal_graph_draw_encoded.ifcn")
+    contraction_history = list(getattr(draw, "contraction_history", []))
+    pre_contraction_width = (
+        int(contraction_history[0]["old_width"])
+        if contraction_history else int(width)
+    )
+    pre_contraction_height = (
+        int(contraction_history[0]["old_height"])
+        if contraction_history else int(height)
+    )
+    pre_contraction_area = pre_contraction_width * pre_contraction_height
+    final_area = int(width) * int(height)
+    final_usage_metrics = draw._current_phase_contraction_metrics()
+    pre_contraction_used_cell_count = (
+        int(contraction_history[0]["old_used_cell_count"])
+        if contraction_history else int(final_usage_metrics["used_cell_count"])
+    )
+    pre_contraction_routed_wire_cells = (
+        int(contraction_history[0]["old_routed_wire_cells"])
+        if contraction_history else int(final_usage_metrics["routed_wire_cells"])
+    )
+    used_cell_count = int(final_usage_metrics["used_cell_count"])
+    routed_wire_cells = int(final_usage_metrics["routed_wire_cells"])
     summary = {
         "benchmark": benchmark_path,
         "resolved_benchmark": resolved_benchmark_path,
@@ -390,20 +448,97 @@ def main():
                 "clock_template_ok": bool(trial["template_ok"]),
                 "clock_template_conflicts": int(trial["template_conflicts"]),
                 "area": int(trial["draw"].width) * int(trial["draw"].height),
+                "route_expansion_rounds": len(
+                    getattr(trial["draw"], "route_expansion_history", [])
+                ),
+                "route_expansion_exhausted": bool(
+                    getattr(trial["draw"], "route_expansion_exhausted", False)
+                ),
             }
             for trial in trials
         ],
         "output_dir": output_dir,
-        "ifcn": os.path.abspath(ifcn_path),
-        "encoded_ifcn": os.path.abspath(encoded_ifcn_path) if os.path.isfile(encoded_ifcn_path) else "",
+        "ifcn": os.path.abspath(ifcn_path) if ifcn_path else "",
+        "encoded_ifcn": (
+            os.path.abspath(encoded_ifcn_path)
+            if layout_legal and os.path.isfile(encoded_ifcn_path)
+            else ""
+        ),
         "raw_svg": os.path.join(output_dir, f"{stem}_raw.svg"),
         "ordered_svg": os.path.join(output_dir, f"{stem}.svg"),
         "physical_svg": os.path.join(output_dir, f"{stem}_physical.svg"),
         "stage_tex_dir": best_trial["stage_tex_dir"],
         "failed_edge_count": len(failed_pairs or {}),
+        "failed_edges": [
+            {
+                "src": int(src),
+                "dst": int(dst),
+                "direction": [int(direction[0]), int(direction[1])],
+            }
+            for (src, dst), direction in sorted((failed_pairs or {}).items())
+        ],
+        "layout_legal": layout_legal,
+        "route_expansion_round_count": len(
+            getattr(draw, "route_expansion_history", [])
+        ),
+        "route_expansion_exhausted": bool(
+            getattr(draw, "route_expansion_exhausted", False)
+        ),
+        "route_incompatibility_reason": str(
+            getattr(draw, "route_incompatibility_reason", "")
+        ),
+        "right_down_port_capacity_nodes": list(
+            getattr(draw, "right_down_port_capacity_nodes", [])
+        ),
+        "route_expansion_history": list(
+            getattr(draw, "route_expansion_history", [])
+        ),
+        "contraction_step_count": len(
+            getattr(draw, "contraction_history", [])
+        ),
+        "contraction_evaluations": int(
+            getattr(draw, "contraction_evaluations", 0)
+        ),
+        "contraction_global_evaluations": int(
+            getattr(draw, "contraction_global_evaluations", 0)
+        ),
+        "contraction_recursive_evaluations": int(
+            getattr(draw, "contraction_recursive_evaluations", 0)
+        ),
+        "contraction_empty_line_evaluations": int(
+            getattr(draw, "contraction_empty_line_evaluations", 0)
+        ),
+        "contraction_exhausted": bool(
+            getattr(draw, "contraction_exhausted", False)
+        ),
+        "contraction_history": contraction_history,
+        "pre_contraction_width": pre_contraction_width,
+        "pre_contraction_height": pre_contraction_height,
+        "pre_contraction_area": pre_contraction_area,
+        "contraction_area_reduction": pre_contraction_area - final_area,
+        "contraction_area_reduction_percent": (
+            100.0 * (pre_contraction_area - final_area) / pre_contraction_area
+            if pre_contraction_area > 0 else 0.0
+        ),
+        "pre_contraction_used_cell_count": pre_contraction_used_cell_count,
+        "used_cell_count": used_cell_count,
+        "contraction_used_cell_reduction": (
+            pre_contraction_used_cell_count - used_cell_count
+        ),
+        "contraction_used_cell_reduction_percent": (
+            100.0
+            * (pre_contraction_used_cell_count - used_cell_count)
+            / pre_contraction_used_cell_count
+            if pre_contraction_used_cell_count > 0 else 0.0
+        ),
+        "pre_contraction_routed_wire_cells": pre_contraction_routed_wire_cells,
+        "routed_wire_cells": routed_wire_cells,
+        "contraction_routed_wire_cell_reduction": (
+            pre_contraction_routed_wire_cells - routed_wire_cells
+        ),
         "width": int(width),
         "height": int(height),
-        "area": int(width) * int(height),
+        "area": final_area,
         "run_time_sec": float(run_time),
         "algorithm_description": ALGO_DESC,
     }
@@ -411,7 +546,11 @@ def main():
     with open(summary_path, "w", encoding="utf-8") as handle:
         json.dump(summary, handle, ensure_ascii=False, indent=2)
 
-    print(f"[NORMAL-GRAPH] IFCN: {os.path.abspath(ifcn_path)}")
+    print(
+        "[NORMAL-GRAPH] IFCN: {}".format(
+            os.path.abspath(ifcn_path) if ifcn_path else "not generated (illegal layout)"
+        )
+    )
     print(f"[NORMAL-GRAPH] Summary: {summary_path}")
     if stage_tex_dir:
         print(f"[NORMAL-GRAPH] Stage tex layouts saved in: {stage_tex_dir}")

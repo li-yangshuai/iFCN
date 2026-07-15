@@ -396,6 +396,18 @@ int main(int argc,char *argv[])
     }
     mainWindow.show();
 
+    // Opening an IFCN/QCA path from the command line makes the desktop binary
+    // directly testable and is also convenient for generated cell layouts.
+    const QStringList commandLine = app.arguments();
+    for (int index = 1; index < commandLine.size(); ++index) {
+        const QFileInfo input(commandLine[index]);
+        const QString suffix = input.suffix().toLower();
+        if (input.isFile()
+            && (suffix == QStringLiteral("ifcn") || suffix == QStringLiteral("qca"))) {
+            mainWindow.openFileInNewTab(input.absoluteFilePath());
+        }
+    }
+
     // Opt-in visual smoke hook for offscreen CI and local theme review.
     if (!screenshotPath.isEmpty()) {
         QTimer::singleShot(800, &mainWindow, [&app, &mainWindow, screenshotPath]() {

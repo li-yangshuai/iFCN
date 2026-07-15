@@ -21,7 +21,7 @@ SKIP_STEMS = {"FA", "FS", "HA", "HS"}
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run long GCN+RL layout training over benchmark directories.",
+        description="Run long Graphviz+sifting + RL layout training over benchmark directories.",
     )
     parser.add_argument(
         "--benchmark-dir",
@@ -35,7 +35,9 @@ def parse_args():
     parser.add_argument("--max-workers", type=int, default=2)
     parser.add_argument("--base-seed", type=int, default=12000)
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
-    parser.add_argument("--gcn-epochs", type=int, default=120)
+    parser.add_argument("--graphviz-timeout-sec", type=int, default=60)
+    parser.add_argument("--sift-timeout-sec", type=int, default=20)
+    parser.add_argument("--sift-evaluations", type=int, default=200000)
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--steps-per-episode", type=int, default=8)
     parser.add_argument("--ppo-epochs", type=int, default=4)
@@ -52,7 +54,7 @@ def parse_args():
         "--include-auto-start",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Also train one auto-start profile after the GCN-start profiles.",
+        help="Also train one auto-start profile after the structural-start profiles.",
     )
     parser.add_argument(
         "--strict-memory-updates",
@@ -102,28 +104,28 @@ def discover_benchmarks(dirs):
 def profile_definitions(include_auto_start):
     profiles = [
         {
-            "name": "gcn_phase3_pad1",
+            "name": "graphviz_sift_phase3_pad1",
             "phase": 3,
             "padding": 1,
-            "start": "gcn",
+            "start": "structural",
             "area_reward": 4.5,
             "area_regression": 400,
             "span_weight": 12,
         },
         {
-            "name": "gcn_phase4_pad1",
+            "name": "graphviz_sift_phase4_pad1",
             "phase": 4,
             "padding": 1,
-            "start": "gcn",
+            "start": "structural",
             "area_reward": 4.0,
             "area_regression": 350,
             "span_weight": 10,
         },
         {
-            "name": "gcn_phase4_pad2",
+            "name": "graphviz_sift_phase4_pad2",
             "phase": 4,
             "padding": 2,
-            "start": "gcn",
+            "start": "structural",
             "area_reward": 3.5,
             "area_regression": 300,
             "span_weight": 8,
@@ -299,10 +301,22 @@ def run_profile(args, benchmark, profile, run_root, profile_seed, log_handle):
     ]
     env = os.environ.copy()
     env["MPLBACKEND"] = "Agg"
-    env["IFCN_GCN_EPOCHS"] = str(args.gcn_epochs)
+    env["IFCN_GRAPHVIZ_TIMEOUT"] = str(args.graphviz_timeout_sec)
+    env["IFCN_SIFT_TIMEOUT"] = str(args.sift_timeout_sec)
+    env["IFCN_SIFT_EVALUATIONS"] = str(args.sift_evaluations)
     profile_dir.mkdir(parents=True, exist_ok=True)
     command_path = profile_dir / "command.json"
-    write_json(command_path, {"command": command, "env": {"IFCN_GCN_EPOCHS": env["IFCN_GCN_EPOCHS"]}})
+    write_json(
+        command_path,
+        {
+            "command": command,
+            "env": {
+                "IFCN_GRAPHVIZ_TIMEOUT": env["IFCN_GRAPHVIZ_TIMEOUT"],
+                "IFCN_SIFT_TIMEOUT": env["IFCN_SIFT_TIMEOUT"],
+                "IFCN_SIFT_EVALUATIONS": env["IFCN_SIFT_EVALUATIONS"],
+            },
+        },
+    )
 
     start = time.perf_counter()
     print(

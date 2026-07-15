@@ -3,6 +3,7 @@ from collections import Counter, defaultdict
 import hashlib
 import heapq
 import json
+import math
 import os
 import pickle
 import time
@@ -25,6 +26,7 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCONFIG_DIR)
 from lib import iFCN_Lab
 from src.circuit_parse import CircuitParser
 from src.gcn_model_less_node import normal_generate, visualize_layered_graph_sorted
+from src.graphviz_sifting import deterministic_layout_embeddings
 from src.stochastic_clock import ClockField, install_phase_field
 from src.toolkit import generate_gate_level_mapping_file
 
@@ -45,10 +47,11 @@ LAYOUT_MEMORY_DIR = os.path.abspath(
     )
 )
 GCN_CACHE_DIR = os.path.join(LAYOUT_MEMORY_DIR, "gcn_cache")
-GCN_CACHE_SCHEMA_VERSION = 3
+GCN_CACHE_SCHEMA_VERSION = 4
 ALGORITHM_DESCRIPTION = (
-    "GCN layer ordering + orientation-aware adaptive compact layout search + "
-    "GCN-guided local compaction + phase-aware monotone routing with edge-exposed ports"
+    "Graphviz dot/mincross layer ordering + exact-gain sifting + orientation-aware "
+    "adaptive compact layout search + structural-feature-guided local compaction + "
+    "phase-aware monotone routing with edge-exposed ports"
 )
 DEFAULT_PHASE_CYCLE = 4
 DEFAULT_PADDING = 2
@@ -85,6 +88,26 @@ DEFAULT_LOCAL_RIPUP_ATTEMPTS = max(
     0,
     int(os.environ.get("IFCN_GCN_RL_LOCAL_RIPUP_ATTEMPTS", "6")),
 )
+DEFAULT_LAYOUT_EXPANSION_ROUNDS = max(
+    0,
+    int(os.environ.get("IFCN_RANDOM_LAYOUT_EXPANSION_ROUNDS", "64")),
+)
+DEFAULT_LAYOUT_EXPANSION_TIMEOUT = max(
+    1.0,
+    float(os.environ.get("IFCN_RANDOM_LAYOUT_EXPANSION_TIMEOUT", "240")),
+)
+DEFAULT_OUTER_IN_CONTRACTION_STEPS = max(
+    0,
+    int(os.environ.get("IFCN_RANDOM_CONTRACTION_STEPS", "64")),
+)
+DEFAULT_OUTER_IN_CONTRACTION_EVALUATIONS = max(
+    0,
+    int(os.environ.get("IFCN_RANDOM_CONTRACTION_EVALUATIONS", "128")),
+)
+DEFAULT_OUTER_IN_CONTRACTION_TIMEOUT = max(
+    1.0,
+    float(os.environ.get("IFCN_RANDOM_CONTRACTION_TIMEOUT", "120")),
+)
 
 
 def default_benchmark_path():
@@ -111,7 +134,7 @@ def parse_args():
     parser.add_argument(
         "--layout-strategy",
         default="auto",
-        choices=("auto", "fixed", "shifted", "adaptive", "gcn"),
+        choices=("auto", "fixed", "shifted", "adaptive", "structural", "gcn"),
         help="Layout candidate family to use. 'auto' evaluates all strategies.",
     )
     parser.add_argument(
@@ -171,12 +194,49 @@ def parse_args():
     parser.add_argument(
         "--disable-gcn-cache",
         action="store_true",
-        help="Disable on-disk GCN embedding/order cache and retrain every run.",
+        help="Disable the legacy-named order cache and recompute Graphviz+sifting every run.",
     )
     parser.add_argument(
         "--disable-layout-memory",
         action="store_true",
         help="Disable reading/writing the layout memory candidate for this benchmark.",
+    )
+    parser.add_argument(
+        "--max-expansion-rounds",
+        type=int,
+        default=DEFAULT_LAYOUT_EXPANSION_ROUNDS,
+        help="Failure-directed row/column expansion rounds after compact placement.",
+    )
+    parser.add_argument(
+        "--expansion-timeout-sec",
+        type=float,
+        default=DEFAULT_LAYOUT_EXPANSION_TIMEOUT,
+        help="Time budget for random-clock failure-directed expansion.",
+    )
+    parser.add_argument(
+        "--outer-in-contract-iters",
+        type=int,
+        default=DEFAULT_OUTER_IN_CONTRACTION_STEPS,
+        help="Maximum accepted outer-in contraction steps after legal routing.",
+    )
+    parser.add_argument(
+        "--contraction-max-evaluations",
+        type=int,
+        default=DEFAULT_OUTER_IN_CONTRACTION_EVALUATIONS,
+        help="Maximum legality-checked contraction candidates.",
+    )
+    parser.add_argument(
+        "--contraction-timeout-sec",
+        type=float,
+        default=DEFAULT_OUTER_IN_CONTRACTION_TIMEOUT,
+        help="Time budget for legality-checked outer-in contraction.",
+    )
+    parser.add_argument("--skip-figures", action="store_true")
+    parser.add_argument("--skip-latex", action="store_true")
+    parser.add_argument(
+        "--single-spacing",
+        action="store_true",
+        help="Evaluate only the requested x/y spacing per strategy/orientation before repair.",
     )
     return parser.parse_args()
 
@@ -243,7 +303,7 @@ def load_or_generate_gcn_layout(
                     "cached graph does not match current parser output "
                     f"(cached_nodes={len(cached_nodes)}, expected_nodes={len(expected_nodes)})"
                 )
-            print(f"[GCN] Loaded cached embeddings/order from: {cache_path}")
+            print(f"[Graphviz+sifting] Loaded cached order/features from: {cache_path}")
             return (
                 cached_embeddings,
                 cached_layers,
@@ -251,23 +311,20 @@ def load_or_generate_gcn_layout(
                 list(cached.get("edges", circuit.effective_edges)),
             )
         except (OSError, EOFError, pickle.PickleError, ValueError, KeyError, TypeError) as exc:
-            print(f"[GCN] Ignoring broken cache {cache_path}: {exc}")
+            print(f"[Graphviz+sifting] Ignoring broken cache {cache_path}: {exc}")
 
     if not circuit.effective_edges:
         ordered_layers = normalize_layers(circuit.layer_nodes)
-        embeddings = np.zeros((len(circuit.effective_nodes), 2), dtype=float)
-        for layer_idx, layer in enumerate(ordered_layers):
-            for rank, node_id in enumerate(layer):
-                node_index = circuit.node_to_index.get(int(node_id))
-                if node_index is None:
-                    continue
-                embeddings[node_index, 0] = float(layer_idx)
-                embeddings[node_index, 1] = float(rank)
+        embeddings = deterministic_layout_embeddings(
+            ordered_layers,
+            [],
+            circuit.node_to_index,
+        )
         crossings_per_layer = {
             int(layer_idx): 0 for layer_idx in range(max(0, len(ordered_layers) - 1))
         }
         edges = []
-        print("[GCN] No effective edges detected; using deterministic layer-order fallback.")
+        print("[Graphviz+sifting] No effective edges; using deterministic layer-order fallback.")
         if use_cache:
             os.makedirs(GCN_CACHE_DIR, exist_ok=True)
             with open(cache_path, "wb") as cache_file:
@@ -285,7 +342,7 @@ def load_or_generate_gcn_layout(
                     },
                     cache_file,
                 )
-            print(f"[GCN] Cached zero-edge fallback written to: {cache_path}")
+            print(f"[Graphviz+sifting] Cached zero-edge fallback written to: {cache_path}")
         return embeddings, ordered_layers, crossings_per_layer, edges
 
     data = circuit.build_pyg_data()
@@ -315,7 +372,7 @@ def load_or_generate_gcn_layout(
                 },
                 cache_file,
             )
-        print(f"[GCN] Cached embeddings/order written to: {cache_path}")
+        print(f"[Graphviz+sifting] Cached order/features written to: {cache_path}")
 
     return embeddings, normalize_layers(barycenter_opt_layers), crossings_per_layer, edges
 
@@ -2799,13 +2856,14 @@ def build_layout_candidates(
     embeddings=None,
     allowed_strategies=None,
     allowed_orientations=None,
+    sweep_spacings=True,
 ):
     max_layer_width = max((len(layer) for layer in ordered_layers), default=0)
     total_layers = len(ordered_layers)
 
     candidates = []
     strategy_filter = set(
-        ("fixed", "shifted", "adaptive", "gcn")
+        ("fixed", "shifted", "adaptive", "structural")
         if allowed_strategies is None else allowed_strategies
     )
     orientation_filter = set(
@@ -2821,7 +2879,10 @@ def build_layout_candidates(
     for orientation in (LEFT_RIGHT, TOP_DOWN):
         if orientation not in orientation_filter:
             continue
-        if max_layer_width <= 2 and total_layers <= 8:
+        if not sweep_spacings:
+            x_candidates = [max(1, int(base_x_spacing))]
+            y_candidates = [max(1, int(base_y_spacing))]
+        elif max_layer_width <= 2 and total_layers <= 8:
             x_candidates = compact_spacing_candidates(base_x_spacing, upper_extra=0)
             y_candidates = compact_spacing_candidates(min(base_y_spacing, 4), upper_extra=0)
         elif max_layer_width <= 3 and total_layers <= 10:
@@ -2918,7 +2979,10 @@ def build_layout_candidates(
                             "node_positions": adaptive_positions,
                         }
                     )
-                if "gcn" in strategy_filter and embeddings is not None:
+                guided_strategy = (
+                    "structural" if "structural" in strategy_filter else "gcn"
+                )
+                if guided_strategy in strategy_filter and embeddings is not None:
                     gcn_positions = build_gcn_guided_node_positions(
                         circuit,
                         ordered_layers,
@@ -2934,7 +2998,7 @@ def build_layout_candidates(
                     )
                     candidates.append(
                         {
-                            "strategy": "gcn",
+                            "strategy": guided_strategy,
                             "orientation": orientation,
                             "x_spacing": gcn_x_spacing,
                             "y_spacing": gcn_y_spacing,
@@ -2966,6 +3030,7 @@ def route_single_edge_with_direction_constraints(
     allow_escape_routing=DEFAULT_ALLOW_ESCAPE_ROUTING,
     monotone_expansion_limit=None,
     flexible_expansion_limit=None,
+    prefer_generic_router=False,
 ):
     monotone_expansion_limit = (
         DEFAULT_MONOTONE_ROUTER_EXPANSION_LIMIT
@@ -3005,22 +3070,24 @@ def route_single_edge_with_direction_constraints(
     if not start_directions or not end_directions:
         return []
 
-    branch_path = route_edge_from_existing_source_trunk(
-        board,
-        int(src),
-        int(dst),
-        routed_paths or {},
-        phase_cycle,
-        padding,
-        max_same_phase,
-        orientation,
-        incoming_directions,
-        outgoing_directions,
-        combined_port_search=combined_port_search,
-        advance_cost=advance_cost,
-        hold_cost=hold_cost,
-        monotone_expansion_limit=monotone_expansion_limit,
-    )
+    branch_path = []
+    if not prefer_generic_router:
+        branch_path = route_edge_from_existing_source_trunk(
+            board,
+            int(src),
+            int(dst),
+            routed_paths or {},
+            phase_cycle,
+            padding,
+            max_same_phase,
+            orientation,
+            incoming_directions,
+            outgoing_directions,
+            combined_port_search=combined_port_search,
+            advance_cost=advance_cost,
+            hold_cost=hold_cost,
+            monotone_expansion_limit=monotone_expansion_limit,
+        )
     if branch_path:
         return branch_path
 
@@ -3037,6 +3104,29 @@ def route_single_edge_with_direction_constraints(
         for start_dir in start_directions
         for end_dir in end_directions
     ]
+
+    # The C++ phase-aware A* carries the same (x, y, phase, run-length,
+    # direction) state as the Python exact router, but is substantially faster
+    # on fallback batches and large circuits.  Preserve selected cell ports.
+    if prefer_generic_router:
+        for start_dir, end_dir in direction_pairs:
+            path = generic_router.route_with_dirs(
+                src,
+                dst,
+                start_dir[0],
+                start_dir[1],
+                end_dir[0],
+                end_dir[1],
+                True,
+                True,
+            )
+            if path:
+                return path
+        if allow_relaxed_ports:
+            path = generic_router.route(src, dst)
+            if path:
+                return path
+        return []
 
     if combined_port_search:
         path = route_monotone_with_phase(
@@ -3382,6 +3472,7 @@ def route_edges_with_phase(
     embedding_scores=None,
     clock_field=None,
     edge_priorities=None,
+    fast_routing=False,
 ):
     node_positions = {
         int(node_id): (int(coord[0]), int(coord[1]))
@@ -3436,6 +3527,10 @@ def route_edges_with_phase(
             padding,
             max_same_phase,
         )
+        if fast_routing and hasattr(generic_router, "set_expansion_limit"):
+            generic_router.set_expansion_limit(
+                max(100, int(os.environ.get("IFCN_RANDOM_CPP_EXPANSION_LIMIT", "4000")))
+            )
         incoming_directions = defaultdict(set)
         outgoing_directions = {}
 
@@ -3459,6 +3554,7 @@ def route_edges_with_phase(
                 multi_output_nodes=multi_output_nodes,
                 monotone_expansion_limit=initial_monotone_limit,
                 flexible_expansion_limit=initial_flexible_limit,
+                prefer_generic_router=fast_routing,
             )
             if not path:
                 failed_edges.append((int(src), int(dst)))
@@ -3517,6 +3613,11 @@ def route_edges_with_phase(
             best_payload = (attempt_board, routed_paths, failed_edges)
         if not failed_edges and direction_violations == 0:
             break
+
+    if fast_routing:
+        if best_payload is None:
+            return board, {}, list(circuit.effective_edges)
+        return best_payload
 
     if best_payload is not None and (
         best_payload[2]
@@ -3738,6 +3839,10 @@ def route_edges_with_phase(
             padding,
             max_same_phase,
         )
+        if fast_routing and hasattr(generic_router, "set_expansion_limit"):
+            generic_router.set_expansion_limit(
+                max(100, int(os.environ.get("IFCN_RANDOM_CPP_EXPANSION_LIMIT", "4000")))
+            )
         for src, dst in reroute_order:
             edge = (int(src), int(dst))
             path = route_single_edge_with_direction_constraints(
@@ -4036,6 +4141,7 @@ def evaluate_layout_candidate(
         embedding_scores=embedding_scores,
         clock_field=clock_field,
         edge_priorities=candidate.get("routing_edge_priorities"),
+        fast_routing=bool(candidate.get("fast_routing", False)),
     )
     width, height = board.computeLayoutArea()
     area = width * height if width > 0 and height > 0 else float("inf")
@@ -4068,10 +4174,11 @@ def evaluate_layout_candidate(
         "routing_embedding_guidance": bool(
             candidate.get(
                 "routing_embedding_guidance",
-                candidate["strategy"] == "gcn",
+                candidate["strategy"] in ("structural", "gcn"),
             )
         ),
         "routing_edge_priority_guidance": bool(candidate.get("routing_edge_priorities")),
+        "fast_routing": bool(candidate.get("fast_routing", False)),
         "width": width,
         "height": height,
         "area": area,
@@ -4082,6 +4189,404 @@ def evaluate_layout_candidate(
         "clock_field_hash": clock_field.field_hash if clock_field is not None else "",
         "clock_scheme": "causal-random-field" if clock_field is not None else "dynamic-legacy",
     }
+
+
+def random_phase_layout_is_legal(result):
+    return bool(
+        result is not None
+        and not result.get("failed_edges", [])
+        and int(result.get("direction_violation_count", 0)) == 0
+    )
+
+
+def random_phase_problem_edges(result, circuit):
+    problems = {
+        (int(src), int(dst))
+        for src, dst in result.get("failed_edges", [])
+    }
+    multi_output_nodes = {
+        int(node_id)
+        for node_id in circuit.effective_nodes
+        if str(circuit.getNodeTypeString(int(node_id))).lower()
+        in {"input", "fanout"}
+    }
+    problems.update(
+        find_direction_violation_edges(
+            result.get("routed_paths", {}),
+            multi_output_nodes,
+        )
+    )
+    return problems
+
+
+def failed_regions_to_random_insertions(result, circuit, max_ops_per_axis=2):
+    """Rank global row/column cuts around failed or port-conflicting edges."""
+    positions = result["node_positions"]
+    row_pressure = Counter()
+    col_pressure = Counter()
+    problems = random_phase_problem_edges(result, circuit)
+
+    for src, dst in problems:
+        if int(src) not in positions or int(dst) not in positions:
+            continue
+        src_x, src_y = positions[int(src)]
+        dst_x, dst_y = positions[int(dst)]
+        min_x, max_x = sorted((int(src_x), int(dst_x)))
+        min_y, max_y = sorted((int(src_y), int(dst_y)))
+
+        # Endpoint-adjacent cuts expose free ports.  Mid-span cuts create a
+        # bypass corridor when previously routed wires fill the rectangle.
+        col_pressure[min_x + 1] += 5
+        row_pressure[min_y + 1] += 5
+        col_pressure[max_x] += 4
+        row_pressure[max_y] += 4
+        if max_x - min_x > 1:
+            col_pressure[(min_x + max_x + 1) // 2] += 3
+        if max_y - min_y > 1:
+            row_pressure[(min_y + max_y + 1) // 2] += 3
+
+    limit = max(1, int(max_ops_per_axis))
+    row_ops = [
+        int(cut)
+        for cut, _ in sorted(
+            row_pressure.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:limit]
+    ]
+    col_ops = [
+        int(cut)
+        for cut, _ in sorted(
+            col_pressure.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:limit]
+    ]
+    return sorted(set(row_ops)), sorted(set(col_ops)), problems
+
+
+def insert_random_layout_rows_and_cols(node_positions, row_ops, col_ops):
+    """Insert global tracks without imposing a 2DDWave flow direction."""
+    row_ops = sorted({int(value) for value in row_ops})
+    col_ops = sorted({int(value) for value in col_ops})
+    expanded = {}
+    for node_id, coord in node_positions.items():
+        x, y = int(coord[0]), int(coord[1])
+        x += sum(1 for cut in col_ops if x >= cut)
+        y += sum(1 for cut in row_ops if y >= cut)
+        expanded[int(node_id)] = (x, y)
+    return expanded
+
+
+def contract_random_layout_after_cut(node_positions, axis, cut):
+    contracted = {}
+    occupied = set()
+    for node_id, coord in node_positions.items():
+        x, y = int(coord[0]), int(coord[1])
+        if axis == "x" and x > int(cut):
+            x -= 1
+        elif axis == "y" and y > int(cut):
+            y -= 1
+        next_coord = (x, y)
+        if next_coord in occupied:
+            return None
+        occupied.add(next_coord)
+        contracted[int(node_id)] = next_coord
+    return contracted
+
+
+def evaluate_positions_from_result(
+    source_result,
+    node_positions,
+    circuit,
+    phase_cycle,
+    padding,
+    max_same_phase,
+    embedding_scores=None,
+    strategy_suffix="",
+    priority_edges=None,
+):
+    x_spacing, y_spacing = summarize_node_position_spacing(node_positions)
+    priorities = {
+        (int(src), int(dst)): 1.0
+        for src, dst in (priority_edges or ())
+    }
+    strategy = str(source_result["layout_strategy"])
+    if strategy_suffix and not strategy.endswith(strategy_suffix):
+        strategy += strategy_suffix
+    return evaluate_layout_candidate(
+        {
+            "strategy": strategy,
+            "orientation": source_result["layout_orientation"],
+            "x_spacing": x_spacing,
+            "y_spacing": y_spacing,
+            "node_positions": node_positions,
+            "routing_embedding_guidance": bool(
+                source_result.get("routing_embedding_guidance", False)
+            ),
+            "routing_edge_priorities": priorities,
+            "fast_routing": bool(source_result.get("fast_routing", False)),
+            "clock_field": source_result.get("clock_field"),
+        },
+        circuit,
+        phase_cycle,
+        padding,
+        max_same_phase,
+        embedding_scores=(
+            embedding_scores
+            if source_result.get("routing_embedding_guidance", False)
+            else None
+        ),
+    )
+
+
+def expand_random_phase_layout_until_legal(
+    result,
+    circuit,
+    phase_cycle,
+    padding,
+    max_same_phase,
+    embedding_scores=None,
+    max_rounds=DEFAULT_LAYOUT_EXPANSION_ROUNDS,
+    timeout_sec=DEFAULT_LAYOUT_EXPANSION_TIMEOUT,
+):
+    """Persistently insert failed-region tracks while phase-routing each trial."""
+    if result is None:
+        return result
+
+    started = time.perf_counter()
+    working_result = result
+    best_result = result
+    history = []
+    exhausted = False
+    best_problem_count = (
+        len(result.get("failed_edges", []))
+        + int(result.get("direction_violation_count", 0))
+    )
+    rounds_without_improvement = 0
+    signature_hits = Counter()
+
+    for round_index in range(max(0, int(max_rounds))):
+        if random_phase_layout_is_legal(working_result):
+            break
+        if time.perf_counter() - started >= max(1.0, float(timeout_sec)):
+            exhausted = True
+            break
+
+        failure_count = len(working_result.get("failed_edges", []))
+        direction_count = int(working_result.get("direction_violation_count", 0))
+        per_axis_limit = min(4, max(1, int(math.ceil(math.sqrt(
+            max(1, failure_count + direction_count)
+        )))))
+        row_ops, col_ops, problem_edges = failed_regions_to_random_insertions(
+            working_result,
+            circuit,
+            max_ops_per_axis=per_axis_limit,
+        )
+        if not row_ops and not col_ops:
+            exhausted = True
+            break
+
+        expanded_positions = insert_random_layout_rows_and_cols(
+            working_result["node_positions"],
+            row_ops,
+            col_ops,
+        )
+        try:
+            candidate = evaluate_positions_from_result(
+                working_result,
+                expanded_positions,
+                circuit,
+                phase_cycle,
+                padding,
+                max_same_phase,
+                embedding_scores=embedding_scores,
+                strategy_suffix="+expand",
+                priority_edges=(problem_edges if round_index % 2 == 0 else None),
+            )
+        except ValueError:
+            # A frozen random field cannot be enlarged beyond its sampled
+            # bounds; keep the best valid placement and report exhaustion.
+            exhausted = True
+            break
+
+        history.append(
+            {
+                "round": int(round_index + 1),
+                "previous_failed": int(failure_count),
+                "failed": int(len(candidate.get("failed_edges", []))),
+                "previous_direction_violations": int(direction_count),
+                "direction_violations": int(
+                    candidate.get("direction_violation_count", 0)
+                ),
+                "inserted_rows": [int(value) for value in row_ops],
+                "inserted_cols": [int(value) for value in col_ops],
+                "width": int(candidate.get("width", 0)),
+                "height": int(candidate.get("height", 0)),
+                "area": int(candidate.get("area", 0)),
+                "elapsed_sec": float(time.perf_counter() - started),
+            }
+        )
+        print(
+            "[random expand] round={} failed {}->{} direction {}->{} area={}x{}".format(
+                round_index + 1,
+                failure_count,
+                len(candidate.get("failed_edges", [])),
+                direction_count,
+                candidate.get("direction_violation_count", 0),
+                candidate.get("width", 0),
+                candidate.get("height", 0),
+            ),
+            flush=True,
+        )
+        working_result = candidate
+        candidate_problem_count = (
+            len(candidate.get("failed_edges", []))
+            + int(candidate.get("direction_violation_count", 0))
+        )
+        signature = tuple(
+            sorted(random_phase_problem_edges(candidate, circuit))
+        )
+        signature_hits[signature] += 1
+        if candidate_problem_count < best_problem_count:
+            best_problem_count = candidate_problem_count
+            rounds_without_improvement = 0
+        else:
+            rounds_without_improvement += 1
+        if layout_score_key(candidate) < layout_score_key(best_result):
+            best_result = candidate
+        if random_phase_layout_is_legal(candidate):
+            best_result = candidate
+            break
+        if rounds_without_improvement >= 12 and signature_hits[signature] >= 3:
+            exhausted = True
+            break
+    else:
+        exhausted = not random_phase_layout_is_legal(working_result)
+
+    final_result = (
+        working_result
+        if random_phase_layout_is_legal(working_result)
+        else best_result
+    )
+    final_result["expansion_history"] = history
+    final_result["expansion_exhausted"] = bool(
+        exhausted and not random_phase_layout_is_legal(final_result)
+    )
+    final_result["score"] = layout_score_key(final_result)
+    return final_result
+
+
+def contract_random_phase_layout_outer_in(
+    result,
+    circuit,
+    phase_cycle,
+    padding,
+    max_same_phase,
+    embedding_scores=None,
+    max_steps=DEFAULT_OUTER_IN_CONTRACTION_STEPS,
+    max_evaluations=DEFAULT_OUTER_IN_CONTRACTION_EVALUATIONS,
+    timeout_sec=DEFAULT_OUTER_IN_CONTRACTION_TIMEOUT,
+):
+    """Remove outer tracks only when every physical legality check still passes."""
+    history = []
+    if result is None or not random_phase_layout_is_legal(result):
+        if result is not None:
+            result["contraction_history"] = history
+            result["contraction_evaluations"] = 0
+            result["contraction_exhausted"] = False
+        return result
+
+    started = time.perf_counter()
+    current = result
+    expansion_history = list(result.get("expansion_history", []))
+    expansion_exhausted = bool(result.get("expansion_exhausted", False))
+    evaluations = 0
+    exhausted = False
+    accepted = 0
+
+    while accepted < max(0, int(max_steps)):
+        if (
+            evaluations >= max(0, int(max_evaluations))
+            or time.perf_counter() - started >= max(1.0, float(timeout_sec))
+        ):
+            exhausted = True
+            break
+
+        positions = current["node_positions"]
+        xs = [int(coord[0]) for coord in positions.values()]
+        ys = [int(coord[1]) for coord in positions.values()]
+        if not xs or not ys:
+            break
+        axis_order = (
+            ("y", "x")
+            if int(current["width"]) >= int(current["height"])
+            else ("x", "y")
+        )
+        improved = False
+
+        for axis in axis_order:
+            values = xs if axis == "x" else ys
+            lo, hi = min(values), max(values)
+            for cut in range(int(hi) - 1, int(lo) - 1, -1):
+                if (
+                    evaluations >= max(0, int(max_evaluations))
+                    or time.perf_counter() - started >= max(1.0, float(timeout_sec))
+                ):
+                    exhausted = True
+                    break
+                candidate_positions = contract_random_layout_after_cut(
+                    positions,
+                    axis,
+                    cut,
+                )
+                if candidate_positions is None:
+                    continue
+                evaluations += 1
+                try:
+                    candidate = evaluate_positions_from_result(
+                        current,
+                        candidate_positions,
+                        circuit,
+                        phase_cycle,
+                        padding,
+                        max_same_phase,
+                        embedding_scores=embedding_scores,
+                        strategy_suffix="+contract",
+                    )
+                except ValueError:
+                    continue
+                if not random_phase_layout_is_legal(candidate):
+                    continue
+                if int(candidate["area"]) >= int(current["area"]):
+                    continue
+
+                accepted += 1
+                history.append(
+                    {
+                        "step": int(accepted),
+                        "axis": str(axis),
+                        "cut": int(cut),
+                        "old_width": int(current["width"]),
+                        "old_height": int(current["height"]),
+                        "width": int(candidate["width"]),
+                        "height": int(candidate["height"]),
+                        "area": int(candidate["area"]),
+                    }
+                )
+                current = candidate
+                improved = True
+                break
+            if exhausted or improved:
+                break
+        if exhausted or not improved:
+            break
+
+    current["contraction_history"] = history
+    current["contraction_evaluations"] = int(evaluations)
+    current["contraction_exhausted"] = bool(exhausted)
+    current["expansion_history"] = expansion_history
+    current["expansion_exhausted"] = expansion_exhausted
+    current["score"] = layout_score_key(current)
+    return current
 
 
 def select_best_layout(
@@ -4105,6 +4610,8 @@ def select_best_layout(
     extra_candidates=None,
     evaluation_fn=None,
     evaluation_stats=None,
+    sweep_spacings=True,
+    fast_routing=False,
 ):
     best_result = None
     if evaluation_fn is None:
@@ -4121,6 +4628,7 @@ def select_best_layout(
             embeddings=embeddings,
             allowed_strategies=allowed_strategies,
             allowed_orientations=allowed_orientations,
+            sweep_spacings=sweep_spacings,
         )
     )
     if extra_candidates:
@@ -4139,6 +4647,8 @@ def select_best_layout(
         )
 
     for candidate in candidate_pool:
+        if fast_routing:
+            candidate["fast_routing"] = True
         eval_start = time.perf_counter()
         result = evaluation_fn(
             candidate,
@@ -4150,7 +4660,7 @@ def select_best_layout(
                 embedding_scores
                 if candidate.get(
                     "routing_embedding_guidance",
-                    candidate["strategy"] == "gcn",
+                    candidate["strategy"] in ("structural", "gcn"),
                 )
                 else None
             ),
@@ -4262,6 +4772,29 @@ def main():
         local_branch_width=args.local_branch_width,
         local_max_evaluations=args.local_max_evaluations,
         extra_candidates=([memory_candidate] if memory_candidate is not None else None),
+        sweep_spacings=not args.single_spacing,
+        fast_routing=args.single_spacing,
+    )
+    layout_result_data = expand_random_phase_layout_until_legal(
+        layout_result_data,
+        circuit,
+        args.phase_cycle,
+        args.padding,
+        args.max_same_phase,
+        embedding_scores=embedding_scores,
+        max_rounds=args.max_expansion_rounds,
+        timeout_sec=args.expansion_timeout_sec,
+    )
+    layout_result_data = contract_random_phase_layout_outer_in(
+        layout_result_data,
+        circuit,
+        args.phase_cycle,
+        args.padding,
+        args.max_same_phase,
+        embedding_scores=embedding_scores,
+        max_steps=args.outer_in_contract_iters,
+        max_evaluations=args.contraction_max_evaluations,
+        timeout_sec=args.contraction_timeout_sec,
     )
     run_time_sec = time.perf_counter() - route_start
     if not args.disable_layout_memory:
@@ -4277,37 +4810,39 @@ def main():
     direction_violation_count = layout_result_data["direction_violation_count"]
 
     file_stem = f"{os.path.splitext(circuit.fileName)[0]}_phase_layout"
-    iFCN_Lab.MapChessboard.outputTexFile(board, file_stem, output_dir)
-    visualize_layered_graph_sorted(
-        circuit,
-        original_layer_map,
-        circuit.effective_edges,
-        circuit.fileName,
-        output_dir,
-        file_suffix="_original_layers",
-        title="Original Layering",
-        verbose=False,
-    )
-    visualize_layered_graph_sorted(
-        circuit,
-        reordered_layer_map,
-        circuit.effective_edges,
-        circuit.fileName,
-        output_dir,
-        file_suffix="_reordered_layers",
-        title="GCN + Barycenter Reordered Layering",
-        verbose=False,
-    )
-    visualize_layered_graph_sorted(
-        circuit,
-        reordered_layer_map,
-        circuit.effective_edges,
-        circuit.fileName,
-        output_dir,
-        node_positions=node_positions,
-        file_suffix="_phase_layout",
-        verbose=False,
-    )
+    if not args.skip_latex:
+        iFCN_Lab.MapChessboard.outputTexFile(board, file_stem, output_dir)
+    if not args.skip_figures:
+        visualize_layered_graph_sorted(
+            circuit,
+            original_layer_map,
+            circuit.effective_edges,
+            circuit.fileName,
+            output_dir,
+            file_suffix="_original_layers",
+            title="Original Layering",
+            verbose=False,
+        )
+        visualize_layered_graph_sorted(
+            circuit,
+            reordered_layer_map,
+            circuit.effective_edges,
+            circuit.fileName,
+            output_dir,
+            file_suffix="_reordered_layers",
+            title="Graphviz + Exact-gain Sifting Layer Order",
+            verbose=False,
+        )
+        visualize_layered_graph_sorted(
+            circuit,
+            reordered_layer_map,
+            circuit.effective_edges,
+            circuit.fileName,
+            output_dir,
+            node_positions=node_positions,
+            file_suffix="_phase_layout",
+            verbose=False,
+        )
 
     width, height = board.computeLayoutArea()
     min_x, min_y, max_x, max_y = board.findLayoutBoard()
@@ -4343,12 +4878,73 @@ def main():
         phase_cycle=args.phase_cycle,
         verbose=False,
     )
+    encoded_ifcn_path = os.path.join(output_dir, f"{file_stem}_encoded.ifcn")
+    summary_path = os.path.join(output_dir, f"{file_stem}_summary.json")
+    contraction_history = list(layout_result_data.get("contraction_history", []))
+    pre_contraction_area = (
+        int(contraction_history[0]["old_width"])
+        * int(contraction_history[0]["old_height"])
+        if contraction_history else int(width) * int(height)
+    )
+    final_area = int(width) * int(height)
+    summary = {
+        "benchmark": benchmark_path,
+        "seed": int(args.seed),
+        "clock_scheme": str(layout_result_data.get("clock_scheme", "dynamic-legacy")),
+        "phase_cycle": int(args.phase_cycle),
+        "node_count": int(len(node_positions)),
+        "edge_count": int(len(routed_paths) + len(failed_edges)),
+        "routed_edge_count": int(len(routed_paths)),
+        "failed_edge_count": int(len(failed_edges)),
+        "failed_edges": [
+            [int(src), int(dst)] for src, dst in failed_edges
+        ],
+        "direction_violation_count": int(direction_violation_count),
+        "layout_legal": bool(random_phase_layout_is_legal(layout_result_data)),
+        "width": int(width),
+        "height": int(height),
+        "area": final_area,
+        "layout_strategy": str(selected_layout_strategy),
+        "layout_orientation": str(selected_layout_orientation),
+        "x_spacing": str(selected_x_spacing),
+        "y_spacing": str(selected_y_spacing),
+        "expansion_round_count": int(
+            len(layout_result_data.get("expansion_history", []))
+        ),
+        "expansion_exhausted": bool(
+            layout_result_data.get("expansion_exhausted", False)
+        ),
+        "expansion_history": list(
+            layout_result_data.get("expansion_history", [])
+        ),
+        "contraction_step_count": int(
+            len(contraction_history)
+        ),
+        "contraction_evaluations": int(
+            layout_result_data.get("contraction_evaluations", 0)
+        ),
+        "contraction_exhausted": bool(
+            layout_result_data.get("contraction_exhausted", False)
+        ),
+        "contraction_history": contraction_history,
+        "pre_contraction_area": int(pre_contraction_area),
+        "contraction_area_reduction": int(pre_contraction_area - final_area),
+        "contraction_area_reduction_percent": (
+            100.0 * (pre_contraction_area - final_area) / pre_contraction_area
+            if pre_contraction_area > 0 else 0.0
+        ),
+        "run_time_sec": float(run_time_sec),
+        "ifcn": os.path.abspath(ifcn_path),
+        "encoded_ifcn": os.path.abspath(encoded_ifcn_path),
+    }
+    with open(summary_path, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, ensure_ascii=False, indent=2)
 
     print("[Layout] Phase-aware routing completed.")
     print(f"[Layout] Circuit: {benchmark_path}")
     print(f"[Layout] Nodes placed: {len(node_positions)}")
     print(f"[Layout] Layers: {len(ordered_layers)}")
-    print(f"[Layout] Crossings after GCN+barycenter ordering: {sum(crossings_per_layer.values())}")
+    print(f"[Layout] Crossings after Graphviz+sifting ordering: {sum(crossings_per_layer.values())}")
     print(f"[Layout] Routed edges: {len(routed_paths)} / {len(routed_paths) + len(failed_edges)}")
     print(f"[Layout] Failed edges: {len(failed_edges)}")
     print(f"[Layout] Board size: {width} x {height}")
@@ -4371,13 +4967,27 @@ def main():
         f"x_spacing={selected_x_spacing}, y_spacing={selected_y_spacing}"
     )
     print(f"[Layout] Direction violations: {direction_violation_count}")
+    print(
+        "[Layout] Failure-directed expansion: "
+        f"rounds={len(layout_result_data.get('expansion_history', []))}, "
+        f"exhausted={layout_result_data.get('expansion_exhausted', False)}"
+    )
+    print(
+        "[Layout] Outer-in contraction: "
+        f"accepted={len(layout_result_data.get('contraction_history', []))}, "
+        f"evaluated={layout_result_data.get('contraction_evaluations', 0)}, "
+        f"exhausted={layout_result_data.get('contraction_exhausted', False)}"
+    )
     print(f"[Layout] Routing runtime: {run_time_sec:.4f} s")
-    print(f"[Layout] Original layering SVG written to: {original_layers_svg_path}")
-    print(f"[Layout] Reordered layering SVG written to: {reordered_layers_svg_path}")
-    print(f"[Layout] SVG written to: {svg_path}")
-    print(f"[Layout] LaTeX written to: {tex_path}")
+    if not args.skip_figures:
+        print(f"[Layout] Original layering SVG written to: {original_layers_svg_path}")
+        print(f"[Layout] Reordered layering SVG written to: {reordered_layers_svg_path}")
+        print(f"[Layout] SVG written to: {svg_path}")
+    if not args.skip_latex:
+        print(f"[Layout] LaTeX written to: {tex_path}")
     print(f"[Layout] IFCN written to: {ifcn_path}")
-    print(f"[Layout] Encoded IFCN written to: {os.path.join(output_dir, f'{file_stem}_encoded.ifcn')}")
+    print(f"[Layout] Encoded IFCN written to: {encoded_ifcn_path}")
+    print(f"[Layout] Summary written to: {summary_path}")
     if failed_edges:
         print(f"[Layout] Failed edge list: {failed_edges}")
 

@@ -13,7 +13,7 @@ namespace iFCN_Lab {
 /**
  * @brief 右下限定 A* 布线器
  * 特性：
- *  - 起点只能先向下布线；
+ *  - 起点按指定的扇出端口向右或向下布线；
  *  - 只能向右(1,0)或下(0,1)扩展；
  *  - 搜索范围为起点与终点构成的矩形；
  *  - 扇入方向由 fanin_dir 指定，如 (-1,0) 表示左侧入，(0,-1) 表示上方入。
@@ -32,6 +32,16 @@ public:
     std::vector<std::pair<int,int>> route(int srcIndex,
                                           int dstIndex,
                                           const std::pair<int,int>& fanin_dir);
+
+    /**
+     * 同时约束源端扇出和宿端扇入端口。fanout_dir 只能为
+     * (1,0)/ (0,1)，fanin_dir 只能为 (-1,0)/(0,-1)。
+     */
+    std::vector<std::pair<int,int>> routeWithDirs(
+        int srcIndex,
+        int dstIndex,
+        const std::pair<int,int>& fanout_dir,
+        const std::pair<int,int>& fanin_dir);
     
     void reset() {
         finishedRoutes.clear();

@@ -628,6 +628,84 @@ const QVector<QVector<QCADScene::FastCellRecord>>& QCADScene::fastCellsByLayer()
     return fastCellsPerLayer;
 }
 
+void QCADScene::replaceFastCells(const QVector<QVector<FastCellRecord>> &cellsByLayer)
+{
+    if (!fastRenderEnabled) {
+        return;
+    }
+
+    clearInteractiveFastLayer();
+    fastCellsPerLayer = cellsByLayer;
+    fastLayerVisible.resize(fastCellsPerLayer.size());
+    fastCellTilesPerLayer.resize(fastCellsPerLayer.size());
+    fastCellOccupancyPerLayer.resize(fastCellsPerLayer.size());
+    for (int layer = 0; layer < fastCellsPerLayer.size(); ++layer) {
+        for (FastCellRecord &cell : fastCellsPerLayer[layer]) {
+            cell.layer = layer;
+        }
+        rebuildFastLayerIndex(fastCellsPerLayer[layer],
+                              fastCellTilesPerLayer[layer],
+                              fastCellOccupancyPerLayer[layer]);
+    }
+
+    fastBounds = QRectF();
+    for (const FastClockRecord &clock : fastClocks) {
+        includeRect(fastBounds, clockRectForPosition(clock.x, clock.y));
+    }
+    for (const auto &layerCells : fastCellsPerLayer) {
+        for (const FastCellRecord &cell : layerCells) {
+            includeRect(fastBounds, cellRectForPosition(cell.x, cell.y));
+        }
+    }
+
+    rebuildInteractiveFastLayer();
+    update();
+}
+
+void QCADScene::replaceFastClockRegions(
+    const QVector<ClockRegionRecord> &regions)
+{
+    if (!fastRenderEnabled) {
+        return;
+    }
+
+    clearFastClockOverlay();
+    fastClocks.clear();
+    fastClockTiles.clear();
+    fastClockOccupancy.clear();
+    fastClocks.reserve(regions.size());
+    for (const ClockRegionRecord &region : regions) {
+        const quint64 key = packSceneKey(region.x, region.y);
+        if (fastClockOccupancy.contains(key)) {
+            continue;
+        }
+        fastClockOccupancy.insert(key);
+        FastClockRecord record;
+        record.x = region.x;
+        record.y = region.y;
+        record.phase = region.phase;
+        const int index = fastClocks.size();
+        fastClocks.push_back(record);
+        fastClockTiles[packTileKey(record.x / kFastRenderTileSize,
+                                   record.y / kFastRenderTileSize)]
+            .push_back(index);
+    }
+
+    fastBounds = QRectF();
+    for (const FastClockRecord &clock : fastClocks) {
+        includeRect(fastBounds, clockRectForPosition(clock.x, clock.y));
+    }
+    for (const auto &layerCells : fastCellsPerLayer) {
+        for (const FastCellRecord &cell : layerCells) {
+            includeRect(fastBounds, cellRectForPosition(cell.x, cell.y));
+        }
+    }
+
+    rebuildFastClockOverlay();
+    update();
+    notifyClockRegionsChanged();
+}
+
 void QCADScene::setFastLayerVisible(int layer, bool visible)
 {
     if (layer < 0) {

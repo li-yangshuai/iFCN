@@ -4,6 +4,7 @@
 #include <numeric>
 #include <queue>
 #include <set>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -1680,6 +1681,96 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
     runMappingWithOrder(bestOrder);
 
     return deviatemapping_list;
+}
+
+bool Mapping::validate_crossovers(std::string* error) const
+{
+    const auto fail = [&](const auto& routeKey,
+                          std::size_t segmentIndex,
+                          const std::string& reason) {
+        if (error != nullptr) {
+            std::ostringstream message;
+            message << "route (" << routeKey.first.first << ','
+                    << routeKey.first.second << ")->("
+                    << routeKey.second.first << ','
+                    << routeKey.second.second << "), segment "
+                    << segmentIndex << ": " << reason;
+            *error = message.str();
+        }
+        return false;
+    };
+
+    for (const auto& routeEntry : crossline_list) {
+        for (std::size_t segmentIndex = 0;
+             segmentIndex < routeEntry.second.size();
+             ++segmentIndex) {
+            const auto& cells = routeEntry.second[segmentIndex];
+            if (cells.size() < 2 || cells.size() > 9) {
+                return fail(routeEntry.first, segmentIndex,
+                            "crossover must be a bounded 2..9-cell local path");
+            }
+
+            const unsigned int tileX = cells.front().first / 5;
+            const unsigned int tileY = cells.front().second / 5;
+            std::unordered_set<position, MappingPositionHash> uniqueCells;
+            int previousDx = 0;
+            int previousDy = 0;
+            std::size_t turns = 0;
+            for (std::size_t index = 0; index < cells.size(); ++index) {
+                const position& cell = cells[index];
+                if (cell.first / 5 != tileX || cell.second / 5 != tileY) {
+                    return fail(routeEntry.first, segmentIndex,
+                                "crossover leaves its owning 5x5 tile");
+                }
+                if (!uniqueCells.insert(cell).second) {
+                    return fail(routeEntry.first, segmentIndex,
+                                "crossover contains a repeated cell");
+                }
+                if (index == 0) {
+                    continue;
+                }
+
+                const long long dx = static_cast<long long>(cell.first) -
+                                     static_cast<long long>(cells[index - 1].first);
+                const long long dy = static_cast<long long>(cell.second) -
+                                     static_cast<long long>(cells[index - 1].second);
+                if ((dx == 0) == (dy == 0) ||
+                    (dx != 0 && (dx < -1 || dx > 1)) ||
+                    (dy != 0 && (dy < -1 || dy > 1))) {
+                    return fail(routeEntry.first, segmentIndex,
+                                "crossover cells are not 4-connected");
+                }
+
+                const int stepDx = dx == 0 ? 0 : (dx > 0 ? 1 : -1);
+                const int stepDy = dy == 0 ? 0 : (dy > 0 ? 1 : -1);
+                if (index > 1 && (stepDx != previousDx || stepDy != previousDy)) {
+                    ++turns;
+                }
+                previousDx = stepDx;
+                previousDy = stepDy;
+            }
+
+            if (turns > 1) {
+                return fail(routeEntry.first, segmentIndex,
+                            "crossover contains more than one turn");
+            }
+
+            const auto onTileBoundary = [](const position& cell) {
+                const unsigned int localX = cell.first % 5;
+                const unsigned int localY = cell.second % 5;
+                return localX == 0 || localX == 4 || localY == 0 || localY == 4;
+            };
+            if (!onTileBoundary(cells.front()) || !onTileBoundary(cells.back())) {
+                return fail(routeEntry.first, segmentIndex,
+                            "crossover endpoints must terminate on the tile boundary");
+            }
+        }
+    }
+
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
 }
 
 //给予门级线路偏移量
@@ -6071,6 +6162,236 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         
     }
     }
+}
+
+IoPortContractionStats Mapping::contract_io_ports(const NodeLinkMap& node_links,
+                                                  RouteCellMap& route_cells)
+{
+    IoPortContractionStats stats;
+    io_terminal_origins_.clear();
+
+    std::unordered_set<position, MappingPositionHash> crossover_cells;
+    std::unordered_set<position, MappingPositionHash> crossover_edge_cells;
+    for (const auto& route_entry : crossline_list) {
+        for (const auto& segment : route_entry.second) {
+            crossover_cells.insert(segment.begin(), segment.end());
+            if (!segment.empty()) {
+                crossover_edge_cells.insert(segment.front());
+                crossover_edge_cells.insert(segment.back());
+            }
+        }
+    }
+
+    using RouteIterator = RouteCellMap::iterator;
+    std::unordered_map<position, std::vector<RouteIterator>, MappingPositionHash> routes_by_source;
+    std::unordered_map<position, std::vector<RouteIterator>, MappingPositionHash> routes_by_sink;
+    std::unordered_map<position, position, MappingPositionHash> source_owner;
+    std::unordered_map<position, position, MappingPositionHash> sink_owner;
+    std::unordered_set<position, MappingPositionHash> mixed_sources;
+    std::unordered_set<position, MappingPositionHash> mixed_sinks;
+    const auto record_owner = [](auto& owners,
+                                 auto& mixed,
+                                 const position& cell,
+                                 const position& owner) {
+        const auto result = owners.emplace(cell, owner);
+        if (!result.second && result.first->second != owner) {
+            mixed.insert(cell);
+        }
+    };
+    for (auto route_it = route_cells.begin(); route_it != route_cells.end(); ++route_it) {
+        routes_by_source[route_it->first.first].push_back(route_it);
+        routes_by_sink[route_it->first.second].push_back(route_it);
+        std::unordered_set<position, MappingPositionHash> seen_in_route;
+        for (const auto& segment : route_it->second) {
+            for (const position& cell : segment) {
+                if (!seen_in_route.insert(cell).second) {
+                    continue;
+                }
+                record_owner(source_owner, mixed_sources, cell, route_it->first.first);
+                record_owner(sink_owner, mixed_sinks, cell, route_it->first.second);
+            }
+        }
+    }
+
+    std::unordered_set<position, MappingPositionHash> node_tiles;
+    for (const auto& node : node_links) {
+        node_tiles.insert(node.first.first);
+    }
+
+    const auto center_of = [](const position& gate) {
+        return position{gate.first * 5 + 2, gate.second * 5 + 2};
+    };
+    const auto in_gate_tile = [](const position& cell, const position& gate) {
+        return cell.first / 5 == gate.first && cell.second / 5 == gate.second;
+    };
+    const auto on_tile_edge_port = [](const position& cell) {
+        const unsigned int local_x = cell.first % 5;
+        const unsigned int local_y = cell.second % 5;
+        return ((local_x == 0 || local_x == 4) && local_y == 2) ||
+               ((local_y == 0 || local_y == 4) && local_x == 2);
+    };
+    const auto erase_positions = [](std::vector<position>& cells,
+                                    const std::unordered_set<position, MappingPositionHash>& removed) {
+        cells.erase(std::remove_if(cells.begin(), cells.end(),
+                                   [&](const position& cell) {
+                                       return removed.find(cell) != removed.end();
+                                   }),
+                    cells.end());
+    };
+
+    const auto contract_terminal = [&](const position& gate,
+                                       const std::string& terminal_type,
+                                       bool is_input) {
+        const position center = center_of(gate);
+        io_terminal_origins_[center] = gate;
+
+        auto bucket_it = nodecell_list.find(terminal_type);
+        if (bucket_it == nodecell_list.end() ||
+            std::find(bucket_it->second.begin(), bucket_it->second.end(), center) == bucket_it->second.end()) {
+            ++stats.skipped_ports;
+            return;
+        }
+
+        const auto& route_index = is_input ? routes_by_source : routes_by_sink;
+        const auto incident_it = route_index.find(gate);
+        if (incident_it == route_index.end() || incident_it->second.empty()) {
+            ++stats.skipped_ports;
+            return;
+        }
+        const std::vector<RouteIterator>& incident_routes = incident_it->second;
+
+        std::unordered_set<position, MappingPositionHash> network;
+        network.insert(center);
+        const auto normal_it = nodecell_list.find("normal");
+        if (normal_it != nodecell_list.end()) {
+            for (const position& cell : normal_it->second) {
+                if (in_gate_tile(cell, gate)) {
+                    network.insert(cell);
+                }
+            }
+        }
+        for (const auto route_it : incident_routes) {
+            for (const auto& segment : route_it->second) {
+                network.insert(segment.begin(), segment.end());
+            }
+        }
+
+        const auto is_protected = [&](const position& cell) {
+            if (crossover_cells.find(cell) != crossover_cells.end() &&
+                crossover_edge_cells.find(cell) == crossover_edge_cells.end()) {
+                return true;
+            }
+            const auto& owner_map = is_input ? source_owner : sink_owner;
+            const auto& mixed_owners = is_input ? mixed_sources : mixed_sinks;
+            const auto owner_it = owner_map.find(cell);
+            if (mixed_owners.find(cell) != mixed_owners.end() ||
+                (owner_it != owner_map.end() && owner_it->second != gate)) {
+                return true;
+            }
+            const position tile{cell.first / 5, cell.second / 5};
+            return tile != gate && node_tiles.find(tile) != node_tiles.end();
+        };
+
+        std::vector<position> contraction_path{center};
+        std::unordered_set<position, MappingPositionHash> visited{center};
+        position current = center;
+        while (true) {
+            std::vector<position> forward;
+            const ShiftedPosition neighbors[] = {
+                shiftedCell(current, -1, 0),
+                shiftedCell(current, 1, 0),
+                shiftedCell(current, 0, -1),
+                shiftedCell(current, 0, 1),
+            };
+            for (const ShiftedPosition& neighbor : neighbors) {
+                if (neighbor.valid &&
+                    network.find(neighbor.pos) != network.end() &&
+                    visited.find(neighbor.pos) == visited.end()) {
+                    forward.push_back(neighbor.pos);
+                }
+            }
+
+            // A unique degree-2 chain is removable.  Its first fanout point is
+            // retained as the new terminal so all branches remain connected.
+            if (forward.size() != 1 || is_protected(forward.front())) {
+                break;
+            }
+
+            current = forward.front();
+            contraction_path.push_back(current);
+            visited.insert(current);
+            // The first-layer cell at a crossover endpoint may be retyped as
+            // IO.  Stop there so no upper-layer crossover cell is consumed.
+            if (crossover_edge_cells.find(current) != crossover_edge_cells.end()) {
+                break;
+            }
+        }
+
+        std::size_t terminal_index = 0;
+        for (std::size_t index = 1; index < contraction_path.size(); ++index) {
+            if (on_tile_edge_port(contraction_path[index])) {
+                terminal_index = index;
+            }
+        }
+        if (terminal_index == 0) {
+            ++stats.skipped_ports;
+            return;
+        }
+
+        // The safe frontier may be inside a clock tile.  Pull it back to the
+        // latest legal midpoint of a 5x5 edge so an IO never appears as an
+        // interior marker, at an arbitrary edge offset, or as an extra cell
+        // protruding beyond the routed chain.
+        contraction_path.resize(terminal_index + 1);
+        current = contraction_path.back();
+
+        std::unordered_set<position, MappingPositionHash> consumed(
+            contraction_path.begin(), contraction_path.end());
+
+        // The last chain cell is retyped as IO.  Earlier cells disappear; the
+        // suffix begins next to the new terminal and therefore stays connected.
+        bucket_it->second.erase(std::remove(bucket_it->second.begin(), bucket_it->second.end(), center),
+                                bucket_it->second.end());
+        appendUniqueCell(bucket_it->second, current);
+        if (normal_it != nodecell_list.end()) {
+            erase_positions(normal_it->second, consumed);
+        }
+        for (auto route_it : incident_routes) {
+            for (auto& segment : route_it->second) {
+                erase_positions(segment, consumed);
+            }
+            auto& segments = route_it->second;
+            segments.erase(std::remove_if(segments.begin(), segments.end(),
+                                          [](const std::vector<position>& segment) {
+                                              return segment.empty();
+                                          }),
+                           segments.end());
+        }
+
+        io_terminal_origins_.erase(center);
+        io_terminal_origins_[current] = gate;
+        stats.removed_cells += terminal_index;
+        if (is_input) {
+            ++stats.moved_inputs;
+        } else {
+            ++stats.moved_outputs;
+        }
+    };
+
+    // Contract sources first.  Outputs then see the shortened route state and
+    // cannot consume a terminal already placed by the source-side pass.
+    for (const auto& node : node_links) {
+        if (node.first.second == "input") {
+            contract_terminal(node.first.first, "input", true);
+        }
+    }
+    for (const auto& node : node_links) {
+        if (node.first.second == "output") {
+            contract_terminal(node.first.first, "output", false);
+        }
+    }
+
+    return stats;
 }
 
 void Mapping::not_check(std::vector<std::vector<position>> &_routepos_list){

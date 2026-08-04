@@ -1,0 +1,60 @@
+#circuit name: paper_2ddwave_crossing_demo.v
+
+#designed by normal graph draw algorithm with OGDF Sugiyama fixed-layer crossing ordering, right-down reachable initialization, exclusive fanin and shared-fanout endpoint-port constraints, local straight orthogonal crossover legality, adaptive negotiated L/Z Manhattan or direct/DP monotone routing, structural/congestion-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification.
+
+#gate level placement and routing infomation
+#gates number: 8
+#input/output: 3 / 1
+#edges number: 10
+#total layers: 4
+#layout area: width: 6, height: 6, area: 36
+#cell count: 171
+#cross count: 4
+#critical path: 11
+#clocks: 2.75
+#run time: 0.060679 s
+#phase encoding: enabled
+#phase count: 4
+#clock scheme: 2DDWave
+#block size: 4x4
+#coordinate origin: normalized top-left (0,0)
+#unassigned phase in raw map: none
+#encoded padding/unassigned compatibility fill: 0
+#encoding: row-major blocks; each block stores one byte per row; each cell uses 2 bits; column 0 is LSB
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (0,0);
+1, b, input, (1,0);
+2, c, input, (3,0);
+3, carry, or, (5,5);
+4, ab, and, (1,3);
+5, bc, and, (5,3);
+6, ac, and, (3,3);
+7, merge, or, (5,4);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(4,7): (1,3),(1,4),(2,4),(3,4),(4,4),(5,4);
+(7,3): (5,4),(5,5);
+(2,6): (3,0),(3,1),(3,2),(3,3);
+(5,7): (5,3),(5,4);
+(1,5): (1,0),(1,1),(2,1),(3,1),(4,1),(5,1),(5,2),(5,3);
+(6,3): (3,3),(3,4),(3,5),(4,5),(5,5);
+(1,4): (1,0),(1,1),(1,2),(1,3);
+(0,4): (0,0),(0,1),(0,2),(0,3),(1,3);
+(2,5): (3,0),(3,1),(3,2),(4,2),(4,3),(5,3);
+(0,6): (0,0),(0,1),(0,2),(1,2),(2,2),(2,3),(3,3);
+#paths info
+
+#absolute bbox: (0,0) -> (5,5)
+#raw size: width: 6, height: 6
+#padded size: width: 8, height: 8
+#blocks: columns: 2, rows: 2
+
+#encoded phase map
+### (block_x,block_y): hex ###
+(0,0):0xe4394e93; (1,0):0x04090e03;
+(0,1):0xe4390000; (1,1):0x04090000;
+#encoded phase map

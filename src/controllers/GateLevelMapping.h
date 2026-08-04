@@ -47,9 +47,10 @@ public:
     QString currentMappingFilePath;                   // 当前映射文件路径
 
 public slots:
-        void parseGateLevelMappingFile(const QString &filePath); // 直接解析指定文件
+        bool parseGateLevelMappingFile(const QString &filePath,
+                                       bool showDialogs = true); // 直接解析指定文件
 
-        void mappingCellItem();
+        bool mappingCellItem();
         void putClock();
         void putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name = "");
         // void printCrossline();
@@ -61,7 +62,7 @@ private:
     void parseMetadataLine(const QString &line);
     QString metadataValue(const QStringList &keys) const;
     QString buildMappingStatusMessage() const;
-    void writeMappingMetricsToFile(qulonglong cellCount, qulonglong crossCount);
+    void updateMappingMetrics(qulonglong cellCount, qulonglong crossCount);
     void parseNodeLine(const QString &line);
     void parsePathLine(const QString &line);
     void parsePhaseLine(const QString &line);

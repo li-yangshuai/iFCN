@@ -14,6 +14,26 @@
 namespace fcngraph{
     using position = std::pair<unsigned int , unsigned int>;
 
+    using NodeLinkMap = std::map<
+        std::pair<position, std::string>,
+        std::pair<std::vector<position>, std::vector<position>>>;
+    using RouteCellMap = std::map<
+        std::pair<position, position>,
+        std::vector<std::vector<position>>>;
+
+    struct IoPortContractionStats
+    {
+        std::size_t moved_inputs = 0;
+        std::size_t moved_outputs = 0;
+        std::size_t removed_cells = 0;
+        std::size_t skipped_ports = 0;
+
+        std::size_t movedPorts() const noexcept
+        {
+            return moved_inputs + moved_outputs;
+        }
+    };
+
     struct MappingPositionHash
     {
         std::size_t operator()(const position& pos) const noexcept
@@ -28,13 +48,20 @@ namespace fcngraph{
         Mapping(){}
         ~Mapping(){}
 
-        std::map<std::pair<position, position>, std::vector<std::vector<position>>> mapping_line(std::vector<std::vector<position>>& _example);
+        RouteCellMap mapping_line(std::vector<std::vector<position>>& _example);
+        bool validate_crossovers(std::string* error = nullptr) const;
         void routepos_Deviate(std::vector<position>& _oneroutepos_list);
         void deviate_mapping(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list);
         std::string findInVectorPairFirst(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list, position& target_pair);
         bool isfindpostype(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list, position& target_pair, std::string& _type);
         void crossline_mapping(std::vector<std::vector<position>> &_routepos_list);
-        void node_mapping(std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>>& _Nodelink);
+        void node_mapping(NodeLinkMap& _Nodelink);
+        IoPortContractionStats contract_io_ports(const NodeLinkMap& node_links,
+                                                 RouteCellMap& route_cells);
+        const std::map<position, position>& io_terminal_origins() const noexcept
+        {
+            return io_terminal_origins_;
+        }
         void not_check(std::vector<std::vector<position>> &_routepos_list);
 
         std::map<std::pair<position, position>, std::vector<std::vector<position>>> deviatemapping_list;//线映射坐标
@@ -66,6 +93,7 @@ namespace fcngraph{
         };
         std::unordered_map<position, DeviateLookupEntry, MappingPositionHash> deviate_lookup;
         std::unordered_set<position, MappingPositionHash> multi_output_not_input_boundaries;
+        std::map<position, position> io_terminal_origins_;
         static std::uint16_t deviateTypeMask(const std::string& type);
         void updateDeviateLookup(const std::pair<position, position>& route_key,
                                  const std::vector<std::pair<position, std::string>>& route_entries);

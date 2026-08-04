@@ -185,6 +185,15 @@ void MappingExecutor::executeMapping()
     }
 
     mapping.node_mapping(Nodelink);
+    auto routeexample = mapping.mapping_line(circle_line);
+    std::string crossoverError;
+    if (!mapping.validate_crossovers(&crossoverError)) {
+        const QString message = QStringLiteral("Cell mapping rejected: invalid crossover: %1")
+                                    .arg(QString::fromStdString(crossoverError));
+        qWarning().noquote() << message;
+        mainWindow->customStatusBar->addMessage(message);
+        return;
+    }
     auto nodeexample = mapping.nodecell_list;//按单位元胞类型分类的映射 std::map<std::string, std::vector<position>>
     if(nodeexample.empty())
     {
@@ -286,9 +295,9 @@ void MappingExecutor::executeMapping()
             // 仅 input/output 需要节点名匹配
             if (cellType == CellType::InputCell || cellType == CellType::OutputCell)
             {
-                unsigned int xNode = cellPos.first / 5;
-                unsigned int yNode = cellPos.second / 5;
-                QPoint nodePoint(xNode, yNode);
+                position nodePosition{cellPos.first / 5, cellPos.second / 5};
+                QPoint nodePoint(static_cast<int>(nodePosition.first),
+                                 static_cast<int>(nodePosition.second));
 
                 for (const auto& node : nodes)
                 {
@@ -304,7 +313,6 @@ void MappingExecutor::executeMapping()
         }
     }
 
-    auto routeexample = mapping.mapping_line(circle_line);
     auto crossexample = mapping.crossline_list;
 
     std::vector<position> allroutecells;//存放所有路线元胞坐标，用于后续交叉线的检查

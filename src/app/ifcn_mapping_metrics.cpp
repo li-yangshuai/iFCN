@@ -36,9 +36,11 @@ bool parsePosition(const std::string &xText, const std::string &yText, position 
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        std::cerr << "usage: ifcn_mapping_metrics <layout.ifcn>\n";
+        std::cerr << "usage: ifcn_mapping_metrics <layout.ifcn> [--no-io-contraction]\n";
         return 2;
     }
+
+    const bool contractIoPorts = argc < 3 || std::string(argv[2]) != "--no-io-contraction";
 
     std::ifstream input(argv[1]);
     if (!input) {
@@ -126,7 +128,15 @@ int main(int argc, char **argv)
     }
 
     mapping.node_mapping(nodeLinks);
-    const auto routeCellsByPath = mapping.mapping_line(routePaths);
+    auto routeCellsByPath = mapping.mapping_line(routePaths);
+    std::string crossoverError;
+    if (!mapping.validate_crossovers(&crossoverError)) {
+        std::cerr << "invalid crossover mapping: " << crossoverError << '\n';
+        return 4;
+    }
+    if (contractIoPorts) {
+        mapping.contract_io_ports(nodeLinks, routeCellsByPath);
+    }
     const auto crossCellsByPath = mapping.crossline_list;
     const auto nodeCellsByType = mapping.nodecell_list;
 

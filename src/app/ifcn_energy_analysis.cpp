@@ -4,6 +4,7 @@
 #include <iostream>
 #include <map>
 #include <regex>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -283,8 +284,12 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data)
     }
 
     mapping.node_mapping(nodeLinks);
+    auto routeCellsByPath = mapping.mapping_line(routePaths);
+    std::string crossoverError;
+    if (!mapping.validate_crossovers(&crossoverError)) {
+        throw std::runtime_error("invalid crossover mapping: " + crossoverError);
+    }
     const auto nodeCellsByType = mapping.nodecell_list;
-    const auto routeCellsByPath = mapping.mapping_line(routePaths);
     const auto crossCellsByPath = mapping.crossline_list;
 
     std::vector<Cell> cells;
@@ -292,7 +297,7 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data)
         const std::string &type = entry.first;
         for (const position &cellPos : entry.second) {
             if (type == "input") {
-                const position nodePos{cellPos.first / 5, cellPos.second / 5};
+                position nodePos{cellPos.first / 5, cellPos.second / 5};
                 const auto nameIt = nodeNameByPos.find(nodePos);
                 addCell(cells,
                         data.phases,
@@ -302,7 +307,7 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data)
                         CellMode::Normal,
                         nameIt == nodeNameByPos.end() ? std::string{} : nameIt->second);
             } else if (type == "output") {
-                const position nodePos{cellPos.first / 5, cellPos.second / 5};
+                position nodePos{cellPos.first / 5, cellPos.second / 5};
                 const auto nameIt = nodeNameByPos.find(nodePos);
                 addCell(cells,
                         data.phases,

@@ -74,7 +74,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     enableDropTarget(view != nullptr ? view->viewport() : nullptr, this);
 
     connect(scene, SIGNAL(cellItemInserted(QCADCellItem *)), this, SLOT(slotCellItemInserted(QCADCellItem *)));
+    connect(scene, &QGraphicsScene::changed, this, [this](const QList<QRectF> &) {
+        if (view != nullptr) {
+            view->setEmptyStateVisible(!currentCanvasHasItemsOrData());
+        }
+    });
     connect(scene, &QCADScene::clockRegionsChanged, this, [this]() {
+        // QCADScene may be hosted inside TabbedMainWindow, so its view's top-level
+        // window is not necessarily this MainWindow.  Update the empty-state card
+        // from the signal instead of relying on QCADScene's window cast.
+        if (view != nullptr) {
+            view->setEmptyStateVisible(!currentCanvasHasItemsOrData());
+        }
         if (phaseCodecPreviewActive) {
             updatePhaseCodecPreview();
         }

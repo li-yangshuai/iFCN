@@ -30,6 +30,7 @@ add_executable(
     ui/mainwindow/MainWindow.Circuit.cpp
     ui/mainwindow/MainWindow.Status.cpp
     ui/mainwindow/MainWindow.Logic.cpp
+    ui/mainwindow/MainWindow.IoContraction.cpp
     ui/items/QCADCellItem.cpp 
     ui/view/QCADView.cpp             
     ui/view/QCADScene.cpp 
@@ -37,6 +38,7 @@ add_executable(
     controllers/SimulationManager.cpp
     controllers/VerilogHandler.cpp
     controllers/GateLevelMapping.cpp
+    controllers/CellLevelIoContraction.cpp
     controllers/MappingExecutor.cpp
     ui/widgets/LayerComboBox.cpp             
     ui/widgets/CircuitSchematicView.cpp

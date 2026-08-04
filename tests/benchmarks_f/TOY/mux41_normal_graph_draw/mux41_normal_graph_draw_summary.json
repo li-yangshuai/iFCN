@@ -3,13 +3,62 @@
   "resolved_benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41.v",
   "parser_safe_generated": false,
   "seed": 1,
+  "crossing_orderer_requested": "ogdf",
+  "crossing_orderer": "ogdf",
+  "crossing_order_metrics": {
+    "orderer": "ogdf",
+    "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
+    "kernel_ms": 0.7092,
+    "wall_seconds": 0.009296315998653881,
+    "ogdf_internal_crossings": 1,
+    "total_seconds": 0.009404320000612643,
+    "adjacent_crossings": 1
+  },
+  "router_mode": "negotiated",
+  "router_mode_requested": "auto",
+  "routing_metrics": {
+    "iterations": 4,
+    "conflict_count": 0,
+    "history_cell_count": 14,
+    "failed_edge_count": 0,
+    "routed_edge_count": 21,
+    "crossovers_enabled": true,
+    "large_circuit_policy": false,
+    "candidate_tracks": 10,
+    "iteration_limit": 24
+  },
   "seed_attempts": [
     {
       "seed": 1,
       "failed_edge_count": 0,
       "clock_template_ok": true,
       "clock_template_conflicts": 0,
-      "area": 120
+      "port_directions_ok": true,
+      "port_direction_violations": 0,
+      "crossing_orderer": "ogdf",
+      "crossing_order_metrics": {
+        "orderer": "ogdf",
+        "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
+        "kernel_ms": 0.7092,
+        "wall_seconds": 0.009296315998653881,
+        "ogdf_internal_crossings": 1,
+        "total_seconds": 0.009404320000612643,
+        "adjacent_crossings": 1
+      },
+      "router_mode": "negotiated",
+      "router_mode_requested": "auto",
+      "routing_metrics": {
+        "iterations": 4,
+        "conflict_count": 0,
+        "history_cell_count": 14,
+        "failed_edge_count": 0,
+        "routed_edge_count": 21,
+        "crossovers_enabled": true,
+        "large_circuit_policy": false,
+        "candidate_tracks": 10,
+        "iteration_limit": 24
+      },
+      "area": 240
     }
   ],
   "output_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw",
@@ -20,9 +69,11 @@
   "physical_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/mux41_normal_graph_draw/mux41_physical.svg",
   "stage_tex_dir": "seed_1",
   "failed_edge_count": 0,
-  "width": 12,
-  "height": 10,
-  "area": 120,
-  "run_time_sec": 2.1700112179969437,
-  "algorithm_description": "normal graph draw algorithm based on GCN embedding + barycenter ordering, right-down reachable initialization, ML-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
+  "port_directions_ok": true,
+  "port_direction_violations": 0,
+  "width": 15,
+  "height": 16,
+  "area": 240,
+  "run_time_sec": 4.050100183001632,
+  "algorithm_description": "normal graph draw algorithm with OGDF Sugiyama fixed-layer crossing ordering, right-down reachable initialization, exclusive fanin and shared-fanout endpoint-port constraints, local straight orthogonal crossover legality, adaptive negotiated L/Z Manhattan or direct/DP monotone routing, structural/congestion-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
 }

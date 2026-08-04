@@ -1,0 +1,8 @@
+{
+  "stage": "02_quantized_seed",
+  "layers": [[0,1,2],[5,6],[7,8],[4],[3]],
+  "nodes": [{"id":0,"name":"x0","type":"input","x":21,"y":28},{"id":1,"name":"x1","type":"input","x":25,"y":28},{"id":2,"name":"x2","type":"input","x":23,"y":28},{"id":3,"name":"y0","type":"output","x":22,"y":20},{"id":4,"name":"n4","type":"maj","x":22,"y":22},{"id":5,"name":"n4_0","type":"and","x":22,"y":26},{"id":6,"name":"~x2","type":"not","x":23,"y":26},{"id":7,"name":"n4_1","type":"and","x":20,"y":24},{"id":8,"name":"n4_2","type":"and","x":23,"y":24}],
+  "edges": [[0,5],[0,7],[1,5],[1,8],[2,6],[4,3],[5,4],[6,7],[6,8],[7,4],[8,4]],
+  "routes": [],
+  "cells": []
+}

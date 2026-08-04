@@ -686,6 +686,18 @@ void MainWindow::createVerilogSourceDock()
     });
     connect(generateButton, &QToolButton::clicked,
             this, &MainWindow::slotGenerateFromVerilogSource);
+    connect(verilogHandler, &VerilogHandler::operationStarted,
+            generateButton, [generateButton](const QString &, const QString &) {
+        generateButton->setEnabled(false);
+    });
+    connect(verilogHandler, &VerilogHandler::operationFinished,
+            generateButton, [generateButton](const QString &) {
+        generateButton->setEnabled(true);
+    });
+    connect(verilogHandler, &VerilogHandler::operationFailed,
+            generateButton, [generateButton](const QString &) {
+        generateButton->setEnabled(true);
+    });
 
     verilogSourceDock->setStyleSheet(dockChromeStyle(QStringLiteral("verilogSourceDock")) +
         QStringLiteral(
@@ -801,6 +813,12 @@ QString MainWindow::verilogSourcePath() const
 
 bool MainWindow::currentCanvasHasItemsOrData() const
 {
+    // The empty-state prompt describes an entirely blank canvas.  Any scene
+    // item placed by any editing/import path counts as canvas content, even if
+    // it is not a cell or a clock region known to the layout serializers.
+    if (scene != nullptr && !scene->items().isEmpty()) {
+        return true;
+    }
     if (currentSceneCellCount() > 0) {
         return true;
     }
@@ -922,21 +940,41 @@ void MainWindow::slotGenerateFromVerilogSource()
     auto *form = new QFormLayout(&dialog);
     auto *algorithmCombo = new QComboBox(&dialog);
     algorithmCombo->addItem(tr("Heuristic P&R"), QStringLiteral("heuristic"));
-    algorithmCombo->addItem(tr("Graph P&R"), QStringLiteral("graph"));
-    algorithmCombo->addItem(tr("Normal Graph P&R"), QStringLiteral("normal_graph"));
-    algorithmCombo->addItem(tr("GCN+RL P&R"), QStringLiteral("gcn_rl"));
+    algorithmCombo->addItem(tr("Compact Graph Draw P&R (recommended)"),
+                            QStringLiteral("graph"));
+    algorithmCombo->addItem(tr("2DDWave Fixed-Clock P&R (Normal Graph)"), QStringLiteral("normal_graph"));
+    algorithmCombo->setCurrentIndex(1);
     form->addRow(tr("Algorithm:"), algorithmCombo);
 
-    auto *normalGraphVisualCheck = new QCheckBox(tr("Generate circuit layer/SVG figures"), &dialog);
-    auto *normalGraphStageCheck = new QCheckBox(tr("Generate stage debug TeX snapshots"), &dialog);
+    auto *normalGraphInfo = new QLabel(
+        tr("Normal Graph Draw is restricted to the fixed 2DDWave template. It uses adaptive negotiated Manhattan routing for regression-covered circuits and the monotone direct/DP backend for larger graphs. Its phase TeX covers every tile in the final layout rectangle."),
+        &dialog);
+    normalGraphInfo->setWordWrap(true);
+    normalGraphInfo->setStyleSheet(QStringLiteral(
+        "background: #f0f7f7; border: 1px solid #b8d8d5; border-radius: 6px; padding: 8px; color: #365f63;"));
+    auto *normalGraphOrdererCombo = new QComboBox(&dialog);
+    normalGraphOrdererCombo->addItem(tr("OGDF Sugiyama (fast)"), QStringLiteral("ogdf"));
+    auto *normalGraphLatexCheck = new QCheckBox(tr("Export full-layout 2DDWave phase LaTeX"), &dialog);
+    normalGraphLatexCheck->setChecked(true);
+    auto *normalGraphVisualCheck = new QCheckBox(tr("Export circuit-layer and SVG figures"), &dialog);
+    auto *normalGraphStageCheck = new QCheckBox(tr("Export intermediate debug TeX snapshots"), &dialog);
+    form->addRow(normalGraphInfo);
+    form->addRow(tr("Layer orderer:"), normalGraphOrdererCombo);
+    form->addRow(normalGraphLatexCheck);
     form->addRow(normalGraphVisualCheck);
     form->addRow(normalGraphStageCheck);
 
     auto updateNormalGraphOptions = [&]() {
-        const bool normalGraphSelected =
-            algorithmCombo->currentData().toString() == QStringLiteral("normal_graph");
+        const QString selectedAlgorithm = algorithmCombo->currentData().toString();
+        const bool normalGraphSelected = selectedAlgorithm == QStringLiteral("normal_graph");
+        normalGraphInfo->setVisible(normalGraphSelected);
+        normalGraphOrdererCombo->setEnabled(normalGraphSelected);
+        normalGraphOrdererCombo->setVisible(normalGraphSelected);
+        normalGraphLatexCheck->setVisible(normalGraphSelected);
         normalGraphVisualCheck->setEnabled(normalGraphSelected);
+        normalGraphVisualCheck->setVisible(normalGraphSelected);
         normalGraphStageCheck->setEnabled(normalGraphSelected);
+        normalGraphStageCheck->setVisible(normalGraphSelected);
     };
     connect(algorithmCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             &dialog, updateNormalGraphOptions);
@@ -951,13 +989,15 @@ void MainWindow::slotGenerateFromVerilogSource()
         return;
     }
 
+    const QString algorithm = algorithmCombo->currentData().toString();
     MainWindow *targetWindow = this;
     if (currentCanvasHasItemsOrData()) {
         QMessageBox prompt(this);
         prompt.setIcon(QMessageBox::Question);
         prompt.setWindowTitle(tr("Existing Layout"));
         prompt.setText(tr("The current UI already contains layout items or mapping data."));
-        prompt.setInformativeText(tr("Clear the current tab before generating, or generate in a new tab with the current Verilog source?"));
+        prompt.setInformativeText(
+            tr("Clear the current tab before generating, or generate in a new tab with the current Verilog source?"));
         auto *clearButton = prompt.addButton(tr("Clear and Generate"), QMessageBox::DestructiveRole);
         QPushButton *newTabButton = nullptr;
         if (tabHost != nullptr) {
@@ -985,19 +1025,18 @@ void MainWindow::slotGenerateFromVerilogSource()
         return;
     }
 
-    const QString algorithm = algorithmCombo->currentData().toString();
     if (algorithm == QStringLiteral("heuristic")) {
         targetWindow->verilogHandler->runHeuristicLayoutForFile(runFilePath);
     } else if (algorithm == QStringLiteral("graph")) {
         targetWindow->verilogHandler->runGraphRenderForFile(runFilePath);
-    } else if (algorithm == QStringLiteral("normal_graph")) {
+    } else {
         targetWindow->verilogHandler->runNormalGraphDrawLayoutForFile(
             runFilePath,
             true,
             normalGraphVisualCheck->isChecked(),
-            normalGraphStageCheck->isChecked());
-    } else {
-        targetWindow->verilogHandler->runGcnRlLayoutForFile(runFilePath, true, false);
+            normalGraphStageCheck->isChecked(),
+            normalGraphLatexCheck->isChecked(),
+            normalGraphOrdererCombo->currentData().toString());
     }
 }
 
@@ -1366,6 +1405,18 @@ void MainWindow::exportStructure3DGraphic()
 
     printToStatusBar(tr("3D structure saved: %1")
                          .arg(QDir::toNativeSeparators(filePath)));
+}
+
+bool MainWindow::exportStructure3DLayout(const QString &outputPath)
+{
+    if (structure3DView == nullptr || outputPath.trimmed().isEmpty()) {
+        return false;
+    }
+    updatePhaseCodecPreview();
+    updateStructure3DView();
+    return outputPath.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive)
+        ? structure3DView->exportToPdf(outputPath)
+        : structure3DView->exportToSvg(outputPath);
 }
 
 void MainWindow::centerViewOnItems(bool fitToView)

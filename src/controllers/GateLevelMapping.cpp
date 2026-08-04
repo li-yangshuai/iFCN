@@ -235,20 +235,23 @@ GateLevelMapping::GateLevelMapping(MainWindow *parent)
     // qDebug() << "[GateLevelMapping] initialized (Qt containers)";
 }
 
-void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
+bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
+                                                 bool showDialogs)
 {
     if (filePath.isEmpty()) {
         qWarning() << "[GateLevelMapping] Empty file path.";
-        return;
+        return false;
     }
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        showCenteredMessageBox(mainWindow,
-                               QMessageBox::Warning,
-                               "File Error",
-                               "Cannot open file:\n" + filePath);
-        return;
+        if (showDialogs) {
+            showCenteredMessageBox(mainWindow,
+                                   QMessageBox::Warning,
+                                   "File Error",
+                                   "Cannot open file:\n" + filePath);
+        }
+        return false;
     }
 
     QTextStream in(&file);
@@ -311,14 +314,16 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
 
     applyClockSchemePhaseTemplate();
     mainWindow->updateLayoutInfoFromMapping(*this);
-    showCenteredMessageBox(mainWindow,
-        QMessageBox::Information,
-        "Parsing Complete",
-        QString("Circuit: %1\nNodes: %2\nRoutes: %3\nPhase entries: %4")
-        .arg(circuitName)
-        .arg(nodes.size())
-        .arg(routes.size())
-        .arg(coordPhaseMap.size()));
+    if (showDialogs) {
+        showCenteredMessageBox(mainWindow,
+            QMessageBox::Information,
+            "Parsing Complete",
+            QString("Circuit: %1\nNodes: %2\nRoutes: %3\nPhase entries: %4")
+            .arg(circuitName)
+            .arg(nodes.size())
+            .arg(routes.size())
+            .arg(coordPhaseMap.size()));
+    }
 
     const QString message = QStringLiteral("Parsed .ifcn: %1").arg(circuitName);
     mainWindow->customStatusBar->addMessage(message);
@@ -341,12 +346,14 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
         ).arg(reason);
         qWarning() << "[GateLevelMapping]" << skipMessage;
         mainWindow->printToStatusBar(skipMessage);
-        showCenteredMessageBox(mainWindow,
-                               QMessageBox::Information,
-                               QStringLiteral("Large Mapping Loaded"),
-                               skipMessage);
+        if (showDialogs) {
+            showCenteredMessageBox(mainWindow,
+                                   QMessageBox::Information,
+                                   QStringLiteral("Large Mapping Loaded"),
+                                   skipMessage);
+        }
         emit mappingLoaded();
-        return;
+        return true;
     }
 
     resetMappedSceneLayers(mainWindow);
@@ -370,7 +377,9 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
             //     qDebug() << "   (" << p.x() << "," << p.y() << ")";
         }
 
-        mappingCellItem();
+        if (!mappingCellItem()) {
+            throw std::runtime_error("cell mapping rejected the parsed IFCN geometry");
+        }
         putClock();
         mainWindow->scene->finalizeFastRenderBuild();
         QVector<QString> inputNames;
@@ -393,11 +402,13 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
         const QString message = QStringLiteral("Cell-level mapping failed: %1").arg(QString::fromLocal8Bit(ex.what()));
         qWarning() << "[GateLevelMapping]" << message;
         mainWindow->printToStatusBar(message);
-        showCenteredMessageBox(mainWindow,
-                               QMessageBox::Warning,
-                               QStringLiteral("Mapping Failed"),
-                               message);
-        return;
+        if (showDialogs) {
+            showCenteredMessageBox(mainWindow,
+                                   QMessageBox::Warning,
+                                   QStringLiteral("Mapping Failed"),
+                                   message);
+        }
+        return false;
     } catch (...) {
         mainWindow->scene->clearFastRender();
         if (batchStarted) {
@@ -406,15 +417,18 @@ void GateLevelMapping::parseGateLevelMappingFile(const QString &filePath)
         const QString message = QStringLiteral("Cell-level mapping failed with an unknown error.");
         qWarning() << "[GateLevelMapping]" << message;
         mainWindow->printToStatusBar(message);
-        showCenteredMessageBox(mainWindow,
-                               QMessageBox::Warning,
-                               QStringLiteral("Mapping Failed"),
-                               message);
-        return;
+        if (showDialogs) {
+            showCenteredMessageBox(mainWindow,
+                                   QMessageBox::Warning,
+                                   QStringLiteral("Mapping Failed"),
+                                   message);
+        }
+        return false;
     }
     // printCrossline();
 
     emit mappingLoaded();
+    return true;
 }
 
 void GateLevelMapping::parseMetadataLine(const QString &line)
@@ -549,69 +563,10 @@ QString GateLevelMapping::buildMappingStatusMessage() const
     return parts.join(QStringLiteral(", "));
 }
 
-void GateLevelMapping::writeMappingMetricsToFile(qulonglong cellCount, qulonglong crossCount)
+void GateLevelMapping::updateMappingMetrics(qulonglong cellCount, qulonglong crossCount)
 {
     metadata.insert(QStringLiteral("cell count"), QString::number(cellCount));
     metadata.insert(QStringLiteral("cross count"), QString::number(crossCount));
-
-    if (currentMappingFilePath.isEmpty()) {
-        return;
-    }
-
-    QFile file(currentMappingFilePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qWarning() << "[GateLevelMapping] Cannot reopen mapping file for metrics:"
-                   << currentMappingFilePath;
-        return;
-    }
-
-    QStringList lines;
-    QTextStream in(&file);
-    while (!in.atEnd()) {
-        lines.push_back(in.readLine());
-    }
-    file.close();
-
-    const QString cellLine = QStringLiteral("#cell count: %1").arg(cellCount);
-    const QString crossLine = QStringLiteral("#cross count: %1").arg(crossCount);
-    bool hasCellLine = false;
-    bool hasCrossLine = false;
-    int insertAfter = -1;
-
-    for (int i = 0; i < lines.size(); ++i) {
-        const QString trimmed = lines[i].trimmed().toLower();
-        if (trimmed.startsWith(QStringLiteral("#cell count:"))) {
-            lines[i] = cellLine;
-            hasCellLine = true;
-        } else if (trimmed.startsWith(QStringLiteral("#cross count:"))) {
-            lines[i] = crossLine;
-            hasCrossLine = true;
-        }
-
-        if (trimmed.startsWith(QStringLiteral("#layout area:"))) {
-            insertAfter = i;
-        } else if (insertAfter < 0 && trimmed.startsWith(QStringLiteral("#edges number:"))) {
-            insertAfter = i;
-        }
-    }
-
-    if (!hasCrossLine) {
-        lines.insert(insertAfter + 1, crossLine);
-    }
-    if (!hasCellLine) {
-        lines.insert(insertAfter + 1, cellLine);
-    }
-
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        qWarning() << "[GateLevelMapping] Cannot write mapping metrics to file:"
-                   << currentMappingFilePath;
-        return;
-    }
-
-    QTextStream out(&file);
-    for (const QString &line : lines) {
-        out << line << '\n';
-    }
 }
 
 void GateLevelMapping::parseNodeLine(const QString &line)
@@ -803,7 +758,7 @@ void GateLevelMapping::applyClockSchemePhaseTemplate()
 }
 
 
-void GateLevelMapping::mappingCellItem(){
+bool GateLevelMapping::mappingCellItem(){
     Mapping mapping;
 
     const auto toPosition = [](const QPoint &point) {
@@ -961,16 +916,26 @@ void GateLevelMapping::mappingCellItem(){
     {
         QString message = "Nodelink empty!";
         mainWindow->customStatusBar->addMessage(message);
-        return;
+        return false;
     }
 
     mapping.node_mapping(Nodelink);
+    auto routeexample = mapping.mapping_line(circle_line);
+    std::string crossoverError;
+    if (!mapping.validate_crossovers(&crossoverError)) {
+        const QString message = QStringLiteral("Cell mapping rejected: invalid crossover: %1")
+                                    .arg(QString::fromStdString(crossoverError));
+        qWarning().noquote() << message;
+        mainWindow->customStatusBar->addMessage(message);
+        return false;
+    }
+    auto crossexample = mapping.crossline_list;
     auto nodeexample = mapping.nodecell_list;
     if(nodeexample.empty())
     {
         QString message = "nodeexample empty!";
         mainWindow->customStatusBar->addMessage(message);
-        return;
+        return false;
     }
     for(auto &cell : nodeexample)
     {
@@ -979,9 +944,8 @@ void GateLevelMapping::mappingCellItem(){
         {
             for(auto &cellpos : cellpos_list)
             {
-                unsigned int x_node = cellpos.first / 5;
-                unsigned int y_node = cellpos.second / 5;
-                const auto nameIt = nodeNameByPos.find({x_node, y_node});
+                position nodePos{cellpos.first / 5, cellpos.second / 5};
+                const auto nameIt = nodeNameByPos.find(nodePos);
                 const QString Iname = (nameIt != nodeNameByPos.end()) ? nameIt->second : QStringLiteral("default");
                 putCellItem(cellpos, 0, CellType::InputCell, positionPhaseMap, Iname);
                 
@@ -991,9 +955,8 @@ void GateLevelMapping::mappingCellItem(){
         {
             for(auto &cellpos : cellpos_list)
             {
-                unsigned int x_node = cellpos.first / 5;
-                unsigned int y_node = cellpos.second / 5;
-                const auto nameIt = nodeNameByPos.find({x_node, y_node});
+                position nodePos{cellpos.first / 5, cellpos.second / 5};
+                const auto nameIt = nodeNameByPos.find(nodePos);
                 const QString Oname = (nameIt != nodeNameByPos.end()) ? nameIt->second : QStringLiteral("default");
                 putCellItem(cellpos, 0, CellType::OutputCell, positionPhaseMap, Oname);
 
@@ -1024,10 +987,6 @@ void GateLevelMapping::mappingCellItem(){
             }
         }
     }
-
-    auto routeexample = mapping.mapping_line(circle_line);
-    auto crossexample = mapping.crossline_list;
-    auto nodeexample2 = mapping.nodecell_list;
 
     mappedRouteCells.clear();
     for (auto it = routes.begin(); it != routes.end(); ++it)
@@ -1070,7 +1029,7 @@ void GateLevelMapping::mappingCellItem(){
         
     }
     std::vector<position> allnodecells;
-    for (auto &pair : nodeexample2)
+    for (auto &pair : nodeexample)
     {
         allnodecells.insert(allnodecells.end(), pair.second.begin(), pair.second.end());
     }
@@ -1108,8 +1067,8 @@ void GateLevelMapping::mappingCellItem(){
     }
 
     const size_t total_count = allroutecells.size() + allnodecells.size();
-    writeMappingMetricsToFile(static_cast<qulonglong>(total_count),
-                              static_cast<qulonglong>(total_cross));
+    updateMappingMetrics(static_cast<qulonglong>(total_count),
+                         static_cast<qulonglong>(total_cross));
     mainWindow->updateLayoutInfoFromMapping(*this);
 
     QString message = QStringLiteral("Mapped .ifcn: %1 cells, %2 crossings")
@@ -1258,6 +1217,7 @@ void GateLevelMapping::mappingCellItem(){
         }
     }
 
+    return true;
 }
 
 void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position ,int>& _pos_phase, QString _name ){

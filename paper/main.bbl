@@ -1,0 +1,214 @@
+%%% -*-BibTeX-*-
+%%% Do NOT edit. File created by BibTeX with style
+%%% ACM-Reference-Format-Journals [18-Jan-2012].
+
+\begin{thebibliography}{13}
+
+%%% ====================================================================
+%%% NOTE TO THE USER: you can override these defaults by providing
+%%% customized versions of any of these macros before the \bibliography
+%%% command.  Each of them MUST provide its own final punctuation,
+%%% except for \shownote{} and \showURL{}.  The latter two
+%%% do not use final punctuation, in order to avoid confusing it with
+%%% the Web address.
+%%%
+%%% To suppress output of a particular field, define its macro to expand
+%%% to an empty string, or better, \unskip, like this:
+%%%
+%%% \newcommand{\showURL}[1]{\unskip}   % LaTeX syntax
+%%%
+%%% \def \showURL #1{\unskip}           % plain TeX syntax
+%%%
+%%% ====================================================================
+
+\ifx \showCODEN    \undefined \def \showCODEN     #1{\unskip}     \fi
+\ifx \showISBNx    \undefined \def \showISBNx     #1{\unskip}     \fi
+\ifx \showISBNxiii \undefined \def \showISBNxiii  #1{\unskip}     \fi
+\ifx \showISSN     \undefined \def \showISSN      #1{\unskip}     \fi
+\ifx \showLCCN     \undefined \def \showLCCN      #1{\unskip}     \fi
+\ifx \shownote     \undefined \def \shownote      #1{#1}          \fi
+\ifx \showarticletitle \undefined \def \showarticletitle #1{#1}   \fi
+\ifx \showURL      \undefined \def \showURL       {\relax}        \fi
+% The following commands are used for tagged output and should be
+% invisible to TeX
+\providecommand\bibfield[2]{#2}
+\providecommand\bibinfo[2]{#2}
+\providecommand\natexlab[1]{#1}
+\providecommand\showeprint[2][]{arXiv:#2}
+
+\bibitem[Aviram and Ratner(1974)]%
+        {Aviram1974Rectifier}
+\bibfield{author}{\bibinfo{person}{Arieh Aviram} {and} \bibinfo{person}{Mark~A.
+  Ratner}.} \bibinfo{year}{1974}\natexlab{}.
+\newblock \showarticletitle{Molecular Rectifiers}.
+\newblock \bibinfo{journal}{\emph{Chemical Physics Letters}}
+  \bibinfo{volume}{29}, \bibinfo{number}{2} (\bibinfo{year}{1974}),
+  \bibinfo{pages}{277--283}.
+\newblock
+\href{https://doi.org/10.1016/0009-2614(74)85031-1}{doi:\nolinkurl{10.1016/0009-2614(74)85031-1}}
+
+
+\bibitem[Hofmann et~al\mbox{.}(2023)]%
+        {Hofmann2023HybridDA}
+\bibfield{author}{\bibinfo{person}{Simon Hofmann}, \bibinfo{person}{Marcel
+  Walter}, \bibinfo{person}{Lorenzo Servadei}, {and} \bibinfo{person}{Robert
+  Wille}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{Late breaking results from hybrid design automation
+  for field-coupled nanotechnologies}. In \bibinfo{booktitle}{\emph{Proceedings
+  of the ACM/IEEE Design Automation Conference (DAC)}}. \bibinfo{pages}{1--2}.
+\newblock
+\href{https://doi.org/10.1109/DAC56929.2023.10247933}{doi:\nolinkurl{10.1109/DAC56929.2023.10247933}}
+
+
+\bibitem[Hofmann et~al\mbox{.}(2024)]%
+        {Hofmann2024WiringReduction}
+\bibfield{author}{\bibinfo{person}{Simon Hofmann}, \bibinfo{person}{Marcel
+  Walter}, {and} \bibinfo{person}{Robert Wille}.}
+  \bibinfo{year}{2024}\natexlab{}.
+\newblock \showarticletitle{Late Breaking Results: Wiring Reduction for
+  Field-Coupled Nanotechnologies}. In \bibinfo{booktitle}{\emph{Proceedings of
+  the 61st ACM/IEEE Design Automation Conference (DAC)}}.
+\newblock
+\href{https://doi.org/10.1145/3649329.3663491}{doi:\nolinkurl{10.1145/3649329.3663491}}
+
+
+\bibitem[Hofmann et~al\mbox{.}(2025a)]%
+        {Hofmann2025PostLayout}
+\bibfield{author}{\bibinfo{person}{Simon Hofmann}, \bibinfo{person}{Marcel
+  Walter}, {and} \bibinfo{person}{Robert Wille}.}
+  \bibinfo{year}{2025}\natexlab{a}.
+\newblock \showarticletitle{Efficient and scalable post-layout optimization for
+  field-coupled nanotechnologies}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Computer-Aided Design of
+  Integrated Circuits and Systems}} \bibinfo{volume}{44}, \bibinfo{number}{10}
+  (\bibinfo{year}{2025}), \bibinfo{pages}{3790--3803}.
+\newblock
+\href{https://doi.org/10.1109/TCAD.2025.3549354}{doi:\nolinkurl{10.1109/TCAD.2025.3549354}}
+
+
+\bibitem[Hofmann et~al\mbox{.}(2025b)]%
+        {Hofmann2025GraphOriented}
+\bibfield{author}{\bibinfo{person}{Simon Hofmann}, \bibinfo{person}{Marcel
+  Walter}, {and} \bibinfo{person}{Robert Wille}.}
+  \bibinfo{year}{2025}\natexlab{b}.
+\newblock \showarticletitle{Graph-oriented layout design for field-coupled
+  nanocomputing via parallel multi-objective search space exploration}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Circuits and Systems I:
+  Regular Papers}} (\bibinfo{year}{2025}), \bibinfo{pages}{1--14}.
+\newblock
+\href{https://doi.org/10.1109/TCSI.2025.3614709}{doi:\nolinkurl{10.1109/TCSI.2025.3614709}}
+
+
+\bibitem[Li et~al\mbox{.}(2023)]%
+        {Li2023QCASA}
+\bibfield{author}{\bibinfo{person}{Gaisheng Li}, \bibinfo{person}{Fei Peng},
+  \bibinfo{person}{Bing Zhang}, \bibinfo{person}{Yanshuai Li}, {and}
+  \bibinfo{person}{Guangjun Xie}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{A QCA placement and routing algorithm based on the
+  SA algorithm}.
+\newblock \bibinfo{journal}{\emph{International Journal of Electronics}}
+  \bibinfo{volume}{111}, \bibinfo{number}{12} (\bibinfo{year}{2023}),
+  \bibinfo{pages}{2143--2158}.
+\newblock
+\href{https://doi.org/10.1080/00207217.2023.2248666}{doi:\nolinkurl{10.1080/00207217.2023.2248666}}
+
+
+\bibitem[Li et~al\mbox{.}(2025)]%
+        {Li2025iFCN}
+\bibfield{author}{\bibinfo{person}{Yangshuai Li}, \bibinfo{person}{Fei Peng},
+  \bibinfo{person}{Xiansheng Tong}, \bibinfo{person}{Rongjie Zhu},
+  \bibinfo{person}{Qian Han}, {and} \bibinfo{person}{Guangjun Xie}.}
+  \bibinfo{year}{2025}\natexlab{}.
+\newblock \showarticletitle{iFCN: An automated RTL-to-device framework for
+  molecular field-coupled nanocomputing circuits}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Circuits and Systems I:
+  Regular Papers}} (\bibinfo{year}{2025}), \bibinfo{pages}{1--13}.
+\newblock
+\href{https://doi.org/10.1109/TCSI.2025.3599115}{doi:\nolinkurl{10.1109/TCSI.2025.3599115}}
+
+
+\bibitem[Li et~al\mbox{.}(2022)]%
+        {Li2022FCNPR}
+\bibfield{author}{\bibinfo{person}{Yangshuai Li}, \bibinfo{person}{Guangjun
+  Xie}, \bibinfo{person}{Qian Han}, \bibinfo{person}{Xiaoshuai Li},
+  \bibinfo{person}{Gaisheng Li}, \bibinfo{person}{Bing Zhang}, {and}
+  \bibinfo{person}{Fei Peng}.} \bibinfo{year}{2022}\natexlab{}.
+\newblock \showarticletitle{Field-coupled nanocomputing placement and routing
+  with genetic and A* algorithms}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Circuits and Systems I:
+  Regular Papers}} \bibinfo{volume}{69}, \bibinfo{number}{11}
+  (\bibinfo{year}{2022}), \bibinfo{pages}{4619--4631}.
+\newblock
+\href{https://doi.org/10.1109/TCSI.2022.3197450}{doi:\nolinkurl{10.1109/TCSI.2022.3197450}}
+
+
+\bibitem[Rahimi and Reimers(2018)]%
+        {Rahimi2018MQCA}
+\bibfield{author}{\bibinfo{person}{Ehsan Rahimi} {and}
+  \bibinfo{person}{Jeffrey~R. Reimers}.} \bibinfo{year}{2018}\natexlab{}.
+\newblock \showarticletitle{Molecular quantum cellular automata cell design
+  trade-offs: latching vs. power dissipation}.
+\newblock \bibinfo{journal}{\emph{Physical Chemistry Chemical Physics}}
+  \bibinfo{volume}{20}, \bibinfo{number}{26} (\bibinfo{year}{2018}),
+  \bibinfo{pages}{17881--17888}.
+\newblock
+\href{https://doi.org/10.1039/C8CP02838E}{doi:\nolinkurl{10.1039/C8CP02838E}}
+
+
+\bibitem[Tong et~al\mbox{.}(2026)]%
+        {Tong17022026}
+\bibfield{author}{\bibinfo{person}{Xiansheng Tong}, \bibinfo{person}{Yangshuai
+  Li}, \bibinfo{person}{Rongjie Zhu}, \bibinfo{person}{Fei Peng}, {and}
+  \bibinfo{person}{Guangjun Xie}.} \bibinfo{year}{2026}\natexlab{}.
+\newblock \showarticletitle{A scalable and adaptive cell-level mapping
+  algorithm for QCA placement and routing}.
+\newblock \bibinfo{journal}{\emph{International Journal of Electronics}}
+  \bibinfo{volume}{0}, \bibinfo{number}{0} (\bibinfo{year}{2026}),
+  \bibinfo{pages}{1--26}.
+\newblock
+\href{https://doi.org/10.1080/00207217.2026.2630811}{doi:\nolinkurl{10.1080/00207217.2026.2630811}}
+
+
+\bibitem[Walter et~al\mbox{.}(2018)]%
+        {Walter2018ExactQCA}
+\bibfield{author}{\bibinfo{person}{Marcel Walter}, \bibinfo{person}{Robert
+  Wille}, \bibinfo{person}{Daniel Gro{\ss}e}, \bibinfo{person}{Frank~Sill
+  Torres}, {and} \bibinfo{person}{Rolf Drechsler}.}
+  \bibinfo{year}{2018}\natexlab{}.
+\newblock \showarticletitle{An exact method for design exploration of
+  quantum-dot cellular automata}. In \bibinfo{booktitle}{\emph{Proceedings of
+  the Design, Automation \& Test in Europe Conference \& Exhibition (DATE)}}.
+  \bibinfo{pages}{503--508}.
+\newblock
+\href{https://doi.org/10.23919/DATE.2018.8342060}{doi:\nolinkurl{10.23919/DATE.2018.8342060}}
+
+
+\bibitem[Walter et~al\mbox{.}(2019)]%
+        {fiction2019}
+\bibfield{author}{\bibinfo{person}{Marcel Walter}, \bibinfo{person}{Robert
+  Wille}, \bibinfo{person}{Frank~Sill Torres}, \bibinfo{person}{Daniel Große},
+  {and} \bibinfo{person}{Rolf Drechsler}.} \bibinfo{year}{2019}\natexlab{}.
+\newblock \bibinfo{title}{fiction: An Open Source Framework for the Design of
+  Field-coupled Nanocomputing Circuits}.
+\newblock
+\showeprint[arxiv]{1905.02477}~[cs.ET]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/1905.02477}
+\showURL{%
+\tempurl}
+
+
+\bibitem[Zhang et~al\mbox{.}(2024)]%
+        {Zhang2024QCAHierarchicalPR}
+\bibfield{author}{\bibinfo{person}{Bing Zhang}, \bibinfo{person}{Fei Peng},
+  \bibinfo{person}{Gaisheng Li}, \bibinfo{person}{Yangshuai Li}, {and}
+  \bibinfo{person}{Guangjun Xie}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \showarticletitle{Quantum-Dot Cellular Automata Placement and Routing
+  with Hierarchical Algorithm}.
+\newblock \bibinfo{journal}{\emph{Nano Communication Networks}}
+  \bibinfo{volume}{39} (\bibinfo{year}{2024}), \bibinfo{pages}{100495}.
+\newblock
+\href{https://doi.org/10.1016/j.nancom.2024.100495}{doi:\nolinkurl{10.1016/j.nancom.2024.100495}}
+
+
+\end{thebibliography}

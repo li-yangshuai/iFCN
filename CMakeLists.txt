@@ -4,6 +4,7 @@ project(FCNX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(IFCN_BUILD_GCN_RL_BINDINGS "Build the bundled GCN/RL Python extension module" OFF)
+option(IFCN_BUILD_OGDF_ORDERER "Build the optional OGDF fixed-layer orderer" OFF)
 option(IFCN_BUILD_TESTS "Build iFCN regression tests" ON)
 
 # Set paths
@@ -38,6 +39,9 @@ add_subdirectory(include/autopr)  # Add autopr subdirectory
 add_subdirectory(include/simon)
 if(IFCN_BUILD_GCN_RL_BINDINGS)
     add_subdirectory(include/gcn_rl_layout)
+endif()
+if(IFCN_BUILD_OGDF_ORDERER)
+    add_subdirectory(include/gcn_rl_layout/ogdf)
 endif()
 add_subdirectory(src)
 if(IFCN_BUILD_TESTS)

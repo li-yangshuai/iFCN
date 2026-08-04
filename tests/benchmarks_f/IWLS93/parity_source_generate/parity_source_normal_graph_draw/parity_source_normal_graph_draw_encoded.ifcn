@@ -8,9 +8,11 @@
 #edges number: 148
 #total layers: 16
 #layout area: width: 35, height: 24, area: 840
+#cell count: 2625
+#cross count: 45
 #critical path: 58
 #clocks: 14.5
-#run time: 2.923584 s
+#run time: 2.999280 s
 #phase encoding: enabled
 #phase count: 4
 #clock scheme: 2DDWave

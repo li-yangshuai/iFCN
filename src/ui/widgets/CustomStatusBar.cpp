@@ -1,11 +1,119 @@
 #include "CustomStatusBar.h"
+#include <QDesktopServices>
 #include <QFrame>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QRegularExpression>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QTime>
 #include <QToolButton>
+#include <QUrl>
+
+namespace {
+
+QString escapedStatusText(const QString &text)
+{
+    QString escaped = text.toHtmlEscaped();
+    escaped.replace(QLatin1Char('\n'), QStringLiteral("<br/>"));
+    return escaped;
+}
+
+QString linkExistingPaths(const QString &message)
+{
+    static const QRegularExpression pathStart(
+        QStringLiteral(R"((?:[A-Za-z]:[\\/]|/))"));
+
+    QString html;
+    int copyFrom = 0;
+    int searchFrom = 0;
+    while (searchFrom < message.size()) {
+        const QRegularExpressionMatch match = pathStart.match(message, searchFrom);
+        if (!match.hasMatch()) {
+            break;
+        }
+
+        const int start = match.capturedStart();
+        int end = message.size();
+        const int semicolon = message.indexOf(QLatin1Char(';'), start);
+        const int newline = message.indexOf(QLatin1Char('\n'), start);
+        const int elapsed = message.indexOf(QStringLiteral(" | elapsed "), start);
+        for (const int boundary : {semicolon, newline, elapsed}) {
+            if (boundary >= 0) {
+                end = qMin(end, boundary);
+            }
+        }
+
+        QString candidate = message.mid(start, end - start).trimmed();
+        auto trimTrailingPunctuation = [&candidate]() {
+            while (!candidate.isEmpty()
+                   && QStringLiteral(".,)]}\"").contains(candidate.back())) {
+                candidate.chop(1);
+            }
+        };
+        trimTrailingPunctuation();
+        while (!candidate.isEmpty() && !QFileInfo(candidate).exists()) {
+            const int lastSpace = candidate.lastIndexOf(QLatin1Char(' '));
+            if (lastSpace < 0) {
+                break;
+            }
+            candidate = candidate.left(lastSpace).trimmed();
+            trimTrailingPunctuation();
+        }
+
+        const QFileInfo pathInfo(candidate);
+        if (!candidate.isEmpty() && pathInfo.exists()) {
+            html += escapedStatusText(message.mid(copyFrom, start - copyFrom));
+            const QString href = QUrl::fromLocalFile(pathInfo.absoluteFilePath())
+                                     .toString(QUrl::FullyEncoded)
+                                     .toHtmlEscaped();
+            html += QStringLiteral("<a href=\"%1\">%2</a>")
+                        .arg(href, escapedStatusText(candidate));
+            copyFrom = start + candidate.size();
+            searchFrom = copyFrom;
+        } else {
+            searchFrom = start + 1;
+        }
+    }
+    html += escapedStatusText(message.mid(copyFrom));
+    return html;
+}
+
+void setPathAwareText(QLabel *label, const QString &message)
+{
+    if (label == nullptr) {
+        return;
+    }
+    label->setTextFormat(Qt::RichText);
+    label->setText(linkExistingPaths(message));
+    label->setToolTip(message + QObject::tr("\nCtrl+click a file path to open its folder."));
+}
+
+void enablePathOpening(QLabel *label)
+{
+    if (label == nullptr) {
+        return;
+    }
+    label->setTextInteractionFlags(Qt::TextBrowserInteraction | Qt::TextSelectableByMouse);
+    label->setOpenExternalLinks(false);
+    QObject::connect(label, &QLabel::linkActivated, label, [](const QString &link) {
+        if ((QApplication::keyboardModifiers() & Qt::ControlModifier) == 0) {
+            return;
+        }
+        const QString localPath = QUrl(link).toLocalFile();
+        const QFileInfo pathInfo(localPath);
+        if (!pathInfo.exists()) {
+            return;
+        }
+        const QString directory = pathInfo.isDir()
+            ? pathInfo.absoluteFilePath()
+            : pathInfo.absolutePath();
+        QDesktopServices::openUrl(QUrl::fromLocalFile(directory));
+    });
+}
+
+} // namespace
 
 CustomStatusBar::CustomStatusBar(QWidget *parent) : QWidget(parent)
 {
@@ -30,7 +138,7 @@ CustomStatusBar::CustomStatusBar(QWidget *parent) : QWidget(parent)
     latestMessageLabel->setObjectName(QStringLiteral("latestStatusMessage"));
     latestMessageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     latestMessageLabel->setMinimumWidth(0);
-    latestMessageLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    enablePathOpening(latestMessageLabel);
 
     detailsButton = new QToolButton(summaryWidget);
     detailsButton->setObjectName(QStringLiteral("statusDetailsButton"));
@@ -75,14 +183,14 @@ void CustomStatusBar::addMessage(const QString &message)
         return;
     }
 
-    latestMessageLabel->setText(message);
-    latestMessageLabel->setToolTip(message);
+    setPathAwareText(latestMessageLabel, message);
 
     const QString timestamp = QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
     QLabel *newMessageText = new QLabel(QStringLiteral("%1  %2").arg(timestamp, message), statusContent);
     newMessageText->setObjectName("statusMessage");
     newMessageText->setWordWrap(true);
-    newMessageText->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    enablePathOpening(newMessageText);
+    setPathAwareText(newMessageText, QStringLiteral("%1  %2").arg(timestamp, message));
     newMessageText->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     newMessageText->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     newMessageText->setMinimumHeight(newMessageText->fontMetrics().lineSpacing() + 12);
@@ -115,10 +223,11 @@ void CustomStatusBar::startOperation(const QString &title, const QString &detail
     ensureOperationWidget();
     operationTitleLabel->setText(title);
     operationDetail = detail;
-    operationProgressBar->setRange(0, 0);
-    operationProgressBar->setValue(0);
+    operationHasReportedProgress = false;
+    operationProgressBar->setRange(0, 100);
+    operationProgressBar->setValue(2);
     setSummaryState(tr("Running"), QStringLiteral("running"));
-    latestMessageLabel->setText(detail);
+    setPathAwareText(latestMessageLabel, detail);
     operationHideTimer->stop();
     showOperationWidget();
     operationElapsed.restart();
@@ -131,13 +240,21 @@ void CustomStatusBar::updateOperation(const QString &detail, int value, int maxi
     ensureOperationWidget();
     operationDetail = detail;
     if (maximum > 0) {
-        operationProgressBar->setRange(0, maximum);
-        operationProgressBar->setValue(qBound(0, value, maximum));
-    } else {
-        operationProgressBar->setRange(0, 0);
+        operationHasReportedProgress = true;
+        const int percentage = qRound(
+            100.0 * static_cast<double>(qBound(0, value, maximum))
+            / static_cast<double>(maximum));
+        operationProgressBar->setRange(0, 100);
+        operationProgressBar->setValue(
+            qMax(operationProgressBar->value(), percentage));
+    } else if (!operationHasReportedProgress) {
+        operationProgressBar->setRange(0, 100);
+        const int requestedAdvance = value > 0 ? value : operationProgressBar->value() + 3;
+        operationProgressBar->setValue(
+            qMin(92, qMax(operationProgressBar->value(), requestedAdvance)));
     }
     setSummaryState(tr("Running"), QStringLiteral("running"));
-    latestMessageLabel->setText(detail);
+    setPathAwareText(latestMessageLabel, detail);
     showOperationWidget();
     refreshOperationElapsed();
 }
@@ -148,6 +265,7 @@ void CustomStatusBar::finishOperation(const QString &message)
     operationTimer->stop();
     operationProgressBar->setRange(0, 100);
     operationProgressBar->setValue(100);
+    operationHasReportedProgress = true;
     operationTitleLabel->setText(tr("Completed"));
     operationDetail = message;
     setSummaryState(tr("Done"), QStringLiteral("success"));
@@ -162,7 +280,7 @@ void CustomStatusBar::failOperation(const QString &message)
     ensureOperationWidget();
     operationTimer->stop();
     operationProgressBar->setRange(0, 100);
-    operationProgressBar->setValue(0);
+    operationProgressBar->setValue(qBound(0, operationProgressBar->value(), 100));
     operationTitleLabel->setText(tr("Failed"));
     operationDetail = message;
     setSummaryState(tr("Failed"), QStringLiteral("error"));
@@ -193,6 +311,7 @@ void CustomStatusBar::ensureOperationWidget()
     operationDetailLabel->setWordWrap(true);
     operationDetailLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     operationDetailLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    enablePathOpening(operationDetailLabel);
     operationDetailLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
 
     operationProgressBar = new QProgressBar(operationWidget);
@@ -238,7 +357,19 @@ void CustomStatusBar::refreshOperationElapsed()
     }
 
     const qint64 elapsedSeconds = operationElapsed.isValid() ? operationElapsed.elapsed() / 1000 : 0;
-    operationDetailLabel->setText(tr("%1 | elapsed %2s").arg(operationDetail).arg(elapsedSeconds));
+    setPathAwareText(
+        operationDetailLabel,
+        tr("%1 | elapsed %2s").arg(operationDetail).arg(elapsedSeconds));
+
+    if (operationTimer != nullptr
+        && operationTimer->isActive()
+        && operationProgressBar != nullptr
+        && operationProgressBar->value() < 92) {
+        operationProgressBar->setRange(0, 100);
+        const int current = operationProgressBar->value();
+        const int step = current < 55 ? 2 : 1;
+        operationProgressBar->setValue(qMin(92, current + step));
+    }
 }
 
 void CustomStatusBar::setSummaryState(const QString &label, const QString &state)

@@ -1,0 +1,65 @@
+This is BibTeX, Version 0.99d (TeX Live 2025)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: main.aux
+The style file: ACM-Reference-Format.bst
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated wiz_functions (elt_size=4) to 6000 items from 3000.
+Database file #1: ifcn.bib
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated glb_str_ptr (elt_size=4) to 20 items from 10.
+Reallocated global_strs (elt_size=200001) to 20 items from 10.
+Reallocated glb_str_end (elt_size=4) to 20 items from 10.
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated wiz_functions (elt_size=4) to 9000 items from 6000.
+Warning--empty publisher in Hofmann2023HybridDA
+Warning--empty address in Hofmann2023HybridDA
+Warning--empty publisher in Hofmann2024WiringReduction
+Warning--empty address in Hofmann2024WiringReduction
+Warning--page numbers missing in both pages and numpages fields in Hofmann2024WiringReduction
+Warning--no number and no volume in Hofmann2025GraphOriented
+Warning--no number and no volume in Li2025iFCN
+Warning--empty publisher in Walter2018ExactQCA
+Warning--empty address in Walter2018ExactQCA
+You've used 13 entries,
+            6056 wiz_defined-function locations,
+            1587 strings with 21148 characters,
+and the built_in function-call counts, 16234 in all, are:
+= -- 2328
+> -- 546
+< -- 0
++ -- 193
+- -- 181
+* -- 1203
+:= -- 1509
+add.period$ -- 63
+call.type$ -- 13
+change.case$ -- 108
+chr.to.int$ -- 12
+cite$ -- 22
+duplicate$ -- 1322
+empty$ -- 929
+format.name$ -- 232
+if$ -- 4093
+int.to.chr$ -- 3
+int.to.str$ -- 1
+missing$ -- 51
+newline$ -- 156
+num.names$ -- 90
+pop$ -- 494
+preamble$ -- 1
+purify$ -- 209
+quote$ -- 0
+skip$ -- 473
+stack$ -- 0
+substring$ -- 1218
+swap$ -- 141
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 261
+warning$ -- 9
+while$ -- 78
+width$ -- 0
+write$ -- 295
+(There were 9 warnings)

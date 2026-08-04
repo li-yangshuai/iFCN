@@ -19,7 +19,8 @@ public:
     ~TabbedMainWindow() override;
 
     void openNewTab();
-    void openFileInNewTab(const QString &fileName);
+    MainWindow *openFileInNewTab(const QString &fileName,
+                                 bool showStatusMessages = true);
     MainWindow *openVerilogSourceInNewTab(const QString &sourceText,
                                           const QString &sourcePath);
 

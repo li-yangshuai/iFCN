@@ -18,11 +18,11 @@
   "raw_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/IWLS93/parity_source_generate/parity_source_normal_graph_draw/parity_source_raw.svg",
   "ordered_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/IWLS93/parity_source_generate/parity_source_normal_graph_draw/parity_source.svg",
   "physical_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/IWLS93/parity_source_generate/parity_source_normal_graph_draw/parity_source_physical.svg",
-  "stage_tex_dir": "seed_1",
+  "stage_tex_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/IWLS93/parity_source_generate/parity_source_normal_graph_draw/stage_tex/seed_1",
   "failed_edge_count": 0,
   "width": 35,
   "height": 24,
   "area": 840,
-  "run_time_sec": 2.92358419600032,
+  "run_time_sec": 2.999280057000078,
   "algorithm_description": "normal graph draw algorithm based on GCN embedding + barycenter ordering, right-down reachable initialization, ML-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
 }

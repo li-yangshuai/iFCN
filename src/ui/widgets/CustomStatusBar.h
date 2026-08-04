@@ -53,6 +53,7 @@ private:
     QElapsedTimer operationElapsed;
     QString operationDetail;
     bool statusMessagesMuted = false;
+    bool operationHasReportedProgress = false;
 };
 
 #endif // CUSTOMSTATUSBAR_H

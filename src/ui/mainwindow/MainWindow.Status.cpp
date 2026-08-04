@@ -79,7 +79,7 @@ void MainWindow::setLayoutInfoRows(const QVector<QPair<QString, QString>> &rows)
 void MainWindow::refreshLayoutInfoPanel()
 {
     if (view != nullptr) {
-        view->setEmptyStateVisible(currentSceneCellCount() == 0);
+        view->setEmptyStateVisible(!currentCanvasHasItemsOrData());
     }
     QVector<QPair<QString, QString>> rows;
     rows.push_back({tr("Mode"), tr("Manual design")});
@@ -97,7 +97,7 @@ void MainWindow::refreshLayoutInfoPanel()
 void MainWindow::updateLayoutInfoFromMapping(const GateLevelMapping &mapping)
 {
     if (view != nullptr) {
-        view->setEmptyStateVisible(currentSceneCellCount() == 0);
+        view->setEmptyStateVisible(!currentCanvasHasItemsOrData());
     }
     QVector<QPair<QString, QString>> rows;
     rows.push_back({tr("Mode"), tr("Mapped .ifcn")});
@@ -139,6 +139,60 @@ void MainWindow::updateLayoutInfoFromMapping(const GateLevelMapping &mapping)
     rows.push_back({tr("Routes"), QString::number(mapping.routes.size())});
     rows.push_back({tr("Phase entries"), QString::number(mapping.coordPhaseMap.size())});
 
+    setLayoutInfoRows(rows);
+}
+
+void MainWindow::updateLayoutInfoAfterIoContraction(const CellLevelIoContractionStats &stats)
+{
+    if (view != nullptr) {
+        view->setEmptyStateVisible(!currentCanvasHasItemsOrData());
+    }
+
+    QVector<QPair<QString, QString>> rows;
+    rows.push_back({tr("Mode"), tr("Cell-level IO contracted")});
+    if (!curFile.isEmpty() && curFile != tr("Unnamed")) {
+        rows.push_back({tr("Source"), QFileInfo(curFile).fileName()});
+    }
+    const bool mappedSource = gateLevelMapping != nullptr &&
+        QFileInfo(curFile).suffix().compare(QStringLiteral("ifcn"), Qt::CaseInsensitive) == 0 &&
+        !gateLevelMapping->metadata.isEmpty();
+    if (mappedSource) {
+        appendIfPresent(rows, tr("Circuit"), gateLevelMapping->circuitName);
+        appendIfPresent(rows, tr("Gates"), mappingMetadataValue(
+                            gateLevelMapping->metadata, {QStringLiteral("gates number")}));
+        appendIfPresent(rows, tr("Edges"), mappingMetadataValue(
+                            gateLevelMapping->metadata, {QStringLiteral("edges number")}));
+    }
+    rows.push_back({tr("Cells"), tr("%1 -> %2").arg(stats.cellsBefore).arg(stats.cellsAfter)});
+    rows.push_back({tr("Removed"), QString::number(stats.removedCells)});
+    rows.push_back({tr("I/O"), tr("%1 / %2").arg(stats.inputCount).arg(stats.outputCount)});
+    rows.push_back({tr("Moved I/O"), tr("%1 / %2").arg(stats.movedInputs).arg(stats.movedOutputs)});
+    rows.push_back({tr("Skipped I/O"), QString::number(stats.skippedPorts)});
+    rows.push_back({tr("Cross-edge I/O"), QString::number(stats.crossoverEdgePorts)});
+    rows.push_back({tr("Removed crossover cells"), QString::number(stats.removedCrossoverCells)});
+    rows.push_back({tr("Compacted wire bends"), QString::number(stats.compactedDoglegs)});
+    rows.push_back({tr("Centered wire fanouts"), QString::number(stats.centeredFanouts)});
+    rows.push_back({tr("Removed grid rows / columns"), tr("%1 / %2")
+                        .arg(stats.compactedGridRows)
+                        .arg(stats.compactedGridColumns)});
+    rows.push_back({tr("Removed route cells"), QString::number(stats.removedRouteCells)});
+    rows.push_back({tr("Layers"), QString::number(stats.nonEmptyLayers)});
+    rows.push_back({tr("Grid span (W x H)"), tr("%1 x %2 grids")
+                        .arg(stats.widthInGrids).arg(stats.heightInGrids)});
+    rows.push_back({tr("Occupied area"), tr("%1 x %2 = %3 grids")
+                        .arg(stats.widthInGrids)
+                        .arg(stats.heightInGrids)
+                        .arg(stats.occupiedArea())});
+    rows.push_back({tr("Crossover cells"), QString::number(stats.crossoverCells)});
+    rows.push_back({tr("Clock regions"), QString::number(
+                        scene != nullptr ? scene->clockRegions().size() : 0)});
+    if (mappedSource) {
+        appendIfPresent(rows, tr("Critical path"), mappingMetadataValue(
+                            gateLevelMapping->metadata, {QStringLiteral("critical path")}));
+        appendIfPresent(rows, tr("Clock scheme"), mappingMetadataValue(
+                            gateLevelMapping->metadata, {QStringLiteral("clock scheme")}));
+    }
+    rows.push_back({tr("Save policy"), tr("New .qca required")});
     setLayoutInfoRows(rows);
 }
 

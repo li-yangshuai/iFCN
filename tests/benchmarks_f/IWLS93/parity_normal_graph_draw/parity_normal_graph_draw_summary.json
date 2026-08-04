@@ -3,13 +3,42 @@
   "resolved_benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/IWLS93/parity.v",
   "parser_safe_generated": false,
   "seed": 1,
+  "crossing_orderer_requested": "ogdf",
+  "crossing_orderer": "ogdf",
+  "crossing_order_metrics": {
+    "orderer": "ogdf",
+    "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
+    "kernel_ms": 0.663075,
+    "wall_seconds": 0.010633800993673503,
+    "ogdf_internal_crossings": 0,
+    "total_seconds": 0.010929312004009262,
+    "adjacent_crossings": 0
+  },
+  "router_mode": "legacy",
+  "router_mode_requested": "auto",
+  "routing_metrics": {},
   "seed_attempts": [
     {
       "seed": 1,
       "failed_edge_count": 0,
       "clock_template_ok": true,
       "clock_template_conflicts": 0,
-      "area": 840
+      "port_directions_ok": true,
+      "port_direction_violations": 0,
+      "crossing_orderer": "ogdf",
+      "crossing_order_metrics": {
+        "orderer": "ogdf",
+        "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
+        "kernel_ms": 0.663075,
+        "wall_seconds": 0.010633800993673503,
+        "ogdf_internal_crossings": 0,
+        "total_seconds": 0.010929312004009262,
+        "adjacent_crossings": 0
+      },
+      "router_mode": "legacy",
+      "router_mode_requested": "auto",
+      "routing_metrics": {},
+      "area": 936
     }
   ],
   "output_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/IWLS93/parity_normal_graph_draw",
@@ -20,9 +49,11 @@
   "physical_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/IWLS93/parity_normal_graph_draw/parity_physical.svg",
   "stage_tex_dir": "seed_1",
   "failed_edge_count": 0,
-  "width": 35,
+  "port_directions_ok": true,
+  "port_direction_violations": 0,
+  "width": 39,
   "height": 24,
-  "area": 840,
-  "run_time_sec": 2.9965703500001837,
-  "algorithm_description": "normal graph draw algorithm based on GCN embedding + barycenter ordering, right-down reachable initialization, ML-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
+  "area": 936,
+  "run_time_sec": 0.45698418500251137,
+  "algorithm_description": "normal graph draw algorithm with OGDF Sugiyama fixed-layer crossing ordering, right-down reachable initialization, exclusive fanin and shared-fanout endpoint-port constraints, adaptive negotiated L/Z Manhattan or direct/DP monotone routing, structural/congestion-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
 }

@@ -1,0 +1,79 @@
+{
+  "benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG.v",
+  "resolved_benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG.v",
+  "parser_safe_generated": false,
+  "seed": 1,
+  "crossing_orderer_requested": "ogdf",
+  "crossing_orderer": "ogdf",
+  "crossing_order_metrics": {
+    "orderer": "ogdf",
+    "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
+    "kernel_ms": 0.53903,
+    "wall_seconds": 0.009140228998148814,
+    "ogdf_internal_crossings": 1,
+    "total_seconds": 0.00926470600097673,
+    "adjacent_crossings": 1
+  },
+  "router_mode": "negotiated",
+  "router_mode_requested": "auto",
+  "routing_metrics": {
+    "iterations": 2,
+    "conflict_count": 0,
+    "history_cell_count": 2,
+    "failed_edge_count": 0,
+    "routed_edge_count": 16,
+    "crossovers_enabled": true,
+    "large_circuit_policy": false,
+    "candidate_tracks": 10,
+    "iteration_limit": 24
+  },
+  "seed_attempts": [
+    {
+      "seed": 1,
+      "failed_edge_count": 0,
+      "clock_template_ok": true,
+      "clock_template_conflicts": 0,
+      "port_directions_ok": true,
+      "port_direction_violations": 0,
+      "crossing_orderer": "ogdf",
+      "crossing_order_metrics": {
+        "orderer": "ogdf",
+        "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
+        "kernel_ms": 0.53903,
+        "wall_seconds": 0.009140228998148814,
+        "ogdf_internal_crossings": 1,
+        "total_seconds": 0.00926470600097673,
+        "adjacent_crossings": 1
+      },
+      "router_mode": "negotiated",
+      "router_mode_requested": "auto",
+      "routing_metrics": {
+        "iterations": 2,
+        "conflict_count": 0,
+        "history_cell_count": 2,
+        "failed_edge_count": 0,
+        "routed_edge_count": 16,
+        "crossovers_enabled": true,
+        "large_circuit_policy": false,
+        "candidate_tracks": 10,
+        "iteration_limit": 24
+      },
+      "area": 117
+    }
+  ],
+  "output_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG_normal_graph_draw",
+  "ifcn": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG_normal_graph_draw/1bitAdderAOIG_normal_graph_draw.ifcn",
+  "encoded_ifcn": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG_normal_graph_draw/1bitAdderAOIG_normal_graph_draw_encoded.ifcn",
+  "raw_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG_normal_graph_draw/1bitAdderAOIG_raw.svg",
+  "ordered_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG_normal_graph_draw/1bitAdderAOIG.svg",
+  "physical_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG_normal_graph_draw/1bitAdderAOIG_physical.svg",
+  "stage_tex_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderAOIG_normal_graph_draw/stage_tex/seed_1",
+  "failed_edge_count": 0,
+  "port_directions_ok": true,
+  "port_direction_violations": 0,
+  "width": 9,
+  "height": 13,
+  "area": 117,
+  "run_time_sec": 0.18289811000431655,
+  "algorithm_description": "normal graph draw algorithm with OGDF Sugiyama fixed-layer crossing ordering, right-down reachable initialization, exclusive fanin and shared-fanout endpoint-port constraints, local straight orthogonal crossover legality, adaptive negotiated L/Z Manhattan or direct/DP monotone routing, structural/congestion-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
+}

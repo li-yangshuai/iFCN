@@ -195,6 +195,9 @@ PYBIND11_MODULE(iFCN_Lab, m) {
     py::class_<iFCN_Lab::RightDownAStar>(m, "RightDownAStar")
         .def(py::init<iFCN_Lab::MapChessboard&>())
         .def("route", &iFCN_Lab::RightDownAStar::route)
+        .def("route_with_dirs", &iFCN_Lab::RightDownAStar::routeWithDirs,
+             py::arg("src"), py::arg("dst"),
+             py::arg("fanout_dir"), py::arg("fanin_dir"))
         .def("reset", &iFCN_Lab::RightDownAStar::reset)
         ;
 }

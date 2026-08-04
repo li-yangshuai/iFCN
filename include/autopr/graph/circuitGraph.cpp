@@ -1,6 +1,11 @@
 #include "circuitGraph.h"
+#include "autopr/algorithms/mapping.h"
 #include "autopr/algorithms/phaseSolver.h"
+#include "autopr/algorithms/astarwithphase.h"
+#include <chrono>
+#include <cstdint>
 #include <limits>
+#include <random>
 #include <set>
 #include <tuple>
 
@@ -205,6 +210,171 @@ namespace fcngraph
             }
             return phases;
         }
+
+        bool validateJuneFanoutTrees(
+            const std::map<std::pair<unsigned int, unsigned int>,
+                           std::vector<position>> &routes,
+            std::string &error)
+        {
+            using LogicalEdge = std::pair<unsigned int, unsigned int>;
+            enum class SegmentOrientation
+            {
+                Horizontal,
+                Vertical,
+                Bend
+            };
+            struct RouteUse
+            {
+                unsigned int source;
+                SegmentOrientation orientation;
+            };
+            std::map<unsigned int,
+                     std::map<position, std::map<position, std::set<LogicalEdge>>>>
+                incomingBySource;
+            std::map<unsigned int, std::map<position, std::set<LogicalEdge>>>
+                rootsBySource;
+            std::map<position, std::vector<RouteUse>> interiorUses;
+
+            for (const auto &route : routes)
+            {
+                const LogicalEdge edge = route.first;
+                const auto &path = route.second;
+                if (path.size() < 2)
+                {
+                    error = "route " + std::to_string(edge.first) + "->" +
+                            std::to_string(edge.second) + " has fewer than two points";
+                    return false;
+                }
+
+                std::set<position> uniquePositions;
+                for (const position &pos : path)
+                {
+                    if (!uniquePositions.insert(pos).second)
+                    {
+                        error = "route " + std::to_string(edge.first) + "->" +
+                                std::to_string(edge.second) + " repeats a grid coordinate";
+                        return false;
+                    }
+                }
+
+                rootsBySource[edge.first][path.front()].insert(edge);
+                for (std::size_t index = 1; index < path.size(); ++index)
+                {
+                    const position &previous = path[index - 1];
+                    const position &current = path[index];
+                    const unsigned int distance =
+                        (previous.first > current.first ? previous.first - current.first
+                                                       : current.first - previous.first) +
+                        (previous.second > current.second ? previous.second - current.second
+                                                         : current.second - previous.second);
+                    if (distance != 1)
+                    {
+                        error = "route " + std::to_string(edge.first) + "->" +
+                                std::to_string(edge.second) + " is not 4-connected";
+                        return false;
+                    }
+                    incomingBySource[edge.first][current][previous].insert(edge);
+                }
+
+                for (std::size_t index = 1; index + 1 < path.size(); ++index)
+                {
+                    const position &previous = path[index - 1];
+                    const position &current = path[index];
+                    const position &next = path[index + 1];
+                    SegmentOrientation orientation = SegmentOrientation::Bend;
+                    if (previous.second == current.second &&
+                        current.second == next.second)
+                    {
+                        orientation = SegmentOrientation::Horizontal;
+                    }
+                    else if (previous.first == current.first &&
+                             current.first == next.first)
+                    {
+                        orientation = SegmentOrientation::Vertical;
+                    }
+                    interiorUses[current].push_back({edge.first, orientation});
+                }
+
+            }
+
+            for (const auto &sourceRoots : rootsBySource)
+            {
+                if (sourceRoots.second.size() != 1)
+                {
+                    error = "fanout source " + std::to_string(sourceRoots.first) +
+                            " does not have one shared root";
+                    return false;
+                }
+                const auto incomingSource = incomingBySource.find(sourceRoots.first);
+                if (incomingSource == incomingBySource.end())
+                {
+                    continue;
+                }
+                for (const auto &incomingAtPosition : incomingSource->second)
+                {
+                    if (incomingAtPosition.second.size() > 1)
+                    {
+                        error = "fanout source " + std::to_string(sourceRoots.first) +
+                                " splits and reconverges at (" +
+                                std::to_string(incomingAtPosition.first.first) + "," +
+                                std::to_string(incomingAtPosition.first.second) + ")";
+                        return false;
+                    }
+                }
+            }
+
+
+            for (const auto &usesAtPosition : interiorUses)
+            {
+                std::map<unsigned int, std::set<SegmentOrientation>> orientationsBySource;
+                for (const RouteUse &use : usesAtPosition.second)
+                {
+                    orientationsBySource[use.source].insert(use.orientation);
+                }
+                if (orientationsBySource.size() <= 1)
+                {
+                    continue;
+                }
+                if (orientationsBySource.size() != 2)
+                {
+                    error = "more than two source trees share (" +
+                            std::to_string(usesAtPosition.first.first) + "," +
+                            std::to_string(usesAtPosition.first.second) + ")";
+                    return false;
+                }
+
+                const auto first = orientationsBySource.begin();
+                const auto second = std::next(first);
+                const bool firstIsHorizontal =
+                    first->second.size() == 1 &&
+                    first->second.count(SegmentOrientation::Horizontal) == 1;
+                const bool firstIsVertical =
+                    first->second.size() == 1 &&
+                    first->second.count(SegmentOrientation::Vertical) == 1;
+                const bool secondIsHorizontal =
+                    second->second.size() == 1 &&
+                    second->second.count(SegmentOrientation::Horizontal) == 1;
+                const bool secondIsVertical =
+                    second->second.size() == 1 &&
+                    second->second.count(SegmentOrientation::Vertical) == 1;
+                if (!((firstIsHorizontal && secondIsVertical) ||
+                      (firstIsVertical && secondIsHorizontal)))
+                {
+                    error = "source trees overlap without one straight H/V crossing at (" +
+                            std::to_string(usesAtPosition.first.first) + "," +
+                            std::to_string(usesAtPosition.first.second) + ")";
+                    return false;
+                }
+
+                // Distinct straight H/V crossings between the same two source
+                // trees are electrically separate crossover cells.  They are
+                // legal; only a repeated/continuous overlap on one route is
+                // rejected by the path-aware router and the checks above.
+            }
+
+            error.clear();
+            return true;
+        }
     }
 
     void CircuitGraph::setFitnessCallback(const std::function<void(std::string)> &callback)
@@ -212,9 +382,19 @@ namespace fcngraph
         fitnessCallback = callback;
     }
 
+    void CircuitGraph::setStageCallback(
+        const std::function<void(const std::string&)> &callback)
+    {
+        stageCallback = callback;
+    }
+
     void CircuitGraph::processAndGenerateGraph(bool printSVG, bool showCircuitLabel, bool isBox, bool isOGD)
     {
-
+        node_positions.clear();
+        if (gvc == nullptr)
+        {
+            gvc = gvContext();
+        }
         Agraph_t *A = agopen(const_cast<char *>("G"), Agdirected, nullptr);
         const auto &layerNodes = parse.getlayerNodeDivVec();
         const auto &edges = parse.getEffectiveEdges();
@@ -367,10 +547,12 @@ namespace fcngraph
 
         gvFreeLayout(gvc, A);
         gvFreeContext(gvc);
+        gvc = nullptr;
         agclose(A);
     }
 
-    void CircuitGraph::sortNodesByYThenXCoordinate(double grid_size)
+    void CircuitGraph::sortNodesByYThenXCoordinate(double grid_size,
+                                                   double yGridSize)
     {
         grid_positions.clear();
         nodeIndex_pos.clear();
@@ -380,25 +562,82 @@ namespace fcngraph
         {
             grid_size = 30.0;
         }
-
-        // 预处理，将节点坐标映射到网格坐标
-        for (const auto &v : node_positions)
+        if (yGridSize <= 0.0)
         {
-            int node = v.first;
-            double x = v.second.first;
-            double y = v.second.second;
-            int grid_x = static_cast<int>(std::round(x / grid_size)) + 20;
-            int grid_y = static_cast<int>(std::round(y / grid_size)) + 20;
-            position candidate{static_cast<unsigned int>(std::max(0, grid_x)),
-                               static_cast<unsigned int>(std::max(0, grid_y))};
-            while (std::find_if(grid_positions.begin(), grid_positions.end(),
-                                [&candidate](const auto &entry) { return entry.second == candidate; }) != grid_positions.end())
+            yGridSize = grid_size;
+        }
+
+        struct QuantizedNode
+        {
+            int node = -1;
+            double rawX = 0.0;
+            unsigned int gridX = 0;
+            unsigned int gridY = 0;
+        };
+        std::vector<QuantizedNode> quantizedNodes;
+        quantizedNodes.reserve(node_positions.size());
+        for (const auto &nodePosition : node_positions)
+        {
+            quantizedNodes.push_back({
+                nodePosition.first,
+                nodePosition.second.first,
+                static_cast<unsigned int>(std::max(
+                    0, static_cast<int>(std::round(nodePosition.second.first / grid_size)) + 20)),
+                static_cast<unsigned int>(std::max(
+                    0, static_cast<int>(std::round(nodePosition.second.second / yGridSize)) + 20))
+            });
+        }
+        // Graphviz reports Cartesian coordinates (Y grows upward), whereas
+        // iFCN routing, IFCN files, and the Qt scene use top-left coordinates
+        // (Y grows downward).  Normalize once at placement ingestion so every
+        // later algorithmic stage shares one orientation and final export
+        // never needs to rotate or reflect a completed layout.
+        if (!quantizedNodes.empty())
+        {
+            unsigned int minGridY = quantizedNodes.front().gridY;
+            unsigned int maxGridY = quantizedNodes.front().gridY;
+            for (const QuantizedNode &node : quantizedNodes)
+            {
+                minGridY = std::min(minGridY, node.gridY);
+                maxGridY = std::max(maxGridY, node.gridY);
+            }
+            for (QuantizedNode &node : quantizedNodes)
+            {
+                node.gridY = minGridY + (maxGridY - node.gridY);
+            }
+        }
+        // Resolve quantisation collisions in Graphviz X order.  The historical
+        // node-index iteration could push a logically left node past a right
+        // node, creating avoidable crossings and width.  Ordered insertion
+        // preserves the DOT row order while an occupancy set removes the old
+        // O(V^2) scan.
+        std::stable_sort(quantizedNodes.begin(), quantizedNodes.end(),
+            [](const QuantizedNode &left, const QuantizedNode &right) {
+                if (left.gridY != right.gridY)
+                {
+                    return left.gridY < right.gridY;
+                }
+                if (left.rawX != right.rawX)
+                {
+                    return left.rawX < right.rawX;
+                }
+                return left.node < right.node;
+            });
+        std::set<position> occupiedPositions;
+        for (const QuantizedNode &node : quantizedNodes)
+        {
+            position candidate{node.gridX, node.gridY};
+            while (occupiedPositions.count(candidate) != 0)
             {
                 ++candidate.first;
             }
-            grid_positions[node] = candidate;
-            nodeIndex_pos[node] = candidate;
+            occupiedPositions.insert(candidate);
+            grid_positions[node.node] = candidate;
+            nodeIndex_pos[node.node] = candidate;
         }
+
+        // Coordinates now follow the native iFCN top-left convention.
+        alignPrimaryIoToBoundaryRows(false);
 
 
         // 将 grid_positions 转换为 sorted_grid_positions
@@ -474,6 +713,8 @@ namespace fcngraph
             }
         }
 
+        alignPrimaryIoToBoundaryRows(false);
+
         sorted_grid_positions.assign(grid_positions.begin(), grid_positions.end());
         std::sort(sorted_grid_positions.begin(), sorted_grid_positions.end(),
                   [](const std::pair<int, position> &a,
@@ -487,15 +728,165 @@ namespace fcngraph
                   });
     }
 
-    bool CircuitGraph::placeAndRoute()
+    void CircuitGraph::sortNodesByFixedLayerOrder(const std::vector<std::vector<int>> &orderedLayers,
+                                                   unsigned int xSpacing,
+                                                   unsigned int ySpacing,
+                                                   unsigned int xPadding,
+                                                   unsigned int yPadding)
+    {
+        grid_positions.clear();
+        nodeIndex_pos.clear();
+        sorted_grid_positions.clear();
+
+        xSpacing = std::max(1u, xSpacing);
+        ySpacing = std::max(1u, ySpacing);
+        const auto &parserLayers = parse.getlayerNodeDivVec();
+        std::vector<std::vector<int>> fallbackLayers;
+        const std::vector<std::vector<int>> *layersPtr = &orderedLayers;
+        if (orderedLayers.size() != parserLayers.size())
+        {
+            fallbackLayers.reserve(parserLayers.size());
+            for (const auto &layer : parserLayers)
+            {
+                fallbackLayers.emplace_back(layer.begin(), layer.end());
+            }
+            layersPtr = &fallbackLayers;
+        }
+        const auto &layers = *layersPtr;
+
+        std::size_t maxLayerWidth = 0;
+        for (const auto &layer : layers)
+        {
+            maxLayerWidth = std::max(maxLayerWidth, layer.size());
+        }
+
+        std::set<position> occupied;
+        for (std::size_t layerIndex = 0; layerIndex < layers.size(); ++layerIndex)
+        {
+            const auto &nodes = layers[layerIndex];
+            const unsigned int layerOffset = static_cast<unsigned int>(
+                ((maxLayerWidth > nodes.size()) ? (maxLayerWidth - nodes.size()) : 0) * xSpacing / 2);
+            for (std::size_t nodeOffset = 0; nodeOffset < nodes.size(); ++nodeOffset)
+            {
+                position candidate{
+                    xPadding + layerOffset + static_cast<unsigned int>(nodeOffset) * xSpacing,
+                    yPadding + static_cast<unsigned int>(layerIndex) * ySpacing
+                };
+                while (occupied.count(candidate) != 0)
+                {
+                    ++candidate.first;
+                }
+                occupied.insert(candidate);
+                grid_positions[nodes[nodeOffset]] = candidate;
+                nodeIndex_pos[nodes[nodeOffset]] = candidate;
+            }
+        }
+
+        alignPrimaryIoToBoundaryRows(false);
+
+        sorted_grid_positions.assign(grid_positions.begin(), grid_positions.end());
+        std::sort(sorted_grid_positions.begin(), sorted_grid_positions.end(),
+                  [](const std::pair<int, position> &left,
+                     const std::pair<int, position> &right) {
+                      if (left.second.second != right.second.second)
+                      {
+                          return left.second.second < right.second.second;
+                      }
+                      return left.second.first < right.second.first;
+                  });
+    }
+
+    void CircuitGraph::alignPrimaryIoToBoundaryRows(bool yAxisPointsUp)
+    {
+        if (nodeIndex_pos.empty())
+        {
+            return;
+        }
+
+        unsigned int minY = std::numeric_limits<unsigned int>::max();
+        unsigned int maxY = 0;
+        std::vector<int> inputNodes;
+        std::vector<int> outputNodes;
+        const auto &primaryOutputs = parse.getOutputNodesIndex();
+        for (const auto &node : nodeIndex_pos)
+        {
+            minY = std::min(minY, node.second.second);
+            maxY = std::max(maxY, node.second.second);
+            if (parse.getNodeType(node.first) == "input")
+            {
+                inputNodes.push_back(node.first);
+            }
+            if (primaryOutputs.count(static_cast<unsigned int>(node.first)) != 0)
+            {
+                outputNodes.push_back(node.first);
+            }
+        }
+
+        const unsigned int inputY = yAxisPointsUp ? maxY : minY;
+        const unsigned int outputY = yAxisPointsUp ? minY : maxY;
+        std::set<position> occupied;
+        for (const auto &node : nodeIndex_pos)
+        {
+            occupied.insert(node.second);
+        }
+        const auto moveGroup = [&](const std::vector<int> &nodes, unsigned int boundaryY) {
+            std::vector<int> ordered = nodes;
+            std::stable_sort(ordered.begin(), ordered.end(), [&](int left, int right) {
+                const position leftPos = nodeIndex_pos.at(left);
+                const position rightPos = nodeIndex_pos.at(right);
+                return leftPos.first == rightPos.first ? left < right
+                                                      : leftPos.first < rightPos.first;
+            });
+            for (int node : ordered)
+            {
+                const position old = nodeIndex_pos.at(node);
+                occupied.erase(old);
+                position candidate{old.first, boundaryY};
+                // Preserve the Graphviz/fixed-layer horizontal order while
+                // resolving a rare collision with an internal boundary node.
+                while (occupied.count(candidate) != 0)
+                {
+                    ++candidate.first;
+                }
+                nodeIndex_pos[node] = candidate;
+                occupied.insert(candidate);
+            }
+        };
+        moveGroup(inputNodes, inputY);
+        moveGroup(outputNodes, outputY);
+        grid_positions = nodeIndex_pos;
+    }
+
+    bool CircuitGraph::placeAndRoute(int shuffledRouteOrderRetries)
+    {
+        return placeAndRouteInternal(
+            shuffledRouteOrderRetries, nullptr, true, 6);
+    }
+
+    bool CircuitGraph::placeAndRouteInternal(
+        int shuffledRouteOrderRetries,
+        RoutingFailureInfo *failureInfo,
+        bool emitConflictStages,
+        int deterministicPolicyLimit,
+        const std::function<bool()> &acceptRoutedLayout)
     {
         enum class RouteOrderPolicy
         {
             GroupFanoutNearFirst,
             GroupFanoutFarFirst,
             LongFirst,
-            ShortFirst
+            ShortFirst,
+            ReverseLayerLongFirst,
+            ReverseLayerShortFirst
         };
+
+        if (failureInfo)
+        {
+            failureInfo->failedEdges.clear();
+            failureInfo->routedEdges = 0;
+            failureInfo->routedLayoutRejected = false;
+        }
+        bool reportInitialized = false;
 
         const auto prepareBoard = [this]() {
             routes.clear();
@@ -516,16 +907,25 @@ namespace fcngraph
         const auto edgeDistance = [this](const std::pair<int, int> &edge) {
             const auto start = nodeIndex_pos.at(edge.first);
             const auto end = nodeIndex_pos.at(edge.second);
-            return std::abs(static_cast<int>(end.first) - static_cast<int>(start.first))
-                 + std::abs(static_cast<int>(end.second) - static_cast<int>(start.second));
+            const auto axisDistance = [](unsigned int left, unsigned int right) {
+                return left >= right
+                    ? static_cast<std::uint64_t>(left) - right
+                    : static_cast<std::uint64_t>(right) - left;
+            };
+            return axisDistance(end.first, start.first) +
+                   axisDistance(end.second, start.second);
         };
 
         const auto isMultiFanout = [this](int nodeIndex) {
             return parse.getFanoutsIndex(nodeIndex).size() > 1;
         };
-
+        std::set<position> placedNodePositions;
+        for (const auto &node : nodeIndex_pos)
+        {
+            placedNodePositions.insert(node.second);
+        }
         const auto crossesIntermediateNode =
-            [this](const std::pair<int, int> &edge, const std::vector<position> &path) {
+            [&placedNodePositions](const std::pair<int, int> &, const std::vector<position> &path) {
                 if (path.size() <= 2)
                 {
                     return false;
@@ -533,35 +933,41 @@ namespace fcngraph
 
                 for (auto it = std::next(path.begin()); std::next(it) != path.end(); ++it)
                 {
-                    for (const auto &node_pos : nodeIndex_pos)
+                    if (placedNodePositions.count(*it) != 0)
                     {
-                        if (node_pos.first != edge.first &&
-                            node_pos.first != edge.second &&
-                            node_pos.second == *it)
-                        {
-                            return true;
-                        }
+                        return true;
                     }
                 }
                 return false;
             };
 
+        std::map<std::pair<int, int>, int> adaptivePriority;
         const auto sortEdges = [&](RouteOrderPolicy policy) {
             auto edges = parse.getEffectiveEdges();
             std::stable_sort(edges.begin(), edges.end(), [&](const auto &lhs, const auto &rhs) {
+                const int lhsPriority = adaptivePriority[lhs];
+                const int rhsPriority = adaptivePriority[rhs];
+                if (lhsPriority != rhsPriority)
+                {
+                    return lhsPriority > rhsPriority;
+                }
                 const int lhsLayer = parse.getVertexLayer(lhs.first);
                 const int rhsLayer = parse.getVertexLayer(rhs.first);
                 if (lhsLayer != rhsLayer)
                 {
-                    return lhsLayer < rhsLayer;
+                    const bool reverseLayer =
+                        policy == RouteOrderPolicy::ReverseLayerLongFirst ||
+                        policy == RouteOrderPolicy::ReverseLayerShortFirst;
+                    return reverseLayer ? lhsLayer > rhsLayer : lhsLayer < rhsLayer;
                 }
 
-                const int lhsDistance = edgeDistance(lhs);
-                const int rhsDistance = edgeDistance(rhs);
+                const std::uint64_t lhsDistance = edgeDistance(lhs);
+                const std::uint64_t rhsDistance = edgeDistance(rhs);
                 const bool lhsMultiFanout = isMultiFanout(lhs.first);
                 const bool rhsMultiFanout = isMultiFanout(rhs.first);
 
-                if (policy == RouteOrderPolicy::LongFirst)
+                if (policy == RouteOrderPolicy::LongFirst ||
+                    policy == RouteOrderPolicy::ReverseLayerLongFirst)
                 {
                     if (lhsDistance != rhsDistance)
                     {
@@ -570,7 +976,8 @@ namespace fcngraph
                     return lhs < rhs;
                 }
 
-                if (policy == RouteOrderPolicy::ShortFirst)
+                if (policy == RouteOrderPolicy::ShortFirst ||
+                    policy == RouteOrderPolicy::ReverseLayerShortFirst)
                 {
                     if (lhsDistance != rhsDistance)
                     {
@@ -620,38 +1027,1642 @@ namespace fcngraph
                 return false;
             }
 
-            for (const auto &edge : orderedEdges)
+            std::vector<std::pair<int, int>> failedEdges;
+            for (std::size_t edgeIndex = 0;
+                 edgeIndex < orderedEdges.size();
+                 ++edgeIndex)
             {
+                const auto &edge = orderedEdges[edgeIndex];
                 auto start = nodeIndex_pos[edge.first];
                 auto end = nodeIndex_pos[edge.second];
                 auto path = astar.findPath(start, end, isMultiFanout(edge.first));
                 if (path.empty())
                 {
-                    return false;
+                    ++adaptivePriority[edge];
+                    if (fitnessCallback)
+                    {
+                        fitnessCallback("A* routing failed for edge " +
+                                        std::to_string(edge.first) + "->" +
+                                        std::to_string(edge.second));
+                    }
+                    if (emitConflictStages && stageCallback)
+                    {
+                        stageCallback("routing_conflict");
+                    }
+                    failedEdges.push_back(edge);
+                    if (!failureInfo)
+                    {
+                        return false;
+                    }
+                    continue;
                 }
                 if (crossesIntermediateNode(edge, path))
                 {
-                    return false;
+                    ++adaptivePriority[edge];
+                    if (fitnessCallback)
+                    {
+                        fitnessCallback("A* route crosses an intermediate node for edge " +
+                                        std::to_string(edge.first) + "->" +
+                                        std::to_string(edge.second));
+                    }
+                    if (emitConflictStages && stageCallback)
+                    {
+                        stageCallback("routing_conflict");
+                    }
+                    failedEdges.push_back(edge);
+                    if (!failureInfo)
+                    {
+                        return false;
+                    }
+                    // findPath has already committed this path to the board.
+                    // Abort this ordering so the next prepareBoard() call can
+                    // discard the illegal intermediate-node traversal.
+                    failedEdges.insert(
+                        failedEdges.end(),
+                        std::next(orderedEdges.begin(),
+                                  static_cast<std::ptrdiff_t>(edgeIndex + 1)),
+                        orderedEdges.end());
+                    break;
                 }
                 routes.insert({edge, path});
             }
-            return true;
+
+            if (failureInfo &&
+                (!reportInitialized ||
+                 failedEdges.size() < failureInfo->failedEdges.size() ||
+                 (failedEdges.size() == failureInfo->failedEdges.size() &&
+                  routes.size() > failureInfo->routedEdges)))
+            {
+                failureInfo->failedEdges = failedEdges;
+                failureInfo->routedEdges = routes.size();
+                reportInitialized = true;
+            }
+            return failedEdges.empty();
+        };
+        const auto acceptsCurrentLayout = [&]() {
+            if (!acceptRoutedLayout || acceptRoutedLayout())
+            {
+                if (failureInfo)
+                {
+                    failureInfo->routedLayoutRejected = false;
+                }
+                return true;
+            }
+            if (failureInfo)
+            {
+                failureInfo->routedLayoutRejected = true;
+            }
+            return false;
         };
 
         const RouteOrderPolicy policies[] = {
             RouteOrderPolicy::GroupFanoutNearFirst,
             RouteOrderPolicy::GroupFanoutFarFirst,
             RouteOrderPolicy::LongFirst,
-            RouteOrderPolicy::ShortFirst
+            RouteOrderPolicy::ShortFirst,
+            RouteOrderPolicy::ReverseLayerLongFirst,
+            RouteOrderPolicy::ReverseLayerShortFirst
         };
-        for (RouteOrderPolicy policy : policies)
+        deterministicPolicyLimit = std::clamp(deterministicPolicyLimit, 1, 6);
+        for (int policyIndex = 0;
+             policyIndex < deterministicPolicyLimit;
+             ++policyIndex)
         {
-            if (routeEdges(sortEdges(policy)))
+            if (routeEdges(sortEdges(policies[policyIndex])) &&
+                acceptsCurrentLayout())
+            {
+                return true;
+            }
+        }
+
+        // Strict source-aware crossings turn routing order into a real
+        // constraint: an early legal route can consume the only usable port
+        // of a later gate.  Keep the historical fast orders first, then try a
+        // small deterministic set of alternative orders before declaring the
+        // Graphviz placement unroutable.
+        auto shuffledEdges = parse.getEffectiveEdges();
+        std::mt19937 routeOrderGenerator(0x4a554e45u); // "JUNE"
+        shuffledRouteOrderRetries = std::max(0, shuffledRouteOrderRetries);
+        for (int retry = 0; retry < shuffledRouteOrderRetries; ++retry)
+        {
+            std::shuffle(shuffledEdges.begin(), shuffledEdges.end(),
+                         routeOrderGenerator);
+            std::stable_sort(shuffledEdges.begin(), shuffledEdges.end(),
+                [&adaptivePriority](const auto &left, const auto &right) {
+                    return adaptivePriority[left] > adaptivePriority[right];
+                });
+            if (routeEdges(shuffledEdges) && acceptsCurrentLayout())
             {
                 return true;
             }
         }
         return false;
+    }
+
+    bool CircuitGraph::validateJuneRandomClockRoutedLayout(
+        int phaseCount,
+        int maxSamePhase)
+    {
+        phaseCount = std::max(2, phaseCount);
+
+        std::string routeOwnershipError;
+        if (!validateJuneFanoutTrees(routes, routeOwnershipError))
+        {
+            if (fitnessCallback)
+            {
+                fitnessCallback("June random-clock graph P&R: illegal route ownership: " +
+                                routeOwnershipError);
+            }
+            return false;
+        }
+        if (stageCallback)
+        {
+            stageCallback("routed_unphased");
+        }
+
+        if (fitnessCallback)
+        {
+            fitnessCallback("June random-clock graph P&R: post-route phase assignment");
+        }
+        if (!assignPhases(phaseCount) ||
+            !validateAssignedRoutePhases(phaseCount))
+        {
+            return false;
+        }
+        if (maxSamePhase > 0)
+        {
+            for (const auto &route : routes)
+            {
+                int previousPhase = -1;
+                int samePhaseRun = 0;
+                for (const position &pos : route.second)
+                {
+                    const auto cell = chessboard.gridMap.find(pos);
+                    if (cell == chessboard.gridMap.end() ||
+                        cell->second.getPhase() < 1)
+                    {
+                        return false;
+                    }
+                    const int phase = cell->second.getPhase();
+                    samePhaseRun = phase == previousPhase
+                        ? samePhaseRun + 1
+                        : 1;
+                    if (samePhaseRun > maxSamePhase)
+                    {
+                        if (fitnessCallback)
+                        {
+                            fitnessCallback(
+                                "June random-clock graph P&R: maximum same-phase run exceeded");
+                        }
+                        return false;
+                    }
+                    previousPhase = phase;
+                }
+            }
+        }
+        if (stageCallback)
+        {
+            stageCallback("phase_assigned");
+        }
+
+        std::vector<std::vector<position>> routeGeometry;
+        routeGeometry.reserve(routes.size());
+        for (const auto &route : routes)
+        {
+            routeGeometry.push_back(route.second);
+        }
+        Mapping mapping;
+        mapping.mapping_line(routeGeometry);
+        std::string crossoverError;
+        if (!mapping.validate_crossovers(&crossoverError))
+        {
+            if (fitnessCallback)
+            {
+                fitnessCallback("June random-clock graph P&R: invalid cell-level crossover: " +
+                                crossoverError);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool CircuitGraph::routeAndValidateJuneRandomClock(
+        int phaseCount,
+        int shuffledRouteOrderRetries,
+        int maxSamePhase)
+    {
+        phaseCount = std::max(2, phaseCount);
+
+        if (fitnessCallback)
+        {
+            fitnessCallback("June random-clock graph P&R: four-direction A* routing");
+        }
+        const auto acceptCompleteLayout = [this, phaseCount, maxSamePhase]() {
+            return validateJuneRandomClockRoutedLayout(
+                phaseCount, maxSamePhase);
+        };
+        if (!placeAndRouteInternal(
+                shuffledRouteOrderRetries,
+                nullptr,
+                true,
+                6,
+                acceptCompleteLayout))
+        {
+            // Preserve the last partial routing attempt for paper/debug
+            // snapshots before the caller rejects or relaxes this candidate.
+            if (stageCallback)
+            {
+                stageCallback("routing_failed");
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool CircuitGraph::routeCompactRandomClockWithExpansion(
+        int phaseCount,
+        int shuffledRouteOrderRetries,
+        int maxExpansionRounds,
+        double maxSearchCost,
+        int maxSamePhase)
+    {
+        phaseCount = std::max(2, phaseCount);
+        shuffledRouteOrderRetries = std::max(0, shuffledRouteOrderRetries);
+        maxExpansionRounds = std::clamp(maxExpansionRounds, 0, 16);
+        astar.setMaxSearchCost(std::max(40.0, maxSearchCost));
+        adaptiveExpansionStats = {};
+
+        if (nodeIndex_pos.empty())
+        {
+            return false;
+        }
+
+        const auto materializePlacement = [this]() {
+            routes.clear();
+            astar.reset();
+            chessboard.reset();
+            for (const auto &node : nodeIndex_pos)
+            {
+                if (!chessboard.is_placeNode(node.second))
+                {
+                    return false;
+                }
+                chessboard.placeNode(node.second);
+            }
+            grid_positions = nodeIndex_pos;
+            return true;
+        };
+        if (!materializePlacement())
+        {
+            return false;
+        }
+        if (stageCallback)
+        {
+            stageCallback("compact_placement");
+        }
+
+        struct CapacityCut
+        {
+            bool row = true;
+            unsigned int coordinate = 0;
+            int pressure = 0;
+        };
+        const auto applyCut = [this](const CapacityCut &cut) {
+            for (const auto &node : nodeIndex_pos)
+            {
+                const unsigned int coordinate =
+                    cut.row ? node.second.second : node.second.first;
+                if (coordinate >= cut.coordinate &&
+                    coordinate == std::numeric_limits<unsigned int>::max())
+                {
+                    return false;
+                }
+            }
+            for (auto &node : nodeIndex_pos)
+            {
+                unsigned int &coordinate =
+                    cut.row ? node.second.second : node.second.first;
+                if (coordinate >= cut.coordinate)
+                {
+                    ++coordinate;
+                }
+            }
+            grid_positions = nodeIndex_pos;
+            return true;
+        };
+        const auto nodeArea = [this]() {
+            unsigned int minX = std::numeric_limits<unsigned int>::max();
+            unsigned int minY = std::numeric_limits<unsigned int>::max();
+            unsigned int maxX = 0;
+            unsigned int maxY = 0;
+            for (const auto &node : nodeIndex_pos)
+            {
+                minX = std::min(minX, node.second.first);
+                minY = std::min(minY, node.second.second);
+                maxX = std::max(maxX, node.second.first);
+                maxY = std::max(maxY, node.second.second);
+            }
+            if (minX == std::numeric_limits<unsigned int>::max())
+            {
+                return std::numeric_limits<std::uint64_t>::max();
+            }
+            return (static_cast<std::uint64_t>(maxX) - minX + 1) *
+                   (static_cast<std::uint64_t>(maxY) - minY + 1);
+        };
+        const auto usedArea = [this]() {
+            unsigned int minX = std::numeric_limits<unsigned int>::max();
+            unsigned int minY = std::numeric_limits<unsigned int>::max();
+            unsigned int maxX = 0;
+            unsigned int maxY = 0;
+            for (const auto &cell : chessboard.gridMap)
+            {
+                if (cell.second.get_current_weight() == 0)
+                {
+                    continue;
+                }
+                minX = std::min(minX, cell.first.first);
+                minY = std::min(minY, cell.first.second);
+                maxX = std::max(maxX, cell.first.first);
+                maxY = std::max(maxY, cell.first.second);
+            }
+            if (minX == std::numeric_limits<unsigned int>::max())
+            {
+                return std::numeric_limits<std::uint64_t>::max();
+            }
+            return (static_cast<std::uint64_t>(maxX) - minX + 1) *
+                   (static_cast<std::uint64_t>(maxY) - minY + 1);
+        };
+        const auto betterReport = [](bool routed,
+                                     const RoutingFailureInfo &report,
+                                     std::uint64_t area,
+                                     bool currentRouted,
+                                     const RoutingFailureInfo &currentReport,
+                                     std::uint64_t currentArea) {
+            if (routed != currentRouted)
+            {
+                return routed;
+            }
+            if (report.failedEdges.size() != currentReport.failedEdges.size())
+            {
+                return report.failedEdges.size() <
+                       currentReport.failedEdges.size();
+            }
+            if (report.routedEdges != currentReport.routedEdges)
+            {
+                return report.routedEdges > currentReport.routedEdges;
+            }
+            return area < currentArea;
+        };
+        const auto acceptCompleteLayout = [this, phaseCount, maxSamePhase]() {
+            return validateJuneRandomClockRoutedLayout(
+                phaseCount, maxSamePhase);
+        };
+        const auto removeRedundantCapacity = [&]() {
+            // Expansion is deliberately conservative.  Once a legal route and
+            // phase assignment exist, sweep empty cut lines in reverse order
+            // and retain a deletion only if full routing, phase closure, fanout
+            // ownership, and crossover DRC remain legal.
+            for (int removalRound = 0;
+                 removalRound < std::max(12, maxExpansionRounds);
+                 ++removalRound)
+            {
+                unsigned int minX = std::numeric_limits<unsigned int>::max();
+                unsigned int minY = std::numeric_limits<unsigned int>::max();
+                unsigned int maxX = 0;
+                unsigned int maxY = 0;
+                std::set<unsigned int> occupiedX;
+                std::set<unsigned int> occupiedY;
+                for (const auto &node : nodeIndex_pos)
+                {
+                    minX = std::min(minX, node.second.first);
+                    minY = std::min(minY, node.second.second);
+                    maxX = std::max(maxX, node.second.first);
+                    maxY = std::max(maxY, node.second.second);
+                    occupiedX.insert(node.second.first);
+                    occupiedY.insert(node.second.second);
+                }
+
+                std::vector<CapacityCut> removableCuts;
+                if (minX != std::numeric_limits<unsigned int>::max())
+                {
+                    for (unsigned int x = maxX; x > minX; --x)
+                    {
+                        if (occupiedX.count(x) == 0)
+                        {
+                            removableCuts.push_back({false, x, 0});
+                        }
+                    }
+                    for (unsigned int y = maxY; y > minY; --y)
+                    {
+                        if (occupiedY.count(y) == 0)
+                        {
+                            removableCuts.push_back({true, y, 0});
+                        }
+                    }
+                }
+                if (removableCuts.empty())
+                {
+                    break;
+                }
+
+                bool removed = false;
+                for (const CapacityCut &cut : removableCuts)
+                {
+                    const auto savedNodes = nodeIndex_pos;
+                    const auto savedRoutes = routes;
+                    const auto savedCells = chessboard.gridMap;
+                    const std::uint64_t savedUsedArea = usedArea();
+                    for (auto &node : nodeIndex_pos)
+                    {
+                        unsigned int &coordinate =
+                            cut.row ? node.second.second : node.second.first;
+                        if (coordinate > cut.coordinate)
+                        {
+                            --coordinate;
+                        }
+                    }
+                    grid_positions = nodeIndex_pos;
+
+                    const auto savedFitnessCallback = fitnessCallback;
+                    const auto savedStageCallback = stageCallback;
+                    fitnessCallback = {};
+                    stageCallback = {};
+                    RoutingFailureInfo compactReport;
+                    const bool compactRouted = placeAndRouteInternal(
+                        shuffledRouteOrderRetries,
+                        &compactReport,
+                        false,
+                        6,
+                        acceptCompleteLayout);
+                    const bool compactLegal = compactRouted &&
+                        usedArea() < savedUsedArea;
+                    fitnessCallback = savedFitnessCallback;
+                    stageCallback = savedStageCallback;
+
+                    if (compactLegal)
+                    {
+                        removed = true;
+                        if (cut.row)
+                        {
+                            ++adaptiveExpansionStats.removedRows;
+                        }
+                        else
+                        {
+                            ++adaptiveExpansionStats.removedColumns;
+                        }
+                        if (fitnessCallback)
+                        {
+                            fitnessCallback(
+                                std::string("Compact-first random-clock P&R: removed redundant ") +
+                                (cut.row ? "row y=" : "column x=") +
+                                std::to_string(cut.coordinate));
+                        }
+                        if (stageCallback)
+                        {
+                            stageCallback(
+                                std::string("layout_remove_") +
+                                (cut.row ? "row_at_" : "column_at_") +
+                                std::to_string(cut.coordinate));
+                        }
+                        break;
+                    }
+
+                    nodeIndex_pos = savedNodes;
+                    grid_positions = nodeIndex_pos;
+                    routes = savedRoutes;
+                    chessboard.gridMap = savedCells;
+                    astar.reset();
+                }
+                if (!removed)
+                {
+                    break;
+                }
+            }
+            return true;
+        };
+
+        for (int round = 0; round <= maxExpansionRounds; ++round)
+        {
+            if (fitnessCallback)
+            {
+                fitnessCallback(
+                    round == 0
+                        ? "Compact-first random-clock P&R: routing the minimum-spacing seed"
+                        : "Compact-first random-clock P&R: rerouting the expanded placement");
+            }
+
+            RoutingFailureInfo failure;
+            RoutingFailureInfo *failureReport =
+                maxExpansionRounds > 0 ? &failure : nullptr;
+            if (placeAndRouteInternal(
+                    shuffledRouteOrderRetries,
+                    failureReport,
+                    true,
+                    6,
+                    acceptCompleteLayout))
+            {
+                removeRedundantCapacity();
+                return true;
+            }
+            if (failure.routedLayoutRejected && failure.failedEdges.empty())
+            {
+                // Geometry alone is insufficient: phase closure, fanout
+                // ownership, or crossover validation rejected every complete
+                // route ordering.  Let one sparse cut be tested using the full
+                // net set as pressure instead of silently abandoning expansion.
+                failure.failedEdges = parse.getEffectiveEdges();
+            }
+            if (round == maxExpansionRounds || failure.failedEdges.empty())
+            {
+                break;
+            }
+
+            // Port-aware sparse capacity pressure, mirroring the fixed-clock
+            // Normal Graph repair policy.  A horizontal-dominant failed net
+            // benefits from another row; a vertical-dominant net benefits
+            // from another column.  The sink's assigned top/left port receives
+            // the strongest vote so a blocked gate port is repaired before
+            // unrelated whitespace is added.
+            std::map<unsigned int, int> rowPressure;
+            std::map<unsigned int, int> columnPressure;
+            for (const auto &edge : failure.failedEdges)
+            {
+                const auto sourceIt = nodeIndex_pos.find(edge.first);
+                const auto targetIt = nodeIndex_pos.find(edge.second);
+                if (sourceIt == nodeIndex_pos.end() ||
+                    targetIt == nodeIndex_pos.end())
+                {
+                    continue;
+                }
+                const position source = sourceIt->second;
+                const position target = targetIt->second;
+                const auto axisDistance = [](unsigned int left,
+                                             unsigned int right) {
+                    return left >= right
+                        ? static_cast<std::uint64_t>(left) - right
+                        : static_cast<std::uint64_t>(right) - left;
+                };
+                const std::uint64_t deltaX =
+                    axisDistance(target.first, source.first);
+                const std::uint64_t deltaY =
+                    axisDistance(target.second, source.second);
+                if (deltaX >= deltaY)
+                {
+                    rowPressure[std::max(source.second, target.second)] += 1;
+                }
+                if (deltaY >= deltaX)
+                {
+                    const unsigned int cut =
+                        source.first < target.first
+                            ? target.first
+                            : (target.first < source.first
+                                   ? source.first
+                                   : (target.first ==
+                                              std::numeric_limits<unsigned int>::max()
+                                          ? target.first
+                                          : target.first + 1));
+                    columnPressure[cut] += 1;
+                }
+
+                const auto &fanins =
+                    parse.getFaninsIndex(static_cast<unsigned int>(edge.second));
+                int leftPortFanin = -1;
+                if (fanins.size() >= 2)
+                {
+                    unsigned int nearestLeftX = 0;
+                    unsigned int greatestX = 0;
+                    bool hasNearestLeft = false;
+                    bool hasGreatest = false;
+                    int greatestNode = -1;
+                    for (const uint64_t fanin : fanins)
+                    {
+                        const auto faninPos =
+                            nodeIndex_pos.find(static_cast<int>(fanin));
+                        if (faninPos == nodeIndex_pos.end())
+                        {
+                            continue;
+                        }
+                        const unsigned int x = faninPos->second.first;
+                        if (x < target.first &&
+                            (!hasNearestLeft || x > nearestLeftX))
+                        {
+                            hasNearestLeft = true;
+                            nearestLeftX = x;
+                            leftPortFanin = static_cast<int>(fanin);
+                        }
+                        if (!hasGreatest || x > greatestX)
+                        {
+                            hasGreatest = true;
+                            greatestX = x;
+                            greatestNode = static_cast<int>(fanin);
+                        }
+                    }
+                    if (leftPortFanin < 0)
+                    {
+                        leftPortFanin = greatestNode;
+                    }
+                }
+                if (leftPortFanin == edge.first &&
+                    source.first < target.first)
+                {
+                    columnPressure[target.first] += 4;
+                }
+                else if (target.second > source.second)
+                {
+                    rowPressure[target.second] += 4;
+                }
+
+                const auto &fanouts =
+                    parse.getFanoutsIndex(static_cast<unsigned int>(edge.first));
+                bool allBelow = !fanouts.empty();
+                bool allRight = !fanouts.empty();
+                for (const uint64_t fanout : fanouts)
+                {
+                    const auto fanoutPos =
+                        nodeIndex_pos.find(static_cast<int>(fanout));
+                    if (fanoutPos == nodeIndex_pos.end())
+                    {
+                        continue;
+                    }
+                    allBelow = allBelow &&
+                        fanoutPos->second.second > source.second;
+                    allRight = allRight &&
+                        fanoutPos->second.first > source.first;
+                }
+                if (allBelow)
+                {
+                    if (source.second <
+                        std::numeric_limits<unsigned int>::max())
+                    {
+                        rowPressure[source.second + 1] += 2;
+                    }
+                }
+                else if (allRight)
+                {
+                    if (source.first <
+                        std::numeric_limits<unsigned int>::max())
+                    {
+                        columnPressure[source.first + 1] += 2;
+                    }
+                }
+            }
+
+            std::vector<CapacityCut> cuts;
+            for (const auto &entry : rowPressure)
+            {
+                cuts.push_back({true, entry.first, entry.second});
+            }
+            for (const auto &entry : columnPressure)
+            {
+                cuts.push_back({false, entry.first, entry.second});
+            }
+            std::stable_sort(cuts.begin(), cuts.end(),
+                [](const CapacityCut &left, const CapacityCut &right) {
+                    if (left.pressure != right.pressure)
+                    {
+                        return left.pressure > right.pressure;
+                    }
+                    if (left.row != right.row)
+                    {
+                        return !left.row;
+                    }
+                    return left.coordinate < right.coordinate;
+                });
+            if (cuts.size() > 4)
+            {
+                cuts.resize(4);
+            }
+            if (cuts.empty())
+            {
+                break;
+            }
+
+            const auto basePositions = nodeIndex_pos;
+            const auto baseRoutes = routes;
+            const auto baseCells = chessboard.gridMap;
+            const std::uint64_t baseArea = nodeArea();
+            bool haveAcceptedCut = false;
+            bool bestRouted = false;
+            RoutingFailureInfo bestReport = failure;
+            std::uint64_t bestArea = baseArea;
+            CapacityCut bestCut;
+            std::map<int, position> bestPositions;
+
+            const auto savedFitnessCallback = fitnessCallback;
+            const auto savedStageCallback = stageCallback;
+            fitnessCallback = {};
+            stageCallback = {};
+            for (const CapacityCut &cut : cuts)
+            {
+                nodeIndex_pos = basePositions;
+                grid_positions = nodeIndex_pos;
+                if (!applyCut(cut))
+                {
+                    continue;
+                }
+
+                RoutingFailureInfo trialReport;
+                const bool trialRouted = placeAndRouteInternal(
+                    shuffledRouteOrderRetries,
+                    &trialReport,
+                    false,
+                    6,
+                    acceptCompleteLayout);
+                if (!trialRouted && trialReport.routedLayoutRejected)
+                {
+                    continue;
+                }
+                const std::uint64_t trialArea = nodeArea();
+                if (!haveAcceptedCut ||
+                    betterReport(trialRouted,
+                                 trialReport,
+                                 trialArea,
+                                 bestRouted,
+                                 bestReport,
+                                 bestArea))
+                {
+                    haveAcceptedCut = true;
+                    bestRouted = trialRouted;
+                    bestReport = trialReport;
+                    bestArea = trialArea;
+                    bestCut = cut;
+                    bestPositions = nodeIndex_pos;
+                }
+                if (trialRouted)
+                {
+                    break;
+                }
+            }
+            fitnessCallback = savedFitnessCallback;
+            stageCallback = savedStageCallback;
+            nodeIndex_pos = basePositions;
+            grid_positions = nodeIndex_pos;
+            routes = baseRoutes;
+            chessboard.gridMap = baseCells;
+            astar.reset();
+
+            const bool strictlyImproved =
+                haveAcceptedCut &&
+                betterReport(bestRouted,
+                             bestReport,
+                             bestArea,
+                             false,
+                             failure,
+                             baseArea);
+            if (!strictlyImproved)
+            {
+                if (fitnessCallback)
+                {
+                    fitnessCallback(
+                        "Compact-first random-clock P&R: no single row/column cut improved routing; preserving the compact seed");
+                }
+                break;
+            }
+
+            nodeIndex_pos = std::move(bestPositions);
+            grid_positions = nodeIndex_pos;
+            ++adaptiveExpansionStats.acceptedRounds;
+            if (bestCut.row)
+            {
+                ++adaptiveExpansionStats.insertedRows;
+            }
+            else
+            {
+                ++adaptiveExpansionStats.insertedColumns;
+            }
+            if (fitnessCallback)
+            {
+                fitnessCallback(
+                    std::string("Compact-first random-clock P&R: inserted one ") +
+                    (bestCut.row ? "row before y=" : "column before x=") +
+                    std::to_string(bestCut.coordinate) +
+                    " from failed-edge pressure");
+            }
+            if (!materializePlacement())
+            {
+                return false;
+            }
+            if (stageCallback)
+            {
+                stageCallback(
+                    std::string("layout_insert_") +
+                    (bestCut.row ? "row_at_" : "column_at_") +
+                    std::to_string(bestCut.coordinate));
+            }
+        }
+
+        if (stageCallback)
+        {
+            stageCallback("routing_failed");
+        }
+        return false;
+    }
+
+    bool CircuitGraph::placeAndRouteJuneRandomClock(int phaseCount,
+                                                     double graphvizGridSize,
+                                                     int shuffledRouteOrderRetries,
+                                                     int maxSamePhase)
+    {
+        phaseCount = std::max(2, phaseCount);
+        if (graphvizGridSize <= 0.0)
+        {
+            graphvizGridSize = 40.0;
+        }
+
+        if (fitnessCallback)
+        {
+            fitnessCallback("June random-clock graph P&R: Graphviz DOT placement");
+        }
+        processAndGenerateGraph(false, true, true, true);
+        sortNodesByYThenXCoordinate(graphvizGridSize);
+        if (nodeIndex_pos.empty())
+        {
+            return false;
+        }
+        if (stageCallback)
+        {
+            stageCallback("quantized_placement");
+        }
+        return routeAndValidateJuneRandomClock(
+            phaseCount, shuffledRouteOrderRetries, maxSamePhase);
+    }
+
+    bool CircuitGraph::placeAndRouteJuneRandomClockAnisotropic(
+        int phaseCount,
+        double graphvizGridSizeX,
+        double graphvizGridSizeY,
+        int shuffledRouteOrderRetries,
+        int maxSamePhase)
+    {
+        phaseCount = std::max(2, phaseCount);
+        graphvizGridSizeX = graphvizGridSizeX > 0.0
+            ? graphvizGridSizeX : 40.0;
+        graphvizGridSizeY = graphvizGridSizeY > 0.0
+            ? graphvizGridSizeY : graphvizGridSizeX;
+
+        if (fitnessCallback)
+        {
+            fitnessCallback(
+                "June random-clock graph P&R: anisotropic Graphviz placement");
+        }
+        processAndGenerateGraph(false, true, true, true);
+        sortNodesByYThenXCoordinate(graphvizGridSizeX, graphvizGridSizeY);
+        if (nodeIndex_pos.empty())
+        {
+            return false;
+        }
+        if (stageCallback)
+        {
+            stageCallback("quantized_placement");
+        }
+        return routeAndValidateJuneRandomClock(
+            phaseCount, shuffledRouteOrderRetries, maxSamePhase);
+    }
+
+    bool CircuitGraph::placeAndRouteCompactLayeredClock(
+        int phaseCount,
+        unsigned int xSpacing,
+        unsigned int ySpacing,
+        int shuffledRouteOrderRetries)
+    {
+        phaseCount = std::max(2, phaseCount);
+        xSpacing = std::max(2u, xSpacing);
+        ySpacing = std::max(2u, ySpacing);
+
+        if (fitnessCallback)
+        {
+            fitnessCallback(
+                "Compact layered graph P&R: Graphviz order with regularized coordinates");
+        }
+        processAndGenerateGraph(false, true, true, true);
+        sortNodesByLayeredGrid(xSpacing, ySpacing);
+        if (nodeIndex_pos.empty())
+        {
+            return false;
+        }
+        return routeAndValidateJuneRandomClock(
+            phaseCount, shuffledRouteOrderRetries);
+    }
+
+    bool CircuitGraph::placeAndRoutePhaseAware(int phaseCount,
+                                                int maxSamePhase,
+                                                double maxSearchCost,
+                                                int maxRoutingAttempts,
+                                                bool enableFlexiblePhasePass)
+    {
+        enum class RouteOrderPolicy
+        {
+            GroupFanoutFarFirst,
+            GroupFanoutNearFirst,
+            LongFirst,
+            ShortFirst,
+            ReverseLayerLongFirst,
+            ReverseLayerShortFirst
+        };
+
+        phaseCount = std::max(2, phaseCount);
+        maxSamePhase = std::max(1, maxSamePhase);
+
+        const auto edgeDistance = [this](const std::pair<int, int> &edge) {
+            const position start = nodeIndex_pos.at(edge.first);
+            const position end = nodeIndex_pos.at(edge.second);
+            return std::abs(static_cast<int>(end.first) - static_cast<int>(start.first)) +
+                   std::abs(static_cast<int>(end.second) - static_cast<int>(start.second));
+        };
+        const auto isMultiFanout = [this](int nodeIndex) {
+            return parse.getFanoutsIndex(nodeIndex).size() > 1;
+        };
+        double effectiveSearchCost = maxSearchCost;
+        const auto effectiveEdges = parse.getEffectiveEdges();
+        for (const auto &edge : effectiveEdges)
+        {
+            effectiveSearchCost = std::max(
+                effectiveSearchCost,
+                static_cast<double>(edgeDistance(edge) + phaseCount * 4 + 24));
+        }
+        std::map<std::pair<int, int>, int> adaptivePriority;
+        const auto sortEdges = [&](RouteOrderPolicy policy) {
+            auto edges = effectiveEdges;
+            std::stable_sort(edges.begin(), edges.end(), [&](const auto &left, const auto &right) {
+                const int leftPriority = adaptivePriority[left];
+                const int rightPriority = adaptivePriority[right];
+                if (leftPriority != rightPriority)
+                {
+                    return leftPriority > rightPriority;
+                }
+                const int leftLayer = parse.getVertexLayer(left.first);
+                const int rightLayer = parse.getVertexLayer(right.first);
+                if (leftLayer != rightLayer)
+                {
+                    const bool reverseLayer =
+                        policy == RouteOrderPolicy::ReverseLayerLongFirst ||
+                        policy == RouteOrderPolicy::ReverseLayerShortFirst;
+                    return reverseLayer ? leftLayer > rightLayer : leftLayer < rightLayer;
+                }
+                const int leftDistance = edgeDistance(left);
+                const int rightDistance = edgeDistance(right);
+                if ((policy == RouteOrderPolicy::LongFirst ||
+                     policy == RouteOrderPolicy::ReverseLayerLongFirst) &&
+                    leftDistance != rightDistance)
+                {
+                    return leftDistance > rightDistance;
+                }
+                if ((policy == RouteOrderPolicy::ShortFirst ||
+                     policy == RouteOrderPolicy::ReverseLayerShortFirst) &&
+                    leftDistance != rightDistance)
+                {
+                    return leftDistance < rightDistance;
+                }
+                if (left.first != right.first)
+                {
+                    const bool leftFanout = isMultiFanout(left.first);
+                    const bool rightFanout = isMultiFanout(right.first);
+                    if (leftFanout != rightFanout)
+                    {
+                        return leftFanout;
+                    }
+                    if (leftDistance != rightDistance)
+                    {
+                        return leftDistance > rightDistance;
+                    }
+                    return left < right;
+                }
+                if (leftDistance != rightDistance)
+                {
+                    return policy == RouteOrderPolicy::GroupFanoutNearFirst
+                        ? leftDistance < rightDistance : leftDistance > rightDistance;
+                }
+                return left.second < right.second;
+            });
+            return edges;
+        };
+        std::set<position> placedNodePositions;
+        for (const auto &node : nodeIndex_pos)
+        {
+            placedNodePositions.insert(node.second);
+        }
+        const auto crossesIntermediateNode = [&placedNodePositions](
+                                                     const std::pair<int, int> &,
+                                                     const std::vector<position> &path) {
+            if (path.size() <= 2)
+            {
+                return false;
+            }
+            return std::any_of(std::next(path.begin()), std::prev(path.end()),
+                               [&placedNodePositions](const position &pos) {
+                                   return placedNodePositions.count(pos) != 0;
+                               });
+        };
+
+        const RouteOrderPolicy policies[] = {
+            RouteOrderPolicy::GroupFanoutFarFirst,
+            RouteOrderPolicy::GroupFanoutNearFirst,
+            RouteOrderPolicy::LongFirst,
+            RouteOrderPolicy::ShortFirst,
+            RouteOrderPolicy::ReverseLayerLongFirst,
+            RouteOrderPolicy::ReverseLayerShortFirst
+        };
+        // Repeat the six deterministic policies after promoting the edge that
+        // blocked the previous pass, then use bounded seeded order variation.
+        // The former fallback branched phase at every visited cell; on
+        // congested MAJ circuits that multiplied the state space without
+        // changing the geometric deadlock.  Launch offsets retain phase
+        // diversity while every adaptive reorder pass stays predictable.
+        maxRoutingAttempts = std::clamp(maxRoutingAttempts, 1, 36);
+        const int routingAttempts = effectiveEdges.size() > 300
+            ? std::min(6, maxRoutingAttempts)
+            : maxRoutingAttempts;
+        for (int policyIndex = 0; policyIndex < routingAttempts; ++policyIndex)
+        {
+            const RouteOrderPolicy policy = policies[policyIndex % 6];
+            routes.clear();
+            chessboard.reset();
+            PhaseAwareAstar router(chessboard,
+                                   phaseCount,
+                                   maxSamePhase,
+                                   effectiveSearchCost,
+                                   enableFlexiblePhasePass && policyIndex >= 6
+                                       ? -1 : policyIndex);
+            bool placed = true;
+            for (const auto &node : nodeIndex_pos)
+            {
+                if (!chessboard.is_placeNode(node.second))
+                {
+                    placed = false;
+                    break;
+                }
+                chessboard.placeNode(node.second);
+            }
+            if (!placed)
+            {
+                continue;
+            }
+
+            bool routed = true;
+            auto orderedEdges = sortEdges(policy);
+            if (policyIndex >= 12)
+            {
+                // The first two passes are fully reproducible heuristics.  A
+                // third bounded pass explores deterministic pseudo-random tie
+                // orders; failed edges remain promoted to the front.  This is
+                // substantially cheaper than branching phase at every cell and
+                // breaks greedy routing deadlocks on wider MAJ networks.
+                std::mt19937 generator(
+                    0x47524150u + static_cast<unsigned int>(policyIndex * 131) +
+                    static_cast<unsigned int>(effectiveEdges.size()));
+                std::shuffle(orderedEdges.begin(), orderedEdges.end(), generator);
+                std::stable_sort(orderedEdges.begin(), orderedEdges.end(),
+                    [&adaptivePriority](const auto &left, const auto &right) {
+                        return adaptivePriority[left] > adaptivePriority[right];
+                    });
+            }
+            for (const auto &edge : orderedEdges)
+            {
+                const position start = nodeIndex_pos.at(edge.first);
+                const position end = nodeIndex_pos.at(edge.second);
+                const int preferredStartPhase =
+                    (parse.getVertexLayer(edge.first) + policyIndex) % phaseCount + 1;
+                auto result = router.findPath(start,
+                                              end,
+                                              preferredStartPhase,
+                                              isMultiFanout(edge.first));
+                if (!result.has_value() || crossesIntermediateNode(edge, result->positions))
+                {
+                    ++adaptivePriority[edge];
+                    if (fitnessCallback)
+                    {
+                        fitnessCallback("phase-aware route failed at edge " +
+                            std::to_string(edge.first) + "->" + std::to_string(edge.second) +
+                            " after " + std::to_string(routes.size()) +
+                            " routes (policy " + std::to_string(policyIndex) + "): " +
+                            (result.has_value() ? "intermediate-node conflict" : router.lastError()));
+                    }
+                    routed = false;
+                    break;
+                }
+                routes[{static_cast<unsigned int>(edge.first),
+                        static_cast<unsigned int>(edge.second)}] = std::move(result->positions);
+            }
+            if (!routed || !validateAssignedRoutePhases(phaseCount))
+            {
+                continue;
+            }
+
+            std::string routeOwnershipError;
+            if (!validateJuneFanoutTrees(routes, routeOwnershipError))
+            {
+                if (fitnessCallback)
+                {
+                    fitnessCallback("phase-aware route ownership failed: " +
+                                    routeOwnershipError);
+                }
+                continue;
+            }
+
+            bool repeatLimitOk = true;
+            for (const auto &route : routes)
+            {
+                int previous = -1;
+                int run = 1;
+                for (const position &pos : route.second)
+                {
+                    const auto cell = chessboard.gridMap.find(pos);
+                    if (cell == chessboard.gridMap.end())
+                    {
+                        repeatLimitOk = false;
+                        break;
+                    }
+                    const int phase = cell->second.getPhase();
+                    run = phase == previous ? run + 1 : 1;
+                    if (run > maxSamePhase)
+                    {
+                        repeatLimitOk = false;
+                        break;
+                    }
+                    previous = phase;
+                }
+                if (!repeatLimitOk)
+                {
+                    break;
+                }
+            }
+            if (repeatLimitOk)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int CircuitGraph::compactPhaseAware(int phaseCount,
+                                         int maxSamePhase,
+                                         double maxSearchCost,
+                                         int maxRounds,
+                                         int maxElapsedMilliseconds,
+                                         int maxEvaluatedCuts)
+    {
+        struct Snapshot
+        {
+            std::map<int, position> nodes;
+            std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> routedEdges;
+            std::unordered_map<position, GridCell, PositionHash> cells;
+        };
+        const auto takeSnapshot = [this]() {
+            return Snapshot{nodeIndex_pos, routes, chessboard.gridMap};
+        };
+        const auto restore = [this](const Snapshot &snapshot) {
+            nodeIndex_pos = snapshot.nodes;
+            grid_positions = snapshot.nodes;
+            routes = snapshot.routedEdges;
+            chessboard.gridMap = snapshot.cells;
+        };
+        const auto score = [this]() {
+            bool initialized = false;
+            unsigned int minX = 0, maxX = 0, minY = 0, maxY = 0;
+            int routeLength = 0;
+            for (const auto &cell : chessboard.gridMap)
+            {
+                if (cell.second.get_current_weight() == 0)
+                {
+                    continue;
+                }
+                if (!initialized)
+                {
+                    minX = maxX = cell.first.first;
+                    minY = maxY = cell.first.second;
+                    initialized = true;
+                }
+                minX = std::min(minX, cell.first.first);
+                maxX = std::max(maxX, cell.first.first);
+                minY = std::min(minY, cell.first.second);
+                maxY = std::max(maxY, cell.first.second);
+            }
+            for (const auto &route : routes)
+            {
+                routeLength += static_cast<int>(route.second.size());
+            }
+            if (!initialized)
+            {
+                return std::make_tuple(std::numeric_limits<int>::max(),
+                                       std::numeric_limits<int>::max(),
+                                       std::numeric_limits<int>::max());
+            }
+            const int width = static_cast<int>(maxX - minX + 1);
+            const int height = static_cast<int>(maxY - minY + 1);
+            return std::make_tuple(width * height, std::max(width, height), routeLength);
+        };
+        const auto collisionFree = [](const std::map<int, position> &nodes) {
+            std::set<position> occupied;
+            for (const auto &node : nodes)
+            {
+                if (!occupied.insert(node.second).second)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        int acceptedCuts = 0;
+        int evaluatedCuts = 0;
+        maxRounds = std::max(0, maxRounds);
+        maxElapsedMilliseconds = std::max(0, maxElapsedMilliseconds);
+        maxEvaluatedCuts = std::max(0, maxEvaluatedCuts);
+        const auto started = std::chrono::steady_clock::now();
+        const auto budgetExpired = [&]() {
+            if (maxElapsedMilliseconds == 0)
+            {
+                return true;
+            }
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started);
+            return elapsed.count() >= maxElapsedMilliseconds;
+        };
+        for (int round = 0; round < maxRounds; ++round)
+        {
+            const Snapshot base = takeSnapshot();
+            const auto baseScore = score();
+            bool accepted = false;
+
+            for (int axis = 0; axis < 2 && !accepted; ++axis)
+            {
+                std::set<unsigned int> coordinateSet;
+                for (const auto &node : base.nodes)
+                {
+                    coordinateSet.insert(axis == 0 ? node.second.first : node.second.second);
+                }
+                if (coordinateSet.size() < 2)
+                {
+                    continue;
+                }
+                std::vector<unsigned int> cuts;
+                const unsigned int low = *coordinateSet.begin();
+                const unsigned int high = *coordinateSet.rbegin();
+                for (unsigned int cut = low; cut < high; ++cut)
+                {
+                    cuts.push_back(cut);
+                }
+                const double center = (static_cast<double>(low) + high) / 2.0;
+                std::stable_sort(cuts.begin(), cuts.end(), [center](unsigned int left, unsigned int right) {
+                    return std::abs(static_cast<double>(left) - center) <
+                           std::abs(static_cast<double>(right) - center);
+                });
+                if (cuts.size() > 12)
+                {
+                    cuts.resize(12);
+                }
+
+                for (const unsigned int cut : cuts)
+                {
+                    if (budgetExpired() || evaluatedCuts >= maxEvaluatedCuts)
+                    {
+                        restore(base);
+                        return acceptedCuts;
+                    }
+                    ++evaluatedCuts;
+                    restore(base);
+                    for (auto &node : nodeIndex_pos)
+                    {
+                        unsigned int &coordinate = axis == 0 ? node.second.first : node.second.second;
+                        if (coordinate > cut)
+                        {
+                            --coordinate;
+                        }
+                    }
+                    if (!collisionFree(nodeIndex_pos))
+                    {
+                        continue;
+                    }
+                    // Compaction is a local refinement, not another exhaustive
+                    // placement search.  Deterministic phase offsets keep every
+                    // cut bounded; an unsuccessful cut is simply rejected.
+                    const bool smallGraph = parse.getEffectiveEdges().size() <= 24;
+                    if (!placeAndRoutePhaseAware(phaseCount,
+                                                 maxSamePhase,
+                                                 maxSearchCost,
+                                                 smallGraph ? 12 : 6,
+                                                 smallGraph))
+                    {
+                        continue;
+                    }
+                    if (score() < baseScore)
+                    {
+                        ++acceptedCuts;
+                        accepted = true;
+                        break;
+                    }
+                }
+            }
+            if (!accepted)
+            {
+                restore(base);
+                break;
+            }
+        }
+        return acceptedCuts;
+    }
+
+    int CircuitGraph::compactClockPhaseCycles(int phaseCount,
+                                              int maxRounds)
+    {
+        struct Snapshot
+        {
+            std::map<int, position> nodes;
+            std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> routedEdges;
+            std::unordered_map<position, GridCell, PositionHash> cells;
+        };
+        const auto takeSnapshot = [this]() {
+            return Snapshot{nodeIndex_pos, routes, chessboard.gridMap};
+        };
+        const auto restore = [this](const Snapshot &snapshot) {
+            nodeIndex_pos = snapshot.nodes;
+            grid_positions = snapshot.nodes;
+            routes = snapshot.routedEdges;
+            chessboard.gridMap = snapshot.cells;
+        };
+        const auto occupiedScore = [this]() {
+            bool initialized = false;
+            unsigned int minX = 0, maxX = 0, minY = 0, maxY = 0;
+            for (const auto &cell : chessboard.gridMap)
+            {
+                if (cell.second.get_current_weight() == 0)
+                {
+                    continue;
+                }
+                if (!initialized)
+                {
+                    minX = maxX = cell.first.first;
+                    minY = maxY = cell.first.second;
+                    initialized = true;
+                }
+                minX = std::min(minX, cell.first.first);
+                maxX = std::max(maxX, cell.first.first);
+                minY = std::min(minY, cell.first.second);
+                maxY = std::max(maxY, cell.first.second);
+            }
+            if (!initialized)
+            {
+                return std::make_tuple(std::numeric_limits<int>::max(),
+                                       std::numeric_limits<int>::max());
+            }
+            const int width = static_cast<int>(maxX - minX + 1);
+            const int height = static_cast<int>(maxY - minY + 1);
+            return std::make_tuple(width * height, std::max(width, height));
+        };
+        const auto fourConnected = [](const std::vector<position> &path) {
+            if (path.size() < 2)
+            {
+                return false;
+            }
+            std::set<position> unique;
+            for (std::size_t index = 0; index < path.size(); ++index)
+            {
+                if (!unique.insert(path[index]).second)
+                {
+                    return false;
+                }
+                if (index == 0)
+                {
+                    continue;
+                }
+                const position &previous = path[index - 1];
+                const position &current = path[index];
+                const unsigned int distance =
+                    (previous.first > current.first ? previous.first - current.first
+                                                    : current.first - previous.first) +
+                    (previous.second > current.second ? previous.second - current.second
+                                                      : current.second - previous.second);
+                if (distance != 1)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        const auto collisionFree = [](const std::map<int, position> &nodes) {
+            std::set<position> occupied;
+            for (const auto &node : nodes)
+            {
+                if (!occupied.insert(node.second).second)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        const auto rebuildAndValidate = [this, phaseCount, &fourConnected]() {
+            std::set<position> nodeCells;
+            chessboard.gridMap.clear();
+            for (const auto &node : nodeIndex_pos)
+            {
+                if (!nodeCells.insert(node.second).second ||
+                    !chessboard.is_placeNode(node.second))
+                {
+                    return false;
+                }
+                chessboard.placeNode(node.second);
+            }
+
+            std::map<position, std::set<unsigned int>> routeSources;
+            for (const auto &route : routes)
+            {
+                if (!fourConnected(route.second) ||
+                    route.second.front() != nodeIndex_pos.at(static_cast<int>(route.first.first)) ||
+                    route.second.back() != nodeIndex_pos.at(static_cast<int>(route.first.second)))
+                {
+                    return false;
+                }
+                for (const position &pos : route.second)
+                {
+                    routeSources[pos].insert(route.first.first);
+                }
+            }
+            for (const auto &usage : routeSources)
+            {
+                if (nodeCells.count(usage.first) != 0)
+                {
+                    continue;
+                }
+                if (usage.second.size() > 2)
+                {
+                    return false;
+                }
+                for (std::size_t count = 0; count < usage.second.size(); ++count)
+                {
+                    if (!chessboard.is_addWire(usage.first))
+                    {
+                        return false;
+                    }
+                    chessboard.addWire(usage.first);
+                }
+            }
+
+            std::string ownershipError;
+            if (!validateJuneFanoutTrees(routes, ownershipError) ||
+                !assignPhases(phaseCount) ||
+                !validateAssignedRoutePhases(phaseCount) ||
+                !hasAcceptableAssignedRoutePhases(phaseCount))
+            {
+                return false;
+            }
+            std::vector<std::vector<position>> routeGeometry;
+            routeGeometry.reserve(routes.size());
+            for (const auto &route : routes)
+            {
+                routeGeometry.push_back(route.second);
+            }
+            Mapping mapping;
+            mapping.mapping_line(routeGeometry);
+            std::string crossoverError;
+            return mapping.validate_crossovers(&crossoverError);
+        };
+
+        phaseCount = std::max(2, phaseCount);
+        maxRounds = std::max(0, maxRounds);
+        int acceptedCycles = 0;
+        for (int round = 0; round < maxRounds; ++round)
+        {
+            const Snapshot base = takeSnapshot();
+            const auto baseScore = occupiedScore();
+            bool accepted = false;
+            for (int axis = 0; axis < 2 && !accepted; ++axis)
+            {
+                unsigned int low = std::numeric_limits<unsigned int>::max();
+                unsigned int high = 0;
+                for (const auto &cell : base.cells)
+                {
+                    if (cell.second.get_current_weight() == 0)
+                    {
+                        continue;
+                    }
+                    const unsigned int coordinate = axis == 0
+                        ? cell.first.first : cell.first.second;
+                    low = std::min(low, coordinate);
+                    high = std::max(high, coordinate);
+                }
+                if (low == std::numeric_limits<unsigned int>::max() ||
+                    high < low + static_cast<unsigned int>(phaseCount) + 1)
+                {
+                    continue;
+                }
+
+                std::vector<unsigned int> bandStarts;
+                for (unsigned int start = low + 1;
+                     start + static_cast<unsigned int>(phaseCount) <= high;
+                     ++start)
+                {
+                    bool containsNode = false;
+                    for (const auto &node : base.nodes)
+                    {
+                        const unsigned int coordinate = axis == 0
+                            ? node.second.first : node.second.second;
+                        if (coordinate >= start &&
+                            coordinate < start + static_cast<unsigned int>(phaseCount))
+                        {
+                            containsNode = true;
+                            break;
+                        }
+                    }
+                    if (!containsNode)
+                    {
+                        bandStarts.push_back(start);
+                    }
+                }
+                const double center = (static_cast<double>(low) + high) / 2.0;
+                std::stable_sort(bandStarts.begin(), bandStarts.end(),
+                    [center](unsigned int left, unsigned int right) {
+                        return std::abs(static_cast<double>(left) - center) <
+                               std::abs(static_cast<double>(right) - center);
+                    });
+                if (bandStarts.size() > 6)
+                {
+                    bandStarts.resize(6);
+                }
+
+                for (const unsigned int start : bandStarts)
+                {
+                    restore(base);
+                    const unsigned int end = start + static_cast<unsigned int>(phaseCount);
+                    for (auto &node : nodeIndex_pos)
+                    {
+                        unsigned int &coordinate = axis == 0
+                            ? node.second.first : node.second.second;
+                        if (coordinate >= end)
+                        {
+                            coordinate -= static_cast<unsigned int>(phaseCount);
+                        }
+                    }
+
+                    bool validGeometry = true;
+                    for (auto &route : routes)
+                    {
+                        std::vector<position> compacted;
+                        compacted.reserve(route.second.size());
+                        for (position pos : route.second)
+                        {
+                            unsigned int &coordinate = axis == 0 ? pos.first : pos.second;
+                            if (coordinate >= start && coordinate < end)
+                            {
+                                continue;
+                            }
+                            if (coordinate >= end)
+                            {
+                                coordinate -= static_cast<unsigned int>(phaseCount);
+                            }
+                            if (compacted.empty() || compacted.back() != pos)
+                            {
+                                compacted.push_back(pos);
+                            }
+                        }
+                        if (!fourConnected(compacted))
+                        {
+                            validGeometry = false;
+                            break;
+                        }
+                        route.second = std::move(compacted);
+                    }
+                    grid_positions = nodeIndex_pos;
+                    if (validGeometry && rebuildAndValidate() &&
+                        occupiedScore() < baseScore)
+                    {
+                        ++acceptedCycles;
+                        accepted = true;
+                        break;
+                    }
+
+                    // A complete clock cycle may also be removed when the old
+                    // wires bend inside the band. Keep the phase-equivalent
+                    // node shift, then reroute transactionally instead of
+                    // requiring the pre-compaction geometry to survive.
+                    restore(base);
+                    for (auto &node : nodeIndex_pos)
+                    {
+                        unsigned int &coordinate = axis == 0
+                            ? node.second.first : node.second.second;
+                        if (coordinate >= end)
+                        {
+                            coordinate -= static_cast<unsigned int>(phaseCount);
+                        }
+                    }
+                    grid_positions = nodeIndex_pos;
+                    if (!collisionFree(nodeIndex_pos) ||
+                        !routeAndValidateJuneRandomClock(phaseCount, 6) ||
+                        !(occupiedScore() < baseScore))
+                    {
+                        continue;
+                    }
+                    ++acceptedCycles;
+                    accepted = true;
+                    break;
+                }
+            }
+            if (!accepted)
+            {
+                restore(base);
+                break;
+            }
+        }
+        return acceptedCycles;
     }
     // 计算层与层之间除了起始节点和最终节点之间的交叉节点，把有交叉的层分到同一组
     std::map<unsigned int, std::vector<std::vector<position>>> CircuitGraph::reclassifyLayers(
@@ -1416,9 +3427,12 @@ namespace fcngraph
         return repeatedAdjacent * 10 <= totalAdjacent * 3;
     }
 
-    void CircuitGraph::printLaTex()
+    void CircuitGraph::printLaTex(const std::string &outputPath,
+                                  bool use2ddStyle)
     {
-        std::string filename = parse.get_moduleName() + ".tex";
+        const std::string filename = outputPath.empty()
+            ? parse.get_moduleName() + ".tex"
+            : outputPath;
         std::ofstream os(filename);
         if (!os.is_open())
         {
@@ -1430,43 +3444,124 @@ namespace fcngraph
             %graphics
             \usepackage{pgfmath}
             \usetikzlibrary{calc,arrows.meta}
+            \definecolor{ifcnink}{HTML}{23344A}
+            \definecolor{ifcnaccent}{HTML}{2457A6}
+            \definecolor{ifcnguide}{HTML}{EAF0F5}
+            \definecolor{ifcnedge}{HTML}{A7B3C3}
+            \definecolor{ifcninput}{HTML}{DCEAF7}
+            \definecolor{ifcnoutput}{HTML}{F8E8C9}
+            \definecolor{ifcnmajority}{HTML}{F2D58A}
+            \definecolor{ifcnand}{HTML}{F2C9CB}
+            \definecolor{ifcnor}{HTML}{E8DDF3}
+            \definecolor{ifcnnot}{HTML}{DDF1E3}
+            \definecolor{ifcnfanout}{HTML}{CDEBDD}
+            \definecolor{ifcnwire}{HTML}{E7EBEF}
 
             \begin{document}
-            \begin{tikzpicture}[
+            \begin{tikzpicture}[)"
+           << (use2ddStyle ? R"(
+            scale=0.5,transform shape,
+            guide/.style={draw=ifcnguide,line width=0.45pt},
+            logicadj/.style={draw=ifcnedge,line width=0.65pt},
+            logiclong/.style={draw=ifcnedge!70,line width=0.65pt,dashed},
+            route/.style={->, >={Stealth[]},line width=0.85pt,draw=ifcnaccent!78},
+            gate/.style={circle,draw=ifcnink,line width=0.8pt,minimum size=0.76cm,
+                         inner sep=0pt,font=\bfseries},
+            ninput/.style={gate,fill=ifcninput},
+            noutput/.style={gate,fill=ifcnoutput},
+            nmaj/.style={gate,fill=ifcnmajority},
+            nand/.style={gate,fill=ifcnand},
+            nor/.style={gate,fill=ifcnor},
+            nnot/.style={gate,fill=ifcnnot},
+            nfanout/.style={gate,fill=ifcnfanout},
+            nwire/.style={gate,fill=ifcnwire},
+            nother/.style={gate,fill=white}
+            )"
+                              : R"(
             scale=0.5,transform shape,
             c1/.style={rectangle, fill, lightgray!50, minimum size=1cm},
             c2/.style={rectangle, fill, lightgray, minimum size=1cm},
             c3/.style={rectangle, fill, gray, minimum size=1cm},
             c4/.style={rectangle, fill, darkgray!90, minimum size=1cm},
             route/.style={->, >={Stealth[]},line width=0.8pt, blue!50},
-            v/.style={circle, draw, fill=white, line width = 0.8pt, minimum size=0.7cm},
-            ]
+            v/.style={circle, draw, fill=white, line width = 0.8pt, minimum size=0.7cm}
+            )")
+           << R"(]
             )"
            << std::endl;
 
-        for (auto it = chessboard.getGridMap().begin(); it != chessboard.getGridMap().end(); ++it)
+        unsigned int maxLayoutY = 0;
+        unsigned int minLayoutX = std::numeric_limits<unsigned int>::max();
+        unsigned int maxLayoutX = 0;
+        for (const auto &cell : chessboard.getGridMap())
         {
-            auto pos = it->first;
-            auto grid = it->second;
-            int phase = grid.getPhase();
-            auto x = pos.first;
-            auto y = pos.second;
-            switch (phase)
+            if (cell.second.get_current_weight() == 0)
             {
-            case 1:
-                os << "\\node[c1] at (" << x << "," << y << ") {};" << std::endl;
-                break;
-            case 2:
-                os << "\\node[c2] at (" << x << "," << y << ") {};" << std::endl;
-                break;
-            case 3:
-                os << "\\node[c3] at (" << x << "," << y << ") {};" << std::endl;
-                break;
-            case 4:
-                os << "\\node[c4] at (" << x << "," << y << ") {};" << std::endl;
-                break;
-            default:
-                break;
+                continue;
+            }
+            maxLayoutY = std::max(maxLayoutY, cell.first.second);
+            minLayoutX = std::min(minLayoutX, cell.first.first);
+            maxLayoutX = std::max(maxLayoutX, cell.first.first);
+        }
+        for (const auto &node : nodeIndex_pos)
+        {
+            maxLayoutY = std::max(maxLayoutY, node.second.second);
+            minLayoutX = std::min(minLayoutX, node.second.first);
+            maxLayoutX = std::max(maxLayoutX, node.second.first);
+        }
+        if (minLayoutX == std::numeric_limits<unsigned int>::max())
+        {
+            minLayoutX = 0;
+        }
+        const auto drawY = [maxLayoutY](unsigned int y) {
+            // TikZ uses an upward Y axis; this is a renderer-only conversion
+            // from iFCN's top-left layout coordinates.
+            return maxLayoutY - y;
+        };
+
+        if (use2ddStyle)
+        {
+            std::set<unsigned int> layerRows;
+            for (const auto &node : nodeIndex_pos)
+            {
+                layerRows.insert(node.second.second);
+            }
+            const double guideLeft = static_cast<double>(minLayoutX) - 0.65;
+            const double guideRight = static_cast<double>(maxLayoutX) + 0.65;
+            for (const unsigned int row : layerRows)
+            {
+                os << "\\draw[guide] (" << guideLeft << "," << drawY(row)
+                   << ") -- (" << guideRight << "," << drawY(row) << ");"
+                   << std::endl;
+            }
+
+        }
+        else
+        {
+            for (auto it = chessboard.getGridMap().begin(); it != chessboard.getGridMap().end(); ++it)
+            {
+                auto pos = it->first;
+                auto grid = it->second;
+                int phase = grid.getPhase();
+                auto x = pos.first;
+                auto y = drawY(pos.second);
+                switch (phase)
+                {
+                case 1:
+                    os << "\\node[c1] at (" << x << "," << y << ") {};" << std::endl;
+                    break;
+                case 2:
+                    os << "\\node[c2] at (" << x << "," << y << ") {};" << std::endl;
+                    break;
+                case 3:
+                    os << "\\node[c3] at (" << x << "," << y << ") {};" << std::endl;
+                    break;
+                case 4:
+                    os << "\\node[c4] at (" << x << "," << y << ") {};" << std::endl;
+                    break;
+                default:
+                    break;
+                }
             }
         }
 
@@ -1475,9 +3570,32 @@ namespace fcngraph
         {
             auto node = index_pos.first;
             auto x = index_pos.second.first;
-            auto y = index_pos.second.second;
+            auto y = drawY(index_pos.second.second);
             auto nodeType = parse.getNodeType(node);
             std::string nodeName = parse.getNodeName(node);
+            if (use2ddStyle)
+            {
+                std::string style = "nother";
+                if (nodeType == "input")
+                    style = "ninput";
+                else if (nodeType == "output")
+                    style = "noutput";
+                else if (nodeType == "maj")
+                    style = "nmaj";
+                else if (nodeType == "and")
+                    style = "nand";
+                else if (nodeType == "or")
+                    style = "nor";
+                else if (nodeType == "not")
+                    style = "nnot";
+                else if (nodeType == "fanout")
+                    style = "nfanout";
+                else if (nodeType == "wire")
+                    style = "nwire";
+                os << "\\node[" << style << "] (" << node << ") at ("
+                   << x << "," << y << ") {" << node << "};" << std::endl;
+                continue;
+            }
             if (nodeType == "input")
             {
                 os << R"(\node()" << node << ") [v] at (" << x << "," << y << ") {" << nodeName << "};" << std::endl;
@@ -1517,6 +3635,23 @@ namespace fcngraph
         }
 
         os << std::endl;
+        if (use2ddStyle && routes.empty())
+        {
+            for (const auto &edge : parse.getEffectiveEdges())
+            {
+                if (nodeIndex_pos.find(static_cast<int>(edge.first)) == nodeIndex_pos.end() ||
+                    nodeIndex_pos.find(static_cast<int>(edge.second)) == nodeIndex_pos.end())
+                {
+                    continue;
+                }
+                const int layerSpan = std::abs(
+                    static_cast<int>(parse.getVertexLayer(edge.second)) -
+                    static_cast<int>(parse.getVertexLayer(edge.first)));
+                os << "\\draw[" << (layerSpan > 1 ? "logiclong" : "logicadj")
+                   << "] (" << edge.first << ") -- (" << edge.second << ");"
+                   << std::endl;
+            }
+        }
         for (auto &route : routes)
         {
             auto node_pair = route.first;
@@ -1531,7 +3666,7 @@ namespace fcngraph
             {
                 auto pos = path[i];
                 auto x = pos.first;
-                auto y = pos.second;
+                auto y = drawY(pos.second);
                 os << "(" << x << "," << y << ") -- ";
             }
             os << "(" << node_2 << ");" << std::endl;

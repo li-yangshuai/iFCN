@@ -1,0 +1,78 @@
+#circuit name: t.v
+
+#designed by compact Graph Draw: Graphviz safety fallback + four-direction routing + random-phase closure with encoded 4-phase clock tiles.
+
+#gate level placement and routing infomation
+#algorithm: compact Graph Draw: Graphviz safety fallback + four-direction routing + random-phase closure
+#gates number: 18
+#input/output: 5 / 2
+#edges number: 22
+#total layers: 8
+#layout area: width: 11, height: 13, area: 143
+#phase origin: top-left=(20,20), saved coordinates are normalized to (0,0)
+#phase count: 4
+#runtime: 7.569s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, x0, input, (0,0);
+1, x1, input, (2,0);
+2, x2, input, (3,0);
+3, x3, input, (4,0);
+4, x4, input, (7,0);
+5, y0, output, (2,12);
+6, y1, output, (7,12);
+7, n6, and, (3,2);
+8, ~n6, not, (3,3);
+9, n7, and, (2,5);
+10, n8, and, (0,2);
+11, n9, or, (2,7);
+12, n10, maj, (7,10);
+13, n10_0, and, (8,7);
+14, n10_1, and, (6,8);
+15, n10_2, and, (7,8);
+16, 9_15_14, fanout, (6,7);
+17, 8_15_13, fanout, (7,5);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,10): (0,0),(0,1),(0,2);
+(1,9): (2,0),(2,1),(2,2),(2,3),(2,4),(2,5);
+(2,7): (3,0),(3,1),(3,2);
+(2,10): (3,0),(3,1),(2,1),(1,1),(1,2),(0,2);
+(3,7): (4,0),(4,1),(4,2),(3,2);
+(4,13): (7,0),(6,0),(6,1),(6,2),(6,3),(6,4),(7,4),(8,4),(8,5),(9,5),(10,5),(10,6),(10,7),(9,7),(8,7);
+(4,14): (7,0),(6,0),(6,1),(6,2),(6,3),(6,4),(6,5),(6,6),(5,6),(5,7),(5,8),(6,8);
+(7,8): (3,2),(3,3);
+(8,9): (3,3),(3,4),(3,5),(2,5);
+(8,17): (3,3),(3,4),(3,5),(4,5),(5,5),(6,5),(7,5);
+(9,11): (2,5),(2,6),(2,7);
+(9,16): (2,5),(2,6),(3,6),(3,7),(4,7),(5,7),(6,7);
+(10,11): (0,2),(0,3),(0,4),(0,5),(0,6),(0,7),(1,7),(2,7);
+(11,5): (2,7),(2,8),(2,9),(2,10),(2,11),(2,12);
+(12,6): (7,10),(7,11),(7,12);
+(13,12): (8,7),(8,8),(8,9),(8,10),(7,10);
+(14,12): (6,8),(6,9),(6,10),(7,10);
+(15,12): (7,8),(7,9),(7,10);
+(16,14): (6,7),(6,8);
+(16,15): (6,7),(7,7),(7,8);
+(17,13): (7,5),(7,6),(8,6),(8,7);
+(17,15): (7,5),(7,6),(8,6),(9,6),(9,7),(9,8),(8,8),(7,8);
+#paths info
+#phase map
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0x51aafbc3;
+tile(1,0):0xc0112230;
+tile(2,0):0x00000000;
+tile(0,1):0x1061f2cf;
+tile(1,1):0x0055a80f;
+tile(2,1):0x00152f3c;
+tile(0,2):0x10203000;
+tile(1,2):0x5090e000;
+tile(2,2):0x00010200;
+tile(0,3):0x10000000;
+tile(1,3):0x40000000;
+tile(2,3):0x00000000;
+#phase map

@@ -14,11 +14,15 @@ public:
         is_pathReused(false){}
     std::vector<position> findPath(const position& startPos, const position& goalPos, bool isOneFanout = false);
     void setMaxSearchCost(double cost) { maxSearchCost = cost; }
+    void setAllowInterSourceWireOverlap(bool allow) { allowInterSourceWireOverlap = allow; }
+    void setOccupiedWirePenalty(double penalty) { occupiedWirePenalty = penalty; }
 
     inline void reset(){
         inDirections.clear();
         outDirections.clear();
         finishRoutes.clear();
+        wireOwnership.clear();
+        reusedSuccessor.clear();
         is_pathReused = false;
     }
 
@@ -28,18 +32,23 @@ private:
      //A* 曼哈顿距离，启发式g计算
     double heuristic(const position& a, const position& b);
     //获取当前节点的可通行区域
-    std::vector<position> getNeighbors(const position& pos);
+    std::vector<position> getNeighbors(
+        const position& pos,
+        const std::unordered_map<position, position, PositionHash>& cameFrom);
 
     //回溯获取路径
     std::vector<position> reconstructPath(const std::unordered_map<position, position, PositionHash>& cameFrom, const position& current);
     //检查node的入度和出度
     bool drcInDegreeCheck(const position& current_neighbor);
     bool isNodeCell(const position& pos) const;
+    void recordRouteOwnership(const std::vector<position>& path);
 
 private:
     GridChessboard &chessboard;
     bool isRegularClockScheme;
     double maxSearchCost;
+    bool allowInterSourceWireOverlap{true};
+    double occupiedWirePenalty{-1.0};
     position startPos;
     position goalPos;
     std::multimap<position, position> inDirections;           //存储每个节点的入度方向, node-pos
@@ -47,7 +56,16 @@ private:
 
     bool is_pathReused;
     std::vector<position> reusedPath;
+    std::unordered_map<position, position, PositionHash> reusedSuccessor;
     std::map<position, std::vector<position>> finishRoutes;  //起点唯一的路径
+
+    enum class WireOrientation
+    {
+        Horizontal,
+        Vertical,
+        Bend
+    };
+    std::map<position, std::map<position, std::set<WireOrientation>>> wireOwnership;
 };
 
 

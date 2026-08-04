@@ -1,9 +1,12 @@
 #include <QApplication>
+#include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QTimer>
 #include <QtGlobal>
+#include "ui/mainwindow/MainWindow.h"
 #include "ui/mainwindow/TabbedMainWindow.h"
 
 namespace {
@@ -123,6 +126,27 @@ QToolButton#primaryAlgorithmButton {
 QToolButton#primaryAlgorithmButton:hover {
   background-color: #1d4ed8;
   border-color: #1e40af;
+}
+QCheckBox#workspaceIoContractCheckBox {
+  background-color: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 22px;
+  font-weight: 600;
+}
+QCheckBox#workspaceIoContractCheckBox:hover {
+  background-color: #f1f5f9;
+  border-color: #94a3b8;
+}
+QCheckBox#workspaceIoContractCheckBox:checked {
+  background-color: #eaf2ff;
+  border-color: #3b82f6;
+  color: #1d4ed8;
+}
+QCheckBox#workspaceIoContractCheckBox::indicator {
+  width: 15px;
+  height: 15px;
 }
 QPushButton:focus,
 QToolButton:focus,
@@ -391,13 +415,201 @@ int main(int argc,char *argv[])
 
     TabbedMainWindow mainWindow;
     const QString screenshotPath = qEnvironmentVariable("IFCN_UI_SCREENSHOT").trimmed();
-    if (!screenshotPath.isEmpty()) {
+    const QString automaticMappingPath =
+        qEnvironmentVariable("IFCN_AUTO_MAP_FILE").trimmed();
+    const QString automaticExportPath =
+        qEnvironmentVariable("IFCN_AUTO_EXPORT_CELL_LAYOUT").trimmed();
+    const QString automaticStructure3DExportPath =
+        qEnvironmentVariable("IFCN_AUTO_EXPORT_3D_LAYOUT").trimmed();
+    const QString automaticGraphRenderPath =
+        qEnvironmentVariable("IFCN_AUTO_GRAPH_RENDER_FILE").trimmed();
+    const bool automaticIoContraction =
+        qEnvironmentVariableIntValue("IFCN_AUTO_CONTRACT_IO") != 0;
+    const bool automaticIoRestore =
+        qEnvironmentVariableIntValue("IFCN_AUTO_RESTORE_IO") != 0;
+    const bool automaticExportRequested =
+        !automaticMappingPath.isEmpty()
+        || !automaticExportPath.isEmpty()
+        || !automaticStructure3DExportPath.isEmpty();
+    const bool automaticGraphRenderRequested =
+        !automaticGraphRenderPath.isEmpty();
+    if (!screenshotPath.isEmpty() || automaticExportRequested
+        || automaticGraphRenderRequested) {
         mainWindow.resize(1600, 900);
     }
     mainWindow.show();
 
+    // Non-interactive production Compact Graph run for CI and reproducible
+    // paper assets.  The handler itself saves and maps the generated IFCN,
+    // LaTeX, and cell-level SVG artifacts.
+    if (automaticGraphRenderRequested) {
+        QTimer::singleShot(0, &mainWindow,
+            [&app, &mainWindow, automaticGraphRenderPath]() {
+                const QFileInfo sourceInfo(automaticGraphRenderPath);
+                if (!sourceInfo.isFile()
+                    || sourceInfo.suffix().compare(
+                           QStringLiteral("v"), Qt::CaseInsensitive) != 0) {
+                    qCritical() << "Cannot load Verilog source file:"
+                                << automaticGraphRenderPath;
+                    app.exit(2);
+                    return;
+                }
+
+                QFile sourceFile(sourceInfo.absoluteFilePath());
+                if (!sourceFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                    qCritical() << "Failed to read Verilog source:"
+                                << sourceInfo.absoluteFilePath();
+                    app.exit(3);
+                    return;
+                }
+                const QString sourceText =
+                    QString::fromUtf8(sourceFile.readAll());
+                MainWindow *editor = mainWindow.openVerilogSourceInNewTab(
+                    sourceText, sourceInfo.absoluteFilePath());
+                if (editor == nullptr) {
+                    qCritical() << "Failed to open Verilog source:"
+                                << sourceInfo.absoluteFilePath();
+                    app.exit(3);
+                    return;
+                }
+
+                VerilogHandler *handler = editor->graphLayoutHandler();
+                QObject::connect(
+                    handler,
+                    &VerilogHandler::operationFinished,
+                    &app,
+                    [&app](const QString &message) {
+                        qInfo() << message;
+                        app.exit(0);
+                    });
+                QObject::connect(
+                    handler,
+                    &VerilogHandler::operationFailed,
+                    &app,
+                    [&app](const QString &message) {
+                        qCritical() << message;
+                        app.exit(3);
+                    });
+                handler->runGraphRenderForFile(sourceInfo.absoluteFilePath());
+            });
+    }
+
+    // Non-interactive cell-layout export for offscreen CI and reproducible figures.
+    // Both variables are required; the normal GUI load and export paths are reused.
+    if (automaticExportRequested && !automaticGraphRenderRequested) {
+        QTimer::singleShot(0, &mainWindow,
+            [&app, &mainWindow, automaticMappingPath, automaticExportPath,
+             automaticStructure3DExportPath, automaticIoContraction,
+             automaticIoRestore, screenshotPath]() {
+                if (automaticMappingPath.isEmpty()
+                    || (automaticExportPath.isEmpty()
+                        && automaticStructure3DExportPath.isEmpty())) {
+                    qCritical() << "IFCN_AUTO_MAP_FILE and at least one automatic export path must be set together.";
+                    app.exit(2);
+                    return;
+                }
+
+                const QFileInfo inputInfo(automaticMappingPath);
+                const QString inputSuffix = inputInfo.suffix().toLower();
+                if (!inputInfo.isFile() ||
+                    (inputSuffix != QStringLiteral("ifcn") &&
+                     inputSuffix != QStringLiteral("qca"))) {
+                    qCritical() << "Cannot load cell-level source file:" << automaticMappingPath;
+                    app.exit(2);
+                    return;
+                }
+
+                const auto validateExportPath = [&app](const QString &path,
+                                                       const QString &label) {
+                    if (path.isEmpty()) {
+                        return true;
+                    }
+                    const QFileInfo outputInfo(path);
+                    const QString outputSuffix = outputInfo.suffix().toLower();
+                    if (outputSuffix != QStringLiteral("pdf")
+                        && outputSuffix != QStringLiteral("svg")) {
+                        qCritical() << label << "export path must end in .pdf or .svg:"
+                                    << path;
+                        app.exit(2);
+                        return false;
+                    }
+                    if (!QDir().mkpath(outputInfo.absolutePath())) {
+                        qCritical() << "Cannot create" << label << "export directory:"
+                                    << outputInfo.absolutePath();
+                        app.exit(2);
+                        return false;
+                    }
+                    return true;
+                };
+                if (!validateExportPath(automaticExportPath,
+                                        QStringLiteral("Cell-level"))
+                    || !validateExportPath(automaticStructure3DExportPath,
+                                           QStringLiteral("3D structure"))) {
+                    return;
+                }
+
+                MainWindow *editor = mainWindow.openFileInNewTab(
+                    inputInfo.absoluteFilePath(), false);
+                if (editor == nullptr) {
+                    qCritical() << "Failed to load cell-level layout:" << automaticMappingPath;
+                    app.exit(3);
+                    return;
+                }
+                if (automaticIoContraction) {
+                    // Exercise the same control path as a toolbar click so CI
+                    // also covers action/checkbox state rollback on no-change
+                    // layouts.
+                    editor->ioContractionCheckBox->setChecked(true);
+                    if (!editor->ioContractionCheckBox->isChecked()) {
+                        qCritical() << "IO contraction made no change for:" << automaticMappingPath;
+                        app.exit(3);
+                        return;
+                    }
+                }
+                if (automaticIoContraction && automaticIoRestore) {
+                    editor->ioContractionCheckBox->setChecked(false);
+                }
+                if (!automaticExportPath.isEmpty()) {
+                    const QFileInfo outputInfo(automaticExportPath);
+                    if (!editor->exportCellLevelLayout(outputInfo.absoluteFilePath())) {
+                        qCritical() << "Failed to export mapped cell-level layout to:"
+                                    << outputInfo.absoluteFilePath();
+                        app.exit(3);
+                        return;
+                    }
+                }
+                if (!automaticStructure3DExportPath.isEmpty()) {
+                    const QFileInfo structureInfo(automaticStructure3DExportPath);
+                    if (!editor->exportStructure3DLayout(
+                            structureInfo.absoluteFilePath())) {
+                        qCritical() << "Failed to export 3D encoded structure to:"
+                                    << structureInfo.absoluteFilePath();
+                        app.exit(3);
+                        return;
+                    }
+                }
+                if (!screenshotPath.isEmpty()) {
+                    const QFileInfo screenshotInfo(screenshotPath);
+                    QDir().mkpath(screenshotInfo.absolutePath());
+                    QCoreApplication::processEvents();
+                    mainWindow.grab().save(screenshotInfo.absoluteFilePath());
+                }
+
+                if (!automaticExportPath.isEmpty()) {
+                    qInfo() << "Cell-level layout exported to:"
+                            << QFileInfo(automaticExportPath).absoluteFilePath();
+                }
+                if (!automaticStructure3DExportPath.isEmpty()) {
+                    qInfo() << "3D encoded structure exported to:"
+                            << QFileInfo(automaticStructure3DExportPath).absoluteFilePath();
+                }
+                app.exit(0);
+            });
+    }
+
     // Opt-in visual smoke hook for offscreen CI and local theme review.
-    if (!screenshotPath.isEmpty()) {
+    if (!screenshotPath.isEmpty() && !automaticExportRequested
+        && !automaticGraphRenderRequested) {
         QTimer::singleShot(800, &mainWindow, [&app, &mainWindow, screenshotPath]() {
             const QFileInfo target(screenshotPath);
             QDir().mkpath(target.absolutePath());

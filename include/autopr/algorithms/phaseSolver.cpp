@@ -162,9 +162,31 @@ namespace fcngraph
         }
 
         std::vector<int> assignment(cross_nodes.size(), 0);
+        std::vector<std::vector<std::size_t>> constraintsByVariable(cross_nodes.size());
+        for (std::size_t constraintIndex = 0;
+             constraintIndex < constraints.size();
+             ++constraintIndex)
+        {
+            const auto &constraint = constraints[constraintIndex];
+            if (constraint.from.variable_index >= 0)
+            {
+                constraintsByVariable[static_cast<std::size_t>(
+                    constraint.from.variable_index)].push_back(constraintIndex);
+            }
+            if (constraint.to.variable_index >= 0 &&
+                constraint.to.variable_index != constraint.from.variable_index)
+            {
+                constraintsByVariable[static_cast<std::size_t>(
+                    constraint.to.variable_index)].push_back(constraintIndex);
+            }
+        }
         std::vector<int> order(cross_nodes.size());
         std::iota(order.begin(), order.end(), 0);
-        std::sort(order.begin(), order.end(), [&occurrence](int lhs, int rhs) {
+        std::sort(order.begin(), order.end(), [&occurrence, &constraintsByVariable](int lhs, int rhs) {
+            if (constraintsByVariable[lhs].size() != constraintsByVariable[rhs].size())
+            {
+                return constraintsByVariable[lhs].size() > constraintsByVariable[rhs].size();
+            }
             if (occurrence[lhs] != occurrence[rhs])
             {
                 return occurrence[lhs] > occurrence[rhs];
@@ -220,6 +242,23 @@ namespace fcngraph
             }
             return true;
         };
+        const auto variable_constraints_ok = [&constraints,
+                                              &constraintsByVariable,
+                                              &phase_of,
+                                              &has_feasible_completion](int variableIndex) {
+            for (const std::size_t constraintIndex :
+                 constraintsByVariable[static_cast<std::size_t>(variableIndex)])
+            {
+                const auto &constraint = constraints[constraintIndex];
+                const int fromPhase = phase_of(constraint.from);
+                const int toPhase = phase_of(constraint.to);
+                if (!has_feasible_completion(fromPhase, toPhase, constraint.steps))
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
 
         std::size_t visited = 0;
         const std::size_t max_visited = 32768;
@@ -259,7 +298,7 @@ namespace fcngraph
             {
                 assignment[variable_index] = phase;
                 global_phases[cross_nodes[variable_index]] = phase;
-                if (constraints_ok())
+                if (variable_constraints_ok(variable_index))
                 {
                     search(order_index + 1);
                 }

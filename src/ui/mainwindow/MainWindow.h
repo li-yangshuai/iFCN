@@ -32,6 +32,7 @@
 #include <QPair>
 #include "controllers/VerilogHandler.h"
 #include "controllers/GateLevelMapping.h"
+#include "controllers/CellLevelIoContraction.h"
 #include "ui/widgets/CustomStatusBar.h"
 
 using namespace fcngraph;
@@ -58,8 +59,13 @@ public:
         MainWindow(QWidget *parent = 0);
         ~MainWindow();
 
-        void loadFile(const QString &fileName);    //加载.qca文件
-        void mapIfcnFile(const QString &fileName, bool showStatusMessage = true); //加载.ifcn并映射
+        void loadFile(const QString &fileName,
+                      bool showStatusMessages = true);    //加载.qca文件
+        bool mapIfcnFile(const QString &fileName,
+                         bool showStatusMessage = true); //加载.ifcn并映射
+        bool exportCellLevelLayout(const QString &outputPath);
+        bool exportStructure3DLayout(const QString &outputPath);
+        VerilogHandler *graphLayoutHandler() const { return verilogHandler; }
         void centerViewOnItems(bool fitToView = true);
         void beginSceneBatchUpdate();
         void endSceneBatchUpdate(bool recenter = true);
@@ -82,6 +88,8 @@ public:
         QString verilogSourceContent() const;
         QString verilogSourcePath() const;
         void disableStartupRestore();
+        bool contractCurrentCellLevelIo();
+        bool setCellLevelIoContractionEnabled(bool enabled);
 
 public:
         void printToStatusBar(const QString &message);
@@ -140,6 +148,7 @@ public:
 
         // Placement-and-routing workflow selector.
         QToolButton *placeRouteButton = nullptr;
+        QCheckBox *ioContractionCheckBox = nullptr;
         QMenu *placeRouteMenu = nullptr;
         QToolButton *phaseCodecEncodeButton;
         QToolButton *phaseCodecCancelButton;
@@ -223,6 +232,7 @@ private:
         QAction *toggleStatusBarAction;
         QAction *captureFullScreen;
         QAction *generateCellLevelLayoutGraph;
+        QAction *contractCellLevelIoAction = nullptr;
 
         /********仿真菜单项********/
         SimulationManager *simulationManager;
@@ -260,6 +270,8 @@ private:
 
         /********初始化数据********/
         QString curFile;    //文件名存储
+        bool ioContractionRequiresSaveAs = false;
+        QString ioContractionSourceFilePath;
         QVector<QString> inputname;
         TabbedMainWindow *tabHost = nullptr;
         bool isBatchUpdating = false;
@@ -281,6 +293,15 @@ private:
             QVector<QVector<SnapshotCell>> cellsByLayer;
             QVector<QCADScene::ClockRegionRecord> clockRegions;
         };
+
+        bool ioContractionPreviewActive = false;
+        bool ioContractionOriginalWasFast = false;
+        bool ioContractionOriginalDirty = false;
+        bool preserveIoContractionPreviewOnSetCurrentFile = false;
+        QString ioContractionOriginalFilePath;
+        QVector<QVector<QCADScene::FastCellRecord>> ioContractionOriginalFastCells;
+        QVector<QCADScene::ClockRegionRecord> ioContractionOriginalClockRegions;
+        DesignSnapshot ioContractionOriginalSnapshot;
 
         struct ClipboardCell {
             SnapshotCell cell;
@@ -310,6 +331,10 @@ private:
         DesignSnapshot captureDesignSnapshot() const;
         void restoreDesignSnapshot(const DesignSnapshot &snapshot, bool markDirty);
         void resetUndoHistory();
+        void updateLayoutInfoAfterIoContraction(const CellLevelIoContractionStats &stats);
+        void restoreOriginalLayoutBeforeIoContraction();
+        void clearIoContractionPreviewState();
+        void syncIoContractionControls(bool checked);
         void updateUndoRedoActions();
         bool snapshotsEqual(const DesignSnapshot &lhs, const DesignSnapshot &rhs) const;
         bool snapshotCellsEqual(const SnapshotCell &lhs, const SnapshotCell &rhs) const;

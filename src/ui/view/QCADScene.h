@@ -75,6 +75,8 @@ public:
     QRectF fastRenderBounds() const;
     QRectF exportContentBounds() const;
     const QVector<QVector<FastCellRecord>>& fastCellsByLayer() const;
+    void replaceFastCells(const QVector<QVector<FastCellRecord>> &cellsByLayer);
+    void replaceFastClockRegions(const QVector<ClockRegionRecord> &regions);
     void setFastLayerVisible(int layer, bool visible);
     bool isFastLayerVisible(int layer) const;
     void updateFastCellPosition(int layer, int index, int x, int y);

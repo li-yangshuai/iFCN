@@ -414,6 +414,15 @@ std::vector<std::pair<int,int>> RightDownAStar::commitPath(
 std::vector<std::pair<int,int>> RightDownAStar::route(
     int srcIndex, int dstIndex, const std::pair<int,int>& fanin_dir)
 {
+    return routeWithDirs(srcIndex, dstIndex, {0, 1}, fanin_dir);
+}
+
+std::vector<std::pair<int,int>> RightDownAStar::routeWithDirs(
+    int srcIndex,
+    int dstIndex,
+    const std::pair<int,int>& fanout_dir,
+    const std::pair<int,int>& fanin_dir)
+{
     std::pair<int,int> start = board.getPlacedNodeCoord(srcIndex);
     std::pair<int,int> goal  = board.getPlacedNodeCoord(dstIndex);
 
@@ -421,6 +430,15 @@ std::vector<std::pair<int,int>> RightDownAStar::route(
     if (start == goal) return {start};
 
     if (goal.first < start.first || goal.second < start.second) {
+        return {};
+    }
+
+    if (fanout_dir != std::make_pair(1, 0) &&
+        fanout_dir != std::make_pair(0, 1)) {
+        return {};
+    }
+    if (fanin_dir != std::make_pair(-1, 0) &&
+        fanin_dir != std::make_pair(0, -1)) {
         return {};
     }
 
@@ -435,9 +453,17 @@ std::vector<std::pair<int,int>> RightDownAStar::route(
     std::pair<int,int> preGoal = { goal.first + fanin_dir.first, goal.second + fanin_dir.second };
     const bool preGoalAvailable = (preGoal == start || board.canPlaceWire(preGoal));
 
-    // --- 起点强制向下 ---
-    std::pair<int,int> firstStep = { start.first, start.second + 1 };
+    // --- 起点严格从指定的扇出端口离开 ---
+    std::pair<int,int> firstStep = {
+        start.first + fanout_dir.first,
+        start.second + fanout_dir.second
+    };
     const bool firstStepAvailable = (firstStep == goal || board.canPlaceWire(firstStep));
+
+    // 相邻节点也必须同时满足两端指定的端口，不能绕过方向约束。
+    if (firstStep == goal && preGoal != start) {
+        return {};
+    }
 
     if (preGoalAvailable && firstStepAvailable) {
         std::vector<std::pair<int,int>> directPath;

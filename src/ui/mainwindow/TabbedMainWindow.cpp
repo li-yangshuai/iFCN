@@ -267,12 +267,14 @@ void TabbedMainWindow::openNewTab()
     addEditorTab(tr("Untitled"));
 }
 
-void TabbedMainWindow::openFileInNewTab(const QString &fileName)
+MainWindow *TabbedMainWindow::openFileInNewTab(const QString &fileName,
+                                               bool showStatusMessages)
 {
     MainWindow *editor = addEditorTab(tr("Untitled"));
     editor->disableStartupRestore();
-    editor->loadFile(fileName);
+    editor->loadFile(fileName, showStatusMessages);
     updateTabTitle(editor, fileName);
+    return editor;
 }
 
 MainWindow *TabbedMainWindow::openVerilogSourceInNewTab(const QString &sourceText,

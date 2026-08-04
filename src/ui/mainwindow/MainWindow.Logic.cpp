@@ -37,14 +37,14 @@ void MainWindow::initialDesign()
     setDirty(true);
 }
 
-void MainWindow::loadFile(const QString &fileName)
+void MainWindow::loadFile(const QString &fileName, bool showStatusMessages)
 {
     scene->clearFastRender();
     scene->clearPhaseRecord();
 
     const QString suffix = QFileInfo(fileName).suffix().toLower();
     if (suffix == "ifcn" && shouldMapIfcnFile(fileName)) {
-        mapIfcnFile(fileName);
+        mapIfcnFile(fileName, showStatusMessages);
         return;
     }
 
@@ -147,11 +147,14 @@ bool MainWindow::shouldMapIfcnFile(const QString &fileName) const
     return true;
 }
 
-void MainWindow::mapIfcnFile(const QString &fileName, bool showStatusMessage)
+bool MainWindow::mapIfcnFile(const QString &fileName,
+                             bool showStatusMessage)
 {
     scene->clearFastRender();
     clearCircuitNodeHighlight();
-    gateLevelMapping->parseGateLevelMappingFile(fileName);
+    if (!gateLevelMapping->parseGateLevelMappingFile(fileName, showStatusMessage)) {
+        return false;
+    }
     setCurrentFile(fileName);
     setDirty(true);
     resetUndoHistory();
@@ -159,6 +162,13 @@ void MainWindow::mapIfcnFile(const QString &fileName, bool showStatusMessage)
         customStatusBar->addMessage(tr("Mapped %1").arg(fileName));
     }
     emit savedname(fileName);
+    return true;
+}
+
+bool MainWindow::exportCellLevelLayout(const QString &outputPath)
+{
+    return verilogHandler != nullptr
+        && verilogHandler->exportCellLevelLayout(outputPath);
 }
 
 void MainWindow::loadClockRegionsFromFile(const QString &fileName)
@@ -477,7 +487,15 @@ bool MainWindow::saveFile(const QString &fileName, bool updateCurrentFile, bool 
 
     file.close();
     if (updateCurrentFile) {
+        const bool preserveIoPreview = ioContractionPreviewActive;
+        preserveIoContractionPreviewOnSetCurrentFile = preserveIoPreview;
         setCurrentFile(fileName);
+        preserveIoContractionPreviewOnSetCurrentFile = false;
+        if (preserveIoPreview) {
+            // The optimized view is now backed by its new QCA file, while the
+            // pre-contraction source snapshot remains available to the toggle.
+            ioContractionRequiresSaveAs = false;
+        }
     }
     if (showStatus) {
         customStatusBar->addMessage(tr("Saved successfully"));
@@ -518,6 +536,9 @@ bool MainWindow::maybeSave()
 void MainWindow::setCurrentFile(const QString &fileName)
 {
     curFile = fileName;
+    if (!preserveIoContractionPreviewOnSetCurrentFile) {
+        clearIoContractionPreviewState();
+    }
     setDirty(false);
 
     QString shownName = curFile;
@@ -529,6 +550,17 @@ void MainWindow::setCurrentFile(const QString &fileName)
 
 QString MainWindow::defaultQcaSavePath() const
 {
+    if (ioContractionRequiresSaveAs) {
+        const QString sourcePath = !ioContractionSourceFilePath.isEmpty()
+            ? ioContractionSourceFilePath : curFile;
+        if (sourcePath.isEmpty() || sourcePath == tr("Unnamed")) {
+            return QStringLiteral("io_optimized.qca");
+        }
+        const QFileInfo sourceInfo(sourcePath);
+        return sourceInfo.dir().filePath(sourceInfo.completeBaseName() +
+                                         QStringLiteral("_io_optimized.qca"));
+    }
+
     if (curFile.isEmpty() || curFile == tr("Unnamed")) {
         return ".";
     }
@@ -586,7 +618,8 @@ void MainWindow::slotOpen()
 bool MainWindow::slotSave()
 {
     const QString suffix = QFileInfo(curFile).suffix().toLower();
-    if(curFile.isEmpty() || curFile == tr("Unnamed") || suffix == "ifcn")
+    if(ioContractionRequiresSaveAs || curFile.isEmpty() ||
+       curFile == tr("Unnamed") || suffix == "ifcn")
         return slotSaveAs();
     else
         return saveFile(curFile);
@@ -594,11 +627,27 @@ bool MainWindow::slotSave()
 
 bool MainWindow::slotSaveAs()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, tr("文件另存为"), defaultQcaSavePath(), tr("QCA files (*.qca);;All file (*)"));
-    if(fileName.isEmpty())
-        return false;
-    if(!fileName.toLower().endsWith(".qca"))
-        fileName += ".qca";
+    QString fileName;
+    while (true) {
+        fileName = QFileDialog::getSaveFileName(
+            this, tr("文件另存为"), defaultQcaSavePath(),
+            tr("QCA files (*.qca);;All file (*)"));
+        if(fileName.isEmpty())
+            return false;
+        if(!fileName.toLower().endsWith(".qca"))
+            fileName += ".qca";
+
+        if ((!ioContractionPreviewActive && !ioContractionRequiresSaveAs) ||
+            ioContractionSourceFilePath.isEmpty() ||
+            QFileInfo(fileName).absoluteFilePath() !=
+                QFileInfo(ioContractionSourceFilePath).absoluteFilePath()) {
+            break;
+        }
+        QMessageBox::warning(
+            this,
+            tr("Save IO-optimized layout"),
+            tr("The IO-optimized layout must be saved as a new .qca file; the source layout will not be overwritten."));
+    }
     
     emit savedname(fileName);
     qDebug() << "fileName:" << fileName;

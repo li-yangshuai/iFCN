@@ -331,40 +331,41 @@ void MainWindow::createActions()
 
     placeRouteMenu = new QMenu(tr("Place && Route"), this);
 
-    auto *universalAction = placeRouteMenu->addAction(tr("Universal AI P&&R (recommended)"));
-    universalAction->setStatusTip(tr("Run the trained memory-enabled GCN+RL agent under stochastic clocks"));
-    connect(universalAction, &QAction::triggered,
-            verilogHandler, &VerilogHandler::handleGcnRlLayout);
+    placeRouteMenu->addSection(tr("Layout && Routing"));
 
-    placeRouteMenu->addSeparator();
     auto *heuristicAction = placeRouteMenu->addAction(tr("Heuristic P&&R"));
     heuristicAction->setStatusTip(tr("Run heuristic placement and routing"));
     connect(heuristicAction, &QAction::triggered,
             verilogHandler, &VerilogHandler::handleParseVerilogFile);
 
-    auto *graphAction = placeRouteMenu->addAction(tr("Compact Graph P&&R"));
-    graphAction->setStatusTip(tr("Run compact graph-based placement and routing"));
-    connect(graphAction, &QAction::triggered,
-            verilogHandler, &VerilogHandler::handleGraphRender);
-
-    auto *normalGraphAction = placeRouteMenu->addAction(tr("Normal Graph P&&R"));
-    normalGraphAction->setStatusTip(tr("Run normal graph-draw placement and routing"));
+    auto *normalGraphAction = placeRouteMenu->addAction(tr("2DDWave Fixed-Clock P&&R"));
+    normalGraphAction->setStatusTip(
+        tr("Run Normal Graph Draw under the fixed, full-coverage 2DDWave clock template"));
     connect(normalGraphAction, &QAction::triggered,
             verilogHandler, &VerilogHandler::handleNormalGraphDrawLayout);
 
+    auto *graphAction = placeRouteMenu->addAction(tr("Compact Graph Draw P&&R (recommended)"));
+    graphAction->setStatusTip(
+        tr("Run area-first graph drawing, integrated phase-aware routing, and legality-checked compaction"));
+    connect(graphAction, &QAction::triggered,
+            verilogHandler, &VerilogHandler::handleGraphRender);
+
     placeRouteButton = new QToolButton(this);
     placeRouteButton->setObjectName(QStringLiteral("primaryAlgorithmButton"));
-    placeRouteButton->setDefaultAction(universalAction);
-    placeRouteButton->setText(tr("Universal AI P&&R"));
+    placeRouteButton->setDefaultAction(graphAction);
+    placeRouteButton->setText(tr("Compact Graph Draw"));
     placeRouteButton->setMenu(placeRouteMenu);
     placeRouteButton->setPopupMode(QToolButton::MenuButtonPopup);
     placeRouteButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     placeRouteButton->setMinimumWidth(156);
-    placeRouteButton->setToolTip(tr("Run Universal AI P&R; use the arrow for classic algorithms"));
+    placeRouteButton->setToolTip(tr("Run Compact Graph Draw; use the arrow for Heuristic or fixed-clock 2DDWave P&R"));
     connect(verilogHandler, &VerilogHandler::operationStarted,
             placeRouteButton, [this](const QString &, const QString &) {
         if (placeRouteButton != nullptr) {
             placeRouteButton->setEnabled(false);
+        }
+        if (placeRouteMenu != nullptr) {
+            placeRouteMenu->menuAction()->setEnabled(false);
         }
     });
     connect(verilogHandler, &VerilogHandler::operationFinished,
@@ -372,11 +373,17 @@ void MainWindow::createActions()
         if (placeRouteButton != nullptr) {
             placeRouteButton->setEnabled(true);
         }
+        if (placeRouteMenu != nullptr) {
+            placeRouteMenu->menuAction()->setEnabled(true);
+        }
     });
     connect(verilogHandler, &VerilogHandler::operationFailed,
             placeRouteButton, [this](const QString &) {
         if (placeRouteButton != nullptr) {
             placeRouteButton->setEnabled(true);
+        }
+        if (placeRouteMenu != nullptr) {
+            placeRouteMenu->menuAction()->setEnabled(true);
         }
     });
 
@@ -384,6 +391,15 @@ void MainWindow::createActions()
     generateCellLevelLayoutGraph = new QAction(QIcon(QDir::toNativeSeparators(":/cameraColor.png")), tr("Save cell-level layout"), this);
     generateCellLevelLayoutGraph->setStatusTip(tr("Save cell-level layout as SVG or cropped PDF"));
     connect(generateCellLevelLayoutGraph, &QAction::triggered, verilogHandler, &VerilogHandler::generateSVG);
+
+    contractCellLevelIoAction = new QAction(tr("Contract Cell-level IO"), this);
+    contractCellLevelIoAction->setCheckable(true);
+    contractCellLevelIoAction->setStatusTip(
+        tr("Toggle reversible IO contraction for the current cell-level layout"));
+    connect(contractCellLevelIoAction, &QAction::toggled,
+            this, [this](bool checked) {
+                setCellLevelIoContractionEnabled(checked);
+            });
 }
 
 void MainWindow::createMenus()
@@ -421,6 +437,8 @@ void MainWindow::createMenus()
         toolsMenu->addMenu(placeRouteMenu);
         toolsMenu->addSeparator();
     }
+    toolsMenu->addAction(contractCellLevelIoAction);
+    toolsMenu->addSeparator();
     if (verilogSourceDock != nullptr ||
         circuitSchematicDock != nullptr ||
         phaseCodecDock != nullptr ||
@@ -497,6 +515,16 @@ void MainWindow::createToolBars()
     connect(structureButton, &QToolButton::clicked,
             this, &MainWindow::showStructure3DView);
 
+    ioContractionCheckBox = new QCheckBox(tr("IO Contract"), this);
+    ioContractionCheckBox->setObjectName(QStringLiteral("workspaceIoContractCheckBox"));
+    ioContractionCheckBox->setToolTip(
+        tr("Checked: contract IO stems and remove obsolete crossovers; unchecked: restore the original layout"));
+    ioContractionCheckBox->setMinimumWidth(100);
+    connect(ioContractionCheckBox, &QCheckBox::toggled,
+            this, [this](bool checked) {
+                setCellLevelIoContractionEnabled(checked);
+            });
+
     /******** central workspace toolbar *********/
     addToolBarBreak(Qt::TopToolBarArea);
     workspaceTool = addToolBar("Workspace");
@@ -506,6 +534,7 @@ void MainWindow::createToolBars()
     workspaceTool->setMovable(false);
     workspaceTool->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     workspaceTool->addWidget(placeRouteButton);
+    workspaceTool->addWidget(ioContractionCheckBox);
     workspaceTool->addSeparator();
     workspaceTool->addWidget(viewLabel);
     workspaceTool->addWidget(selectModeButton);

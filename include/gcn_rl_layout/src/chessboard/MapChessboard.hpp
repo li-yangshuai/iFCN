@@ -408,7 +408,6 @@ public:
                 << "\\begin{tikzpicture}[\n"
                 << "scale=0.5,transform shape,\n"
                 << "cell/.style={rectangle, minimum size=1cm, inner sep=0pt, text width=1cm, align=left},\n"
-                << "c-1/.style={cell, fill=white, text=black},\n"
                 << "c0/.style={cell, fill=lightgray!50, text=black},\n"
                 << "c1/.style={cell, fill=lightgray, text=black},\n"
                 << "c2/.style={cell, fill=gray, text=black},\n"
@@ -420,7 +419,7 @@ public:
                 << "]\n";
 
 
-        //只获取放置node的版图，对版图的坐标进行平移
+        // Normalize the complete placed-and-routed layout rectangle for drawing.
         auto [minX, minY, maxX, maxY] = mapChessboard.findLayoutBoard();
 
         if(maxX < minX || maxY < minY) {
@@ -432,7 +431,7 @@ public:
 
         int gridHeight = maxY - minY + 1;
 
-        //下面遍历的时候，只遍历[minX, minY]到[maxX, maxY]的区域，且所有的x和y坐标都要减去 minX和minY
+        // Cover every tile in [minX,maxX] x [minY,maxY].
         int offsetX = minX, offsetY = minY;
 
         // 绘制网格
@@ -442,13 +441,9 @@ public:
                 const int drawY = gridHeight - (y - offsetY) - 1;
 
                 const std::pair<int, int> coord{x, y};
-                const auto cellIt = mapChessboard.gridMap.find(coord);
-                const bool isUsedCell = cellIt != mapChessboard.gridMap.end() && !cellIt->second.isEmpty();
-                if (!isUsedCell) {
-                    texFile << "\\node[c-1] at (" << drawX << "," << drawY << "){\\phasecell{null}};\n";
-                    continue;
-                }
-
+                // A clock layout describes the complete rectangular substrate, not only
+                // occupied routing cells.  Unused tiles therefore inherit the fixed
+                // 2DDWave phase instead of being emitted as phase-less "null" tiles.
                 int val = mapChessboard.getPhase(coord);
                 if (val < 0) {
                     val = mapChessboard.getTDDPhaseAtCoord(coord);

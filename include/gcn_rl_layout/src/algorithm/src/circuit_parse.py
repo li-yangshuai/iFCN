@@ -2,7 +2,22 @@ import os
 
 from lib import iFCN_Lab
 import torch
-from torch_geometric.data import Data
+
+
+def _pyg_data_type():
+    """Load PyG only for the legacy GCN path.
+
+    The fixed-clock OGDF flow uses the parser topology directly and must not
+    require torch-geometric merely to construct a placement.
+    """
+    try:
+        from torch_geometric.data import Data
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "torch-geometric is required only when the legacy GCN crossing "
+            "orderer is selected"
+        ) from exc
+    return Data
 
 
 class CircuitParser:
@@ -112,6 +127,7 @@ class CircuitParser:
         """
         构建 PyTorch Geometric 的图数据对象
         """
+        Data = _pyg_data_type()
         nodes = self.effective_nodes
         layerNodes = self.layer_nodes
         total_layers = self.total_layers
@@ -220,6 +236,7 @@ class CircuitParser:
         构建极简化的 PyTorch Geometric 图数据对象，仅保留逻辑门类型和所在层级。
         保证特征维度为固定的 9 维（8 种门类型 one-hot + 1 维层级归一化）。
         """
+        Data = _pyg_data_type()
         nodes = self.effective_nodes
         layer_nodes = self.layer_nodes
         total_layers = self.total_layers

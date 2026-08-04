@@ -6,24 +6,39 @@ from src.gcn_model_less_node import (
     visualize_layered_graph_sorted,
     strict_right_down_layout_max_fanin_right,
 )
+from src.negotiated_router import MonotoneNegotiatedRouter, RouteRequest
 import numpy as np
-from sklearn.cluster import KMeans
 from collections import defaultdict
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.cm as cm
+    import matplotlib.colors as mcolors
+    import matplotlib.pyplot as plt
+except ModuleNotFoundError:
+    cm = None
+    mcolors = None
+    plt = None
 from lib import iFCN_Lab
 import torch
 import os
 
 class NormalGraphDraw:
-    def __init__(self, v_file_path, save_training_curve=True):
-        
+    def __init__(self, v_file_path, save_training_curve=True, crossing_orderer="ogdf"):
+        self.crossing_orderer = str(crossing_orderer).strip().lower()
+        if self.crossing_orderer not in {"ogdf", "gcn"}:
+            raise ValueError(f"Unsupported crossing orderer: {crossing_orderer}")
+
         self.parse = CircuitParser(v_file_path)
-        self.data = self.parse.build_pyg_data()
+        # The desktop Normal Graph flow is deliberately non-neural.  Building
+        # PyG tensors is retained only for an explicit legacy GCN comparison.
+        self.data = (
+            self.parse.build_pyg_data()
+            if self.crossing_orderer == "gcn"
+            else None
+        )
 
         (
-        self.embeddings, self.barycenter_opt_layers, self.crossings_per_layer, self.edges
+        self.embeddings, self.barycenter_opt_layers, self.crossings_per_layer, self.edges,
+        self.crossing_order_metrics,
         ) = normal_graph_generate_2ddwave(
              self.data, 
              self.parse.layer_nodes, 
@@ -31,7 +46,9 @@ class NormalGraphDraw:
              self.parse.node_to_index,
              self.parse.filePath,
              save_training_curve=save_training_curve,
+             crossing_orderer=self.crossing_orderer,
         )
+        self._save_training_curve = bool(save_training_curve)
         
         # Normal flow under the 2DDWave template:
         # route first, then verify template consistency and materialize template phases.
@@ -50,7 +67,33 @@ class NormalGraphDraw:
                 self.routing_padding,
                 self.max_same_phase,
             )
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Auto uses negotiated routing for the regression-covered small/medium
+        # range and the proven monotone direct/DP backend for larger graphs.
+        requested_router = os.environ.get("IFCN_NORMAL_ROUTER", "auto")
+        self.set_router_mode(requested_router)
+        self.negotiated_max_tracks = max(
+            2, int(os.environ.get("IFCN_NORMAL_ROUTER_TRACKS", "10"))
+        )
+        self.negotiated_max_iterations = max(
+            1, int(os.environ.get("IFCN_NORMAL_ROUTER_ITERS", "24"))
+        )
+        # GateLevelMapping supports a bounded orthogonal crossover between two
+        # straight source trees.  Same-source fanout branches may share their
+        # trunk, while parallel overlaps, turns and three-source collisions are
+        # rejected by the negotiated router.
+        allow_crossovers = os.environ.get(
+            "IFCN_NORMAL_ROUTER_CROSSOVERS", "1"
+        ).strip().lower()
+        self.negotiated_allow_crossovers = allow_crossovers not in {
+            "0", "false", "off", "no"
+        }
+        self.last_negotiated_metrics = {}
+        self.last_negotiated_conflicts = []
+        self.last_route_overlap_conflicts = []
+        # Placement coordinates are small integer tensors and use no neural
+        # kernels. Keeping them on CPU avoids CUDA startup overhead and GPU
+        # architecture mismatches (for example a wheel without sm_120).
+        self.device = "cpu"
         self._node_id_to_idx = {}
         self._node_coord = {}
         self._coord_set = set()
@@ -71,7 +114,31 @@ class NormalGraphDraw:
         self.phase_assignment_ok = False
         self.phase_conflict_count = 0
         self.last_failed_pairs = {}
+        self.last_port_direction_violations = []
         self._stage_snapshot_counter = 0
+        self._stage_snapshot_dir = None
+        self._stage_snapshot_last_tex = None
+        self._stage_initial_route_recorded = False
+        self._stage_conflict_repair_recorded = False
+
+    def set_router_mode(self, requested_mode):
+        requested = str(requested_mode).strip().lower()
+        if requested not in {"auto", "negotiated", "legacy"}:
+            raise ValueError(f"Unsupported normal-graph router: {requested_mode}")
+        self.router_mode_requested = requested
+        if requested == "auto":
+            # Small/medium graphs use the negotiated backend so illegal overlap
+            # is diagnosed explicitly. Large graphs still use the proven
+            # direct/DP backend until sparse track assignment is implemented for
+            # high-cutwidth channels.
+            self.router_mode = (
+                "negotiated"
+                if int(self.parse.effective_edges_num) <= 128
+                else "legacy"
+            )
+        else:
+            self.router_mode = requested
+        return self.router_mode
 
     def _sync_legacy_phase_status(self):
         # Backward compatibility for older scripts that still read phase_* fields.
@@ -222,9 +289,28 @@ class NormalGraphDraw:
         with open(tex_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
 
+    def _prepare_stage_snapshots(self, snapshot_dir):
+        self._stage_snapshot_counter = 0
+        self._stage_snapshot_last_tex = None
+        self._stage_initial_route_recorded = False
+        self._stage_conflict_repair_recorded = False
+        self._stage_snapshot_dir = os.path.abspath(snapshot_dir) if snapshot_dir else None
+        if not self._stage_snapshot_dir:
+            return
+
+        os.makedirs(self._stage_snapshot_dir, exist_ok=True)
+        circuit_stem = os.path.splitext(self.parse.fileName)[0]
+        prefix = f"{circuit_stem}_"
+        # A rerun may produce a different number of frames. Remove only this
+        # circuit's generated TeX frames so stale snapshots are not mistaken
+        # for part of the new optimization trajectory.
+        for entry in os.listdir(self._stage_snapshot_dir):
+            if entry.startswith(prefix) and entry.endswith(".tex"):
+                os.remove(os.path.join(self._stage_snapshot_dir, entry))
+
     def _snapshot_stage_tex(self, snapshot_dir, stage_name, failed_pairs=None):
         if not snapshot_dir:
-            return
+            return False
         os.makedirs(snapshot_dir, exist_ok=True)
         idx = int(self._stage_snapshot_counter)
         safe_stage = "".join(
@@ -233,10 +319,47 @@ class NormalGraphDraw:
         )
         circuit_stem = os.path.splitext(self.parse.fileName)[0]
         filename = f"{circuit_stem}_{idx:02d}_{safe_stage}"
-        self._stage_snapshot_counter += 1
         iFCN_Lab.MapChessboard.outputTexFile(self.mapChessboard, filename, snapshot_dir)
         tex_path = os.path.join(snapshot_dir, f"{filename}.tex")
         self._highlight_failed_endpoints_in_tex(tex_path, failed_pairs)
+        with open(tex_path, "r", encoding="utf-8") as f:
+            rendered_tex = f.read()
+        if rendered_tex == self._stage_snapshot_last_tex:
+            os.remove(tex_path)
+            return False
+        self._stage_snapshot_last_tex = rendered_tex
+        self._stage_snapshot_counter += 1
+        return True
+
+    def _snapshot_routing_change(self, stage_name, failed_pairs=None):
+        snapshot_dir = getattr(self, "_stage_snapshot_dir", None)
+        if not snapshot_dir:
+            return False
+        return self._snapshot_stage_tex(
+            snapshot_dir,
+            stage_name,
+            failed_pairs=failed_pairs,
+        )
+
+    def _snapshot_initial_routing(self, failed_pairs):
+        if getattr(self, "_stage_initial_route_recorded", False):
+            return False
+        self._stage_initial_route_recorded = True
+        return self._snapshot_routing_change(
+            f"stage3_initial_routing_failed_{len(failed_pairs or {})}",
+            failed_pairs=failed_pairs,
+        )
+
+    def _snapshot_conflict_repair_placement(self, failed_pairs):
+        if getattr(self, "_stage_conflict_repair_recorded", False):
+            return False
+        self._stage_conflict_repair_recorded = True
+        self.place_all_nodes_on_chessboard()
+        return self._snapshot_routing_change(
+            "stage4_conflict_repair_expanded_placement_"
+            f"failed_{len(failed_pairs or {})}",
+            failed_pairs=failed_pairs,
+        )
 
     # Backward-compatible alias: stage snapshots now export tex layouts instead of heatmaps.
     def _snapshot_stage_heatmap(self, snapshot_dir, stage_name, failed_pairs=None):
@@ -358,6 +481,9 @@ class NormalGraphDraw:
 
         # 4. 基于粗略位置计算扇入方向
         self.fanin_directions = self.get_fanin_directions()
+        # 所有从同一逻辑门离开的边共用一个扇出端口，避免把门级扇出
+        # 错当成可以从多个方向任意起步的普通线网。
+        self.fanout_directions = self.get_fanout_directions()
 
     
     # 对fanin数量大于2的node，获取fanin的坐标x大小，
@@ -403,6 +529,35 @@ class NormalGraphDraw:
 
         return fanin_directions
 
+    def get_fanout_directions(self):
+        """为每个源逻辑门分配唯一的右/下扇出端口。
+
+        同层目标必须向右起步，同列目标必须向下起步；两者都可行时
+        优先向下，以保持原有 2DDWave 层间布线偏好。
+        """
+        self._ensure_coord_cache()
+        directions = {}
+        for src in self.node_ids.detach().cpu().tolist():
+            src = int(src)
+            fanouts = [
+                int(dst) for dst in self.parse.get_fanouts(src)
+                if int(dst) in self._node_id_to_idx
+            ]
+            if not fanouts:
+                continue
+            src_x, src_y = self.get_node_coord(src)
+            can_down = all(self.get_node_coord(dst)[1] > src_y for dst in fanouts)
+            can_right = all(self.get_node_coord(dst)[0] > src_x for dst in fanouts)
+            if can_down:
+                directions[src] = (0, 1)
+            elif can_right:
+                directions[src] = (1, 0)
+            else:
+                # 没有一个共用端口能够保持所有扇出边右/下单调。
+                # 保留 None，后续布线将其作为硬约束失败并触发重布局。
+                directions[src] = None
+        return directions
+
 
     # 虚拟布局：从self.coord中查找某个坐标有没有node
     def has_node_at_coord(self, coord) -> bool:
@@ -415,6 +570,8 @@ class NormalGraphDraw:
         """
         向下移动整行 (r 以及以下所有行),y 坐标整体 +delta
         """
+        if int(delta) == 0:
+            return
         mask = self.coords[:, 1] >= r
         self.coords[mask, 1] += delta
         self._coord_cache_dirty = True
@@ -424,6 +581,8 @@ class NormalGraphDraw:
         """
         向右移动整列 (c 以及右边所有列),x 坐标整体 +delta
         """
+        if int(delta) == 0:
+            return
         mask = self.coords[:, 0] >= c
         self.coords[mask, 0] += delta
         self._coord_cache_dirty = True
@@ -462,6 +621,7 @@ class NormalGraphDraw:
 
     def _refresh_fanin_directions_for_current_coords(self):
         self.fanin_directions = self.get_fanin_directions()
+        self.fanout_directions = self.get_fanout_directions()
 
     def _line_span(self, axis: str):
         self._ensure_coord_cache()
@@ -523,6 +683,13 @@ class NormalGraphDraw:
             self._sync_legacy_phase_status()
             return False
 
+        ports_ok, _, _ = self.validate_gate_port_directions()
+        if not ports_ok:
+            self.clock_template_ok = False
+            self.clock_template_conflict_count = 0
+            self._sync_legacy_phase_status()
+            return False
+
         template_ok, _ = self.verify_clock_template_consistency(verbose=verbose)
         return bool(template_ok)
 
@@ -532,7 +699,17 @@ class NormalGraphDraw:
 
         prev_coords = self.coords.clone()
         prev_fanin_directions = dict(self.fanin_directions)
-
+        prev_fanout_directions = dict(self.fanout_directions)
+        prev_negotiated_metrics = dict(self.last_negotiated_metrics)
+        prev_negotiated_conflicts = list(self.last_negotiated_conflicts)
+        prev_route_overlap_conflicts = list(self.last_route_overlap_conflicts)
+        prev_failed_pairs = dict(self.last_failed_pairs)
+        prev_routes = {
+            (int(node_pair[0]), int(node_pair[1])): [
+                (int(coord[0]), int(coord[1])) for coord in path
+            ]
+            for node_pair, path in self.mapChessboard.nodePairRoutes.items()
+        }
         if axis == "x":
             self.move_cols_left_after(int(cut), 1)
         elif axis == "y":
@@ -545,7 +722,51 @@ class NormalGraphDraw:
 
         self.coords = prev_coords
         self._coord_cache_dirty = True
+        # A rejected cut must be an atomic transaction: restore not only node
+        # coordinates but also the exact previously legal physical routes. A
+        # fresh A* reroute is not a valid rollback because route ordering can
+        # select another path and fail even at the original coordinates.
+        self.place_all_nodes_on_chessboard()
+        # ``place_all_nodes_on_chessboard`` derives fresh preferred ports.  A
+        # completed route may have legally selected its alternate input port,
+        # so restore the exact committed assignments after node placement.
         self.fanin_directions = prev_fanin_directions
+        self.fanout_directions = prev_fanout_directions
+        # ``savePath`` only restores route metadata; it does not repopulate the
+        # chessboard cells.  Restore every physical wire cell exactly once so
+        # shared fanout prefixes do not consume capacity multiple times.
+        node_coords = set(self._node_coord.values())
+        wire_coords = {
+            tuple(coord)
+            for path in prev_routes.values()
+            for coord in path[1:-1]
+            if tuple(coord) not in node_coords
+        }
+        for coord in sorted(wire_coords, key=lambda point: (point[1], point[0])):
+            if not self.mapChessboard.canPlaceWire(coord):
+                raise RuntimeError(
+                    f"Compaction rollback could not restore wire cell {coord} "
+                    f"after rejecting {axis}-cut {cut}."
+                )
+            self.mapChessboard.placeWire(coord)
+        for node_pair, path in prev_routes.items():
+            self.mapChessboard.savePath(node_pair, path)
+        ports_ok, port_violations, _ = self.validate_gate_port_directions()
+        template_ok, template_conflicts = self.verify_clock_template_consistency(verbose=False)
+        if not ports_ok or not template_ok:
+            raise RuntimeError(
+                f"Compaction rollback failed after rejecting {axis}-cut {cut}; "
+                f"port_violations={len(port_violations)}, "
+                f"template_conflicts={len(template_conflicts)}; refusing to "
+                "continue with a potentially illegal board."
+            )
+        # Diagnostic state belongs to the accepted route transaction too.  A
+        # rejected cut may have recorded a partial reroute; do not publish those
+        # stale failure counts for the restored legal layout.
+        self.last_negotiated_metrics = prev_negotiated_metrics
+        self.last_negotiated_conflicts = prev_negotiated_conflicts
+        self.last_route_overlap_conflicts = prev_route_overlap_conflicts
+        self.last_failed_pairs = prev_failed_pairs
         return False, None
 
     def compact_layout(self, max_iters=8, verbose=False):
@@ -580,7 +801,17 @@ class NormalGraphDraw:
             if not improved:
                 break
 
-        self._reroute_and_validate_current_coords(verbose=False)
+        # Every accepted cut has already produced and validated a concrete
+        # route set, while every rejected cut restores the prior one exactly.
+        # Do not perform one more order-dependent global reroute here: it can
+        # discard a legal compacted solution and choose a different failing
+        # path at identical coordinates.
+        ports_ok, _, _ = self.validate_gate_port_directions()
+        template_ok, _ = self.verify_clock_template_consistency(verbose=False)
+        if not ports_ok or not template_ok:
+            raise RuntimeError(
+                "Final post-compaction legality check failed; refusing to export the layout."
+            )
         return reductions
 
     # 获取虚拟节点坐标
@@ -603,7 +834,9 @@ class NormalGraphDraw:
     """
     def caculate_ports_reservation(self):
         self.reserve_fanin_ports()
+        self._refresh_fanin_directions_for_current_coords()
         self.reserve_fanout_ports()
+        self._refresh_fanin_directions_for_current_coords()
 
 
     def reserve_fanout_ports(self):
@@ -622,20 +855,11 @@ class NormalGraphDraw:
                     continue
 
                 x, y = self.get_node_coord(int(nid_t))
-                # 如果扇出数量是1，从self.coords中获取当前的坐标，然后检查下方有没有node，如果有插入1行
-                if fanout_count == 1:
-                    #说明只有1个扇出，如果扇出node的坐标不在当前node层级的正下方，就要插入一行
-                    fanout_id = fanouts[0]
-                    fanout_x, fanout_y = self.get_node_coord(int(fanout_id))
-                    # 如果扇出node在下方但是不是正下方, 不管下方有没有node都要插入1行
-                    if fanout_y == y + 1 and x != fanout_x and self.has_node_at_coord((x , y + 1)):
-                        self.move_row_down(y + 1, 1)
-                elif fanout_count > 1:
-                    # 多扇出时至少预留一个向下分叉点，必要时再向右预留扩展空间。
-                    if self.has_node_at_coord((x , y + 1)):
-                        self.move_row_down(y+1 , 1)
-                    if self.has_node_at_coord((x + 1, y)):
-                        self.move_col_right(x+1 , 1)
+                direction = self.fanout_directions.get(int(nid_t))
+                if direction == (0, 1) and self.has_node_at_coord((x, y + 1)):
+                    self.move_row_down(y + 1, 1)
+                elif direction == (1, 0) and self.has_node_at_coord((x + 1, y)):
+                    self.move_col_right(x + 1, 1)
 
     # 根据获取到的扇入方向，为布线node预留扇入口
     def reserve_fanin_ports(self):
@@ -675,6 +899,8 @@ class NormalGraphDraw:
         """
         遍历 GPU 张量里的坐标，把节点放置到 mapChessboard
         """
+        # 重布局/压缩后几何可达性可能改变，每次全量重布线前重新固定两端端口。
+        self._refresh_fanin_directions_for_current_coords()
         self.clearMapChessboard()
         self._ensure_coord_cache()
         for node_id, (x, y) in self._node_coord.items():
@@ -691,38 +917,68 @@ class NormalGraphDraw:
             return (-1, 0)
         return (0, -1)
 
-    def _route_edge(self, src, dst, direction):
+    def _route_edge(self, src, dst, fanout_direction, fanin_direction):
         src = int(src)
         dst = int(dst)
-        direction = (int(direction[0]), int(direction[1]))
+        fanout_direction = (int(fanout_direction[0]), int(fanout_direction[1]))
+        fanin_direction = (int(fanin_direction[0]), int(fanin_direction[1]))
         if self._uses_right_down_astar:
-            return self.astar.route(src, dst, direction)
+            return self.astar.route_with_dirs(src, dst, fanout_direction, fanin_direction)
         path = self.astar.route_with_dirs(
             src,
             dst,
-            0,
-            1,
-            direction[0],
-            direction[1],
+            fanout_direction[0],
+            fanout_direction[1],
+            fanin_direction[0],
+            fanin_direction[1],
             True,
             True,
         )
         if path:
             return path
-        return self.astar.route(src, dst)
+        # 端口是硬约束；带方向的路由失败后不得回退到无端口约束布线。
+        return []
 
-    def _route_edge_with_direction_options(self, src, dst, preferred_direction):
+    def _route_edge_with_direction_options(
+        self,
+        src,
+        dst,
+        fanout_direction,
+        preferred_direction,
+        forbidden_directions=None,
+    ):
         preferred_direction = (int(preferred_direction[0]), int(preferred_direction[1]))
+        forbidden = {
+            (int(direction[0]), int(direction[1]))
+            for direction in (forbidden_directions or ())
+            if direction is not None
+        }
         directions = [preferred_direction]
         alternate = self._alternate_direction(preferred_direction)
         if alternate not in directions:
             directions.append(alternate)
 
         for direction in directions:
-            path = self._route_edge(src, dst, direction)
+            if direction in forbidden:
+                continue
+            path = self._route_edge(src, dst, fanout_direction, direction)
             if path:
                 return path, direction
         return [], preferred_direction
+
+    def _reserved_fanin_directions(self, src, dst):
+        """Input ports already owned by other fanins of ``dst``.
+
+        A physical gate input is exclusive.  In particular, fallback routing
+        may not move one edge onto the top/left port assigned to another edge.
+        """
+        src, dst = int(src), int(dst)
+        reserved = set()
+        for (other_src, other_dst), direction in self.fanin_directions.items():
+            if int(other_dst) != dst or int(other_src) == src or direction is None:
+                continue
+            reserved.add((int(direction[0]), int(direction[1])))
+        return reserved
 
     def _alternate_direction(self, direction):
         d = (int(direction[0]), int(direction[1]))
@@ -730,20 +986,31 @@ class NormalGraphDraw:
             return (0, -1)
         return (-1, 0)
 
-    def _route_endpoint_coords(self, src, dst, direction):
+    def _route_endpoint_coords(self, src, dst, fanout_direction, fanin_direction):
         src_x, src_y = self.get_node_coord(src)
         dst_x, dst_y = self.get_node_coord(dst)
-        dx, dy = int(direction[0]), int(direction[1])
-        first_step = (src_x, src_y + 1)
+        out_dx, out_dy = int(fanout_direction[0]), int(fanout_direction[1])
+        dx, dy = int(fanin_direction[0]), int(fanin_direction[1])
+        first_step = (src_x + out_dx, src_y + out_dy)
         pre_goal = (dst_x + dx, dst_y + dy)
         return (src_x, src_y), (dst_x, dst_y), first_step, pre_goal
 
     def _is_launch_blocked(self, src, dst, direction):
-        (_, _), (dst_x, dst_y), first_step, _ = self._route_endpoint_coords(src, dst, direction)
+        fanout_direction = self.fanout_directions.get(int(src))
+        if fanout_direction is None:
+            return True
+        (_, _), (dst_x, dst_y), first_step, _ = self._route_endpoint_coords(
+            src, dst, fanout_direction, direction
+        )
         return first_step != (dst_x, dst_y) and not self.mapChessboard.canPlaceWire(first_step)
 
     def _is_sink_blocked(self, src, dst, direction):
-        (src_x, src_y), (_, _), _, pre_goal = self._route_endpoint_coords(src, dst, direction)
+        fanout_direction = self.fanout_directions.get(int(src))
+        if fanout_direction is None:
+            return True
+        (src_x, src_y), (_, _), _, pre_goal = self._route_endpoint_coords(
+            src, dst, fanout_direction, direction
+        )
         return pre_goal != (src_x, src_y) and not self.mapChessboard.canPlaceWire(pre_goal)
 
     def _route_priority_key(self, pair):
@@ -758,6 +1025,95 @@ class NormalGraphDraw:
         horizontal_span = abs(dst_x - src_x)
         vertical_span = max(0, dst_y - src_y)
         return (-fanout_count, -horizontal_span, -vertical_span, src, dst)
+
+    @staticmethod
+    def _path_endpoint_directions(path):
+        if path is None or len(path) < 2:
+            return None, None
+        start = (int(path[0][0]), int(path[0][1]))
+        second = (int(path[1][0]), int(path[1][1]))
+        before_goal = (int(path[-2][0]), int(path[-2][1]))
+        goal = (int(path[-1][0]), int(path[-1][1]))
+        fanout = (second[0] - start[0], second[1] - start[1])
+        # 这里用“端口所在方向”而不是信号行进方向表示扇入。
+        fanin = (before_goal[0] - goal[0], before_goal[1] - goal[1])
+        return fanout, fanin
+
+    def validate_gate_port_directions(self):
+        """Validate endpoint directions and exclusive physical gate ports."""
+        incoming = defaultdict(set)
+        incoming_port_edges = defaultdict(set)
+        outgoing = defaultdict(set)
+        incident_edges = defaultdict(set)
+        violations = []
+        bad_edges = set()
+
+        for node_pair, path in self.mapChessboard.nodePairRoutes.items():
+            src, dst = int(node_pair[0]), int(node_pair[1])
+            edge = (src, dst)
+            actual_out, actual_in = self._path_endpoint_directions(path)
+            expected_out = self.fanout_directions.get(src)
+            expected_in = self.fanin_directions.get(edge)
+            incident_edges[src].add(edge)
+            incident_edges[dst].add(edge)
+
+            if actual_out is None or actual_in is None:
+                violations.append((edge, "path has no physical endpoint step"))
+                bad_edges.add(edge)
+                continue
+            outgoing[src].add(actual_out)
+            incoming[dst].add(actual_in)
+            incoming_port_edges[(dst, actual_in)].add(edge)
+            if expected_out is None or actual_out != tuple(expected_out):
+                violations.append((edge, f"fanout {actual_out} != assigned {expected_out}"))
+                bad_edges.add(edge)
+            if expected_in is None or actual_in != tuple(expected_in):
+                violations.append((edge, f"fanin {actual_in} != assigned {expected_in}"))
+                bad_edges.add(edge)
+
+        # Do not use only ``incoming[dst]`` here: it is a set, so two edges
+        # entering through the same physical side collapse to one value.
+        for (node_id, direction), edges in incoming_port_edges.items():
+            if len(edges) <= 1:
+                continue
+            ordered_edges = sorted(edges)
+            violations.append(
+                (
+                    int(node_id),
+                    f"multiple fanins share input port {direction}: {ordered_edges}",
+                )
+            )
+            bad_edges.update(edges)
+
+        for node_id in set(incoming) | set(outgoing):
+            overlap = incoming[node_id] & outgoing[node_id]
+            if overlap:
+                violations.append((int(node_id), f"fanin/fanout port overlap: {sorted(overlap)}"))
+                bad_edges.update(incident_edges[node_id])
+            if len(outgoing[node_id]) > 1:
+                violations.append((int(node_id), f"multiple fanout ports: {sorted(outgoing[node_id])}"))
+                bad_edges.update(incident_edges[node_id])
+
+        self.last_port_direction_violations = violations
+        return not violations, violations, bad_edges
+
+    def _route_pair_with_port_constraints(self, src, dst):
+        src, dst = int(src), int(dst)
+        fanout_direction = self.fanout_directions.get(src)
+        fanin_direction = self._infer_route_direction(src, dst)
+        if fanout_direction is None:
+            return [], fanin_direction
+        path, selected_fanin = self._route_edge_with_direction_options(
+            src,
+            dst,
+            fanout_direction,
+            fanin_direction,
+            forbidden_directions=self._reserved_fanin_directions(src, dst),
+        )
+        if path:
+            # 备用端口被采用后立即回写，使端口预留、后续修复和合法性校验一致。
+            self.fanin_directions[(src, dst)] = selected_fanin
+        return path, selected_fanin
 
     # 对每一层的布线对 (start, end) 按 |x_end - x_start| 从小到大排序。
     def sort_route_sequence(self):
@@ -778,15 +1134,236 @@ class NormalGraphDraw:
             key=self._route_priority_key,
         )
 
+    def _all_route_pairs(self):
+        self.sort_route_sequence()
+        pairs = []
+        seen = set()
+        for layer in sorted(self.parse.same_layer_route_pairs.keys()):
+            for src, dst in self.parse.same_layer_route_pairs[layer]:
+                edge = (int(src), int(dst))
+                if edge not in seen:
+                    seen.add(edge)
+                    pairs.append(edge)
+        for src, dst in self.parse.differ_layer_route_pairs:
+            edge = (int(src), int(dst))
+            if edge not in seen:
+                seen.add(edge)
+                pairs.append(edge)
+        return pairs
+
+    def _sequence_route_all_edges_negotiated(
+        self,
+        verbose=True,
+        priority_pairs=None,
+    ):
+        """Route all source trees together with bounded L/Z candidates.
+
+        The first pass may select overlapping candidates. Conflict cells gain
+        history cost and only the source trees touching them are ripped up.
+        The board is populated only with the final conflict-free subset.
+        """
+        # Establish an exact gate-only transaction boundary and recompute port
+        # assignments for the current placement before constructing requests.
+        self.place_all_nodes_on_chessboard()
+        pairs = self._all_route_pairs()
+        requests = []
+        prefailed = {}
+        for src, dst in pairs:
+            fanout_direction = self.fanout_directions.get(int(src))
+            fanin_direction = self._infer_route_direction(src, dst)
+            if fanout_direction is None:
+                prefailed[(src, dst)] = fanin_direction
+                continue
+            requests.append(
+                RouteRequest(
+                    src=int(src),
+                    dst=int(dst),
+                    start=self.get_node_coord(src),
+                    goal=self.get_node_coord(dst),
+                    fanout_dir=(int(fanout_direction[0]), int(fanout_direction[1])),
+                    fanin_dir=(int(fanin_direction[0]), int(fanin_direction[1])),
+                )
+            )
+
+        large_circuit = len(requests) > 256
+        effective_tracks = (
+            min(self.negotiated_max_tracks, 6)
+            if large_circuit
+            else self.negotiated_max_tracks
+        )
+        effective_iterations = (
+            min(self.negotiated_max_iterations, 4)
+            if large_circuit
+            else self.negotiated_max_iterations
+        )
+        router = MonotoneNegotiatedRouter(
+            max_tracks=effective_tracks,
+            max_iterations=effective_iterations,
+            allow_crossovers=self.negotiated_allow_crossovers,
+            compound_detours=not large_circuit,
+        )
+        blocked_coords = set(self._node_coord.values())
+        result = router.route(
+            requests,
+            blocked_coords,
+            priority_edges=priority_pairs or (),
+        )
+
+        failed_pairs = dict(prefailed)
+        for src, dst in result.failed_edges:
+            failed_pairs[(int(src), int(dst))] = self._infer_route_direction(src, dst)
+
+        # No unrelated overlap is present in result.paths. Shared cells can
+        # only belong to one source tree, so materialize each physical wire
+        # cell once even when several fanout branches reuse it.
+        wire_coords = {
+            (int(x), int(y))
+            for path in result.paths.values()
+            for x, y in path[1:-1]
+            if (int(x), int(y)) not in blocked_coords
+        }
+        commit_failed = False
+        for coord in sorted(wire_coords, key=lambda point: (point[1], point[0])):
+            if not self.mapChessboard.canPlaceWire(coord):
+                commit_failed = True
+                break
+            self.mapChessboard.placeWire(coord)
+
+        if commit_failed:
+            # This should be unreachable because candidates reject every gate
+            # coordinate. Keep the operation atomic if the board model changes.
+            self.place_all_nodes_on_chessboard()
+            failed_pairs = {
+                edge: self._infer_route_direction(*edge) for edge in pairs
+            }
+        else:
+            for edge, path in result.paths.items():
+                self.mapChessboard.savePath(edge, path)
+
+        ports_ok, violations, bad_edges = self.validate_gate_port_directions()
+        if not ports_ok:
+            for src, dst in bad_edges:
+                failed_pairs[(int(src), int(dst))] = self._infer_route_direction(src, dst)
+
+        self.last_negotiated_metrics = {
+            "iterations": int(result.iterations),
+            "conflict_count": int(len(result.conflicts)),
+            "history_cell_count": int(len(result.overflow_history)),
+            "failed_edge_count": int(len(failed_pairs)),
+            "routed_edge_count": int(len(result.paths)) if not commit_failed else 0,
+            "crossovers_enabled": bool(self.negotiated_allow_crossovers),
+            "large_circuit_policy": bool(large_circuit),
+            "candidate_tracks": int(effective_tracks),
+            "iteration_limit": int(effective_iterations),
+        }
+        self.last_negotiated_conflicts = list(result.conflicts)
+        if verbose:
+            print(
+                "协商式单调曼哈顿布线完成："
+                f"迭代 {result.iterations}，冲突 {len(result.conflicts)}，"
+                f"成功 {self.last_negotiated_metrics['routed_edge_count']}，"
+                f"失败 {len(failed_pairs)}"
+            )
+            if violations:
+                print(f"⚠️ 逻辑门端口方向冲突数量: {len(violations)}")
+        return failed_pairs
+
+    def negotiated_conflicts_to_insert_ops(self, max_ops_per_iter=4):
+        """Turn persistent congestion hot spots into sparse capacity cuts."""
+        max_ops_per_iter = max(0, int(max_ops_per_iter))
+        if max_ops_per_iter == 0:
+            return [], []
+
+        row_pressure = defaultdict(int)
+        col_pressure = defaultdict(int)
+        for conflict in self.last_negotiated_conflicts:
+            coord = getattr(conflict, "coord", None)
+            if coord is None:
+                continue
+            horizontal = 0
+            vertical = 0
+            for src, dst in getattr(conflict, "edges", ()):
+                src_x, src_y = self.get_node_coord(int(src))
+                dst_x, dst_y = self.get_node_coord(int(dst))
+                if abs(dst_x - src_x) >= abs(dst_y - src_y):
+                    horizontal += 1
+                else:
+                    vertical += 1
+            if horizontal >= vertical:
+                row_pressure[int(coord[1])] += max(1, horizontal)
+            if vertical >= horizontal:
+                col_pressure[int(coord[0])] += max(1, vertical)
+
+        ranked_rows = sorted(row_pressure, key=lambda row: (-row_pressure[row], row))
+        ranked_cols = sorted(col_pressure, key=lambda col: (-col_pressure[col], col))
+        row_limit = (max_ops_per_iter + 1) // 2
+        col_limit = max_ops_per_iter - row_limit
+        if not ranked_rows:
+            col_limit = max_ops_per_iter
+        if not ranked_cols:
+            row_limit = max_ops_per_iter
+        return sorted(ranked_rows[:row_limit]), sorted(ranked_cols[:col_limit])
+
+    def validate_route_overlap_legality(self):
+        """Validate the exported gate-grid routes independently of the backend."""
+        paths = {}
+        requests = {}
+        for node_pair, path in self.mapChessboard.nodePairRoutes.items():
+            edge = (int(node_pair[0]), int(node_pair[1]))
+            normalized = [(int(x), int(y)) for x, y in path]
+            if len(normalized) < 2:
+                continue
+            paths[edge] = normalized
+            requests[edge] = RouteRequest(
+                src=edge[0],
+                dst=edge[1],
+                start=normalized[0],
+                goal=normalized[-1],
+                fanout_dir=(
+                    normalized[1][0] - normalized[0][0],
+                    normalized[1][1] - normalized[0][1],
+                ),
+                fanin_dir=(
+                    normalized[-2][0] - normalized[-1][0],
+                    normalized[-2][1] - normalized[-1][1],
+                ),
+            )
+
+        validator = MonotoneNegotiatedRouter(
+            allow_crossovers=self.negotiated_allow_crossovers
+        )
+        conflicts = validator._classify_conflicts(paths, requests)
+        self.last_route_overlap_conflicts = list(conflicts)
+        return not conflicts, list(conflicts)
+
+    def _record_route_overlap_failures(self, failed_pairs, verbose=False):
+        failed_pairs = dict(failed_pairs or {})
+        overlaps_ok, conflicts = self.validate_route_overlap_legality()
+        if overlaps_ok:
+            return failed_pairs
+        for conflict in conflicts:
+            for src, dst in conflict.edges:
+                failed_pairs[(int(src), int(dst))] = self._infer_route_direction(src, dst)
+        if verbose:
+            print(f"⚠️ 非法异源线路重叠数量: {len(conflicts)}")
+        return failed_pairs
+
     def sequence_route_all_edges(self, verbose=True):
+        if self.router_mode == "negotiated":
+            failed_pairs = self._sequence_route_all_edges_negotiated(verbose=verbose)
+            failed_pairs = self._record_route_overlap_failures(
+                failed_pairs,
+                verbose=verbose,
+            )
+            return failed_pairs
+
         self.sort_route_sequence()
         failed_pairs = {}
 
         for layer in sorted(self.parse.same_layer_route_pairs.keys()):
             pairs = self.parse.same_layer_route_pairs[layer]
             for src, dst in pairs:
-                direction = self._infer_route_direction(src, dst)
-                path, direction = self._route_edge_with_direction_options(src, dst, direction)
+                path, direction = self._route_pair_with_port_constraints(src, dst)
                 if not path:
                     if verbose:
                         print(
@@ -798,8 +1375,7 @@ class NormalGraphDraw:
                 self.mapChessboard.savePath((src, dst), path)
 
         for src, dst in self.parse.differ_layer_route_pairs:
-            direction = self._infer_route_direction(src, dst)
-            path, direction = self._route_edge_with_direction_options(src, dst, direction)
+            path, direction = self._route_pair_with_port_constraints(src, dst)
             if not path:
                 if verbose:
                     print(
@@ -810,17 +1386,40 @@ class NormalGraphDraw:
                 continue
             self.mapChessboard.savePath((src, dst), path)
 
+        ports_ok, violations, bad_edges = self.validate_gate_port_directions()
+        if not ports_ok:
+            for src, dst in bad_edges:
+                failed_pairs[(src, dst)] = self._infer_route_direction(src, dst)
+            if verbose:
+                print(f"⚠️ 逻辑门端口方向冲突数量: {len(violations)}")
+
         if verbose:
             print(
                 f"布线完成，合计布线数量: {self.parse.effective_edges_num}，"
                 f"失败数量: {len(failed_pairs)}"
             )
+        failed_pairs = self._record_route_overlap_failures(
+            failed_pairs,
+            verbose=verbose,
+        )
         return failed_pairs
 
     def reroute_with_priority_pairs(self, priority_pairs, verbose=False):
         """
-        清空并重布线：优先布线 priority_pairs，并且优先边尝试两种扇入方向。
+        清空并重布线：优先布线 priority_pairs。单扇入门可以尝试备用入口；
+        多扇入门只能使用尚未被其他扇入占用的入口。
         """
+        if self.router_mode == "negotiated":
+            failed_pairs = self._sequence_route_all_edges_negotiated(
+                verbose=verbose,
+                priority_pairs=priority_pairs,
+            )
+            failed_pairs = self._record_route_overlap_failures(
+                failed_pairs,
+                verbose=verbose,
+            )
+            return failed_pairs
+
         self.sort_route_sequence()
         priority = {(int(s), int(d)) for s, d in priority_pairs}
         all_pairs = []
@@ -837,8 +1436,7 @@ class NormalGraphDraw:
         self.place_all_nodes_on_chessboard()
         failed_pairs = {}
         for src, dst in all_pairs:
-            direction = self._infer_route_direction(src, dst)
-            path, direction = self._route_edge_with_direction_options(src, dst, direction)
+            path, direction = self._route_pair_with_port_constraints(src, dst)
 
             if not path:
                 if verbose:
@@ -850,11 +1448,22 @@ class NormalGraphDraw:
                 continue
             self.mapChessboard.savePath((src, dst), path)
 
+        ports_ok, violations, bad_edges = self.validate_gate_port_directions()
+        if not ports_ok:
+            for src, dst in bad_edges:
+                failed_pairs[(src, dst)] = self._infer_route_direction(src, dst)
+            if verbose:
+                print(f"⚠️ 逻辑门端口方向冲突数量: {len(violations)}")
+
         if verbose:
             print(
                 f"布线完成，合计布线数量: {self.parse.effective_edges_num}，"
                 f"失败数量: {len(failed_pairs)}"
             )
+        failed_pairs = self._record_route_overlap_failures(
+            failed_pairs,
+            verbose=verbose,
+        )
         return failed_pairs
 
     def _collect_used_coords(self):
@@ -975,11 +1584,14 @@ class NormalGraphDraw:
             sink_blocked = self._is_sink_blocked(src, dst, direction)
 
             if launch_blocked:
-                # Source-side congestion is usually more harmful than destination spacing:
-                # shift the source column/right half to carve a dedicated launch corridor.
-                col_ops.append(src_x)
-                if src_y + 1 < dst_y:
+                fanout_direction = self.fanout_directions.get(int(src))
+                if fanout_direction == (1, 0):
+                    col_ops.append(src_x + 1)
+                else:
                     row_ops.append(src_y + 1)
+                if fanout_direction is None:
+                    # 无共用单调扇出端口时同时扩展两个维度，交给下一轮重布局。
+                    col_ops.append(src_x + 1)
 
             if sink_blocked:
                 if direction == (0, -1):
@@ -1009,6 +1621,15 @@ class NormalGraphDraw:
         self._coord_cache_dirty = True
 
     def _embedding_similarity(self, node_a, node_b):
+        if self.embeddings is None:
+            # Pure structural fallback for the OGDF flow.  Layer distance is a
+            # deterministic proxy for geometric coupling and never trains or
+            # loads a neural model during routing repair.
+            layer_a = int(self.parse.get_layer_of_node(int(node_a)))
+            layer_b = int(self.parse.get_layer_of_node(int(node_b)))
+            layer_span = abs(layer_b - layer_a)
+            normalizer = max(1, int(self.parse.total_layers) - 1)
+            return max(-1.0, min(1.0, 1.0 - 2.0 * layer_span / normalizer))
         idx_a = self.parse.node_to_index.get(int(node_a))
         idx_b = self.parse.node_to_index.get(int(node_b))
         if idx_a is None or idx_b is None:
@@ -1024,7 +1645,9 @@ class NormalGraphDraw:
 
     def ml_guided_node_reposition(self, failed_pairs, max_nodes=None, max_shift=None):
         """
-        使用 GCN embedding 估计失败边“修复收益”，优先移动高收益目的节点。
+        根据结构距离和几何阻塞估计失败边修复收益，优先移动高收益目的节点。
+
+        方法名为兼容旧调用保留；OGDF 流程不会训练或加载 GCN。
         """
         if max_nodes is None:
             max_nodes = int(self.ml_tuning["ml_max_nodes"])
@@ -1045,7 +1668,12 @@ class NormalGraphDraw:
             # 相似度越低，说明结构相关性越弱，通常需要更大几何缓冲区
             ml_factor = 1.0 - (sim + 1.0) / 2.0
 
-            margin = 1 if direction == (-1, 0) else 0
+            # A top-entry edge whose endpoints share a column has no way to
+            # bypass a gate or saturated cell in that column: adding rows only
+            # lengthens the same blocked vertical corridor.  Force one column
+            # of horizontal freedom so the monotone router can form a dogleg.
+            collinear_top_entry = direction == (0, -1) and dst_x == src_x
+            margin = 1 if direction == (-1, 0) or collinear_top_entry else 0
             required_x = src_x + margin
             violation = max(0, required_x - dst_x)
             score = base_score + violation + similarity_weight * ml_factor
@@ -1085,6 +1713,7 @@ class NormalGraphDraw:
 
     def _route_with_repair(self, verbose=False, repair_iters=2, use_ml_reposition=True):
         failed_pairs = self.sequence_route_all_edges(verbose=verbose)
+        self._snapshot_initial_routing(failed_pairs)
         for _ in range(max(0, int(repair_iters))):
             if not failed_pairs:
                 break
@@ -1098,17 +1727,27 @@ class NormalGraphDraw:
             prev_failed_pairs = failed_pairs
 
             moved_nodes = 0
-            if use_ml_reposition:
+            inserted_hotspot_capacity = False
+            if self.router_mode == "negotiated":
+                hotspot_rows, hotspot_cols = self.negotiated_conflicts_to_insert_ops(
+                    max_ops_per_iter=int(self.ml_tuning["route_insert_max_ops"]),
+                )
+                if hotspot_rows or hotspot_cols:
+                    self.move_rows_and_cols(hotspot_rows, hotspot_cols)
+                    inserted_hotspot_capacity = True
+
+            if use_ml_reposition and not inserted_hotspot_capacity:
                 moved_nodes = self.ml_guided_node_reposition(failed_pairs)
 
             row_ops = []
             col_ops = []
-            if moved_nodes == 0:
+            if moved_nodes == 0 and not inserted_hotspot_capacity:
                 row_ops, col_ops = self.failed_pairs_to_insert_ops(failed_pairs)
                 if not row_ops and not col_ops:
                     break
                 self.move_rows_and_cols(row_ops, col_ops)
 
+            self._snapshot_conflict_repair_placement(prev_failed_pairs)
             self.place_all_nodes_on_chessboard()
             new_failed_pairs = self.sequence_route_all_edges(verbose=verbose)
 
@@ -1146,12 +1785,16 @@ class NormalGraphDraw:
         self.clock_template_ok = False
         self.clock_template_conflict_count = 0
         self._sync_legacy_phase_status()
-        self._stage_snapshot_counter = 0
+        self._prepare_stage_snapshots(snapshot_dir)
         if ml_tuning:
             self.set_ml_tuning(**ml_tuning)
 
         self.caculate_rough_placement()
+        self.place_all_nodes_on_chessboard()
+        self._snapshot_routing_change("stage1_initial_placement")
         self.caculate_ports_reservation()
+        self.place_all_nodes_on_chessboard()
+        self._snapshot_routing_change("stage2_port_reserved_placement")
         failed_pairs = {}
         best_failed_pairs = None
         best_coords = self.coords.clone()
@@ -1164,11 +1807,6 @@ class NormalGraphDraw:
                 repair_iters=route_repair_iters,
                 use_ml_reposition=True,
             )
-            self._snapshot_stage_heatmap(
-                snapshot_dir,
-                f"stage1_route_iter_failed_{len(failed_pairs)}",
-                failed_pairs=failed_pairs,
-            )
 
             if best_failed_pairs is None or len(failed_pairs) < len(best_failed_pairs):
                 best_failed_pairs = dict(failed_pairs)
@@ -1179,6 +1817,19 @@ class NormalGraphDraw:
             if not failed_pairs:
                 break
 
+            if self.router_mode == "negotiated":
+                hotspot_rows, hotspot_cols = self.negotiated_conflicts_to_insert_ops(
+                    max_ops_per_iter=int(self.ml_tuning["route_insert_max_ops"]),
+                )
+                if hotspot_rows or hotspot_cols:
+                    if verbose:
+                        print(
+                            f"布线热点扩容：插入行{hotspot_rows}, 列{hotspot_cols}"
+                        )
+                    self.move_rows_and_cols(hotspot_rows, hotspot_cols)
+                    self._snapshot_conflict_repair_placement(failed_pairs)
+                    continue
+
             moved_nodes = self.ml_guided_node_reposition(
                 failed_pairs,
                 max_nodes=int(self.ml_tuning["global_ml_max_nodes"]),
@@ -1186,7 +1837,8 @@ class NormalGraphDraw:
             )
             if moved_nodes > 0:
                 if verbose:
-                    print(f"布线失败修复：ML移动节点数量 {moved_nodes}")
+                    print(f"布线失败修复：结构/拥塞引导移动节点数量 {moved_nodes}")
+                self._snapshot_conflict_repair_placement(failed_pairs)
                 continue
 
             row_ops, col_ops = self.failed_pairs_to_insert_ops(
@@ -1198,6 +1850,7 @@ class NormalGraphDraw:
             if verbose:
                 print(f"布线失败修复：插入行{row_ops}, 列{col_ops}")
             self.move_rows_and_cols(row_ops, col_ops)
+            self._snapshot_conflict_repair_placement(failed_pairs)
 
         # 回滚到历史最佳布局并重新路由，防止坏动作累积
         if best_failed_pairs is not None:
@@ -1209,21 +1862,11 @@ class NormalGraphDraw:
                 repair_iters=max(1, int(route_repair_iters // 2)),
                 use_ml_reposition=False,
             )
-            self._snapshot_stage_heatmap(
-                snapshot_dir,
-                f"stage1_converged_failed_{len(failed_pairs)}",
-                failed_pairs=failed_pairs,
-            )
             if verbose:
                 print(f"[布局收敛] 最终失败边数量: {len(failed_pairs)}")
 
         # 阶段2：未全布通则不允许做 2DDWave 模板一致性校验
         if failed_pairs:
-            self._snapshot_stage_heatmap(
-                snapshot_dir,
-                "stage2_skip_template_check_due_to_route_fail",
-                failed_pairs=failed_pairs,
-            )
             if verbose:
                 print(f"仍有未完成布线，跳过 2DDWave 模板一致性校验，失败边数量: {len(failed_pairs)}")
             self._record_failed_pairs(failed_pairs)
@@ -1233,21 +1876,19 @@ class NormalGraphDraw:
         for _ in range(max(0, int(phase_repair_iters)) + 1):
             template_ok, conflicts = self.verify_clock_template_consistency(verbose=verbose)
             if template_ok:
+                self._snapshot_routing_change(
+                    "stage5_completed_routing",
+                    failed_pairs=failed_pairs,
+                )
                 compact_reductions = self.compact_layout(
                     max_iters=compact_iters,
                     verbose=verbose,
                 )
                 if compact_reductions > 0:
-                    self._snapshot_stage_heatmap(
-                        snapshot_dir,
-                        f"stage4_compacted_{compact_reductions}",
+                    self._snapshot_routing_change(
+                        f"stage6_compacted_{compact_reductions}",
                         failed_pairs=failed_pairs,
                     )
-                self._snapshot_stage_heatmap(
-                    snapshot_dir,
-                    "stage3_template_check_success",
-                    failed_pairs=failed_pairs,
-                )
                 self._record_failed_pairs(failed_pairs)
                 return failed_pairs
 
@@ -1257,30 +1898,23 @@ class NormalGraphDraw:
                 if not new_failed:
                     template_ok, conflicts = self.verify_clock_template_consistency(verbose=verbose)
                     if template_ok:
+                        self._snapshot_routing_change(
+                            "stage5_completed_routing_after_priority_reroute",
+                            failed_pairs=failed_pairs,
+                        )
                         compact_reductions = self.compact_layout(
                             max_iters=compact_iters,
                             verbose=verbose,
                         )
                         if compact_reductions > 0:
-                            self._snapshot_stage_heatmap(
-                                snapshot_dir,
-                                f"stage4_compacted_{compact_reductions}",
+                            self._snapshot_routing_change(
+                                f"stage6_compacted_{compact_reductions}",
                                 failed_pairs=failed_pairs,
                             )
-                        self._snapshot_stage_heatmap(
-                            snapshot_dir,
-                            "stage3_template_check_success_after_priority_reroute",
-                            failed_pairs=failed_pairs,
-                        )
                         self._record_failed_pairs(failed_pairs)
                         return failed_pairs
                 else:
                     failed_pairs = new_failed
-                    self._snapshot_stage_heatmap(
-                        snapshot_dir,
-                        f"stage3_route_degrade_failed_{len(failed_pairs)}",
-                        failed_pairs=failed_pairs,
-                    )
                     if verbose:
                         print(f"模板冲突边优先重布线后出现失败边: {len(failed_pairs)}")
                     self._record_failed_pairs(failed_pairs)
@@ -1295,16 +1929,12 @@ class NormalGraphDraw:
             if verbose:
                 print(f"2DDWave 模板冲突修复：插入行{row_ops}, 列{col_ops}")
             self.move_rows_and_cols(row_ops, col_ops)
+            self._snapshot_conflict_repair_placement(failed_pairs)
             self.place_all_nodes_on_chessboard()
             failed_pairs = self._route_with_repair(
                 verbose=False,
                 repair_iters=max(1, int(route_repair_iters // 2)),
                 use_ml_reposition=False,
-            )
-            self._snapshot_stage_heatmap(
-                snapshot_dir,
-                f"stage3_template_repair_route_failed_{len(failed_pairs)}",
-                failed_pairs=failed_pairs,
             )
             if failed_pairs:
                 if verbose:
@@ -1317,11 +1947,6 @@ class NormalGraphDraw:
             len(conflicts) if "conflicts" in locals() else self.clock_template_conflict_count
         )
         self._sync_legacy_phase_status()
-        self._snapshot_stage_heatmap(
-            snapshot_dir,
-            f"stage3_template_check_failed_conflicts_{self.clock_template_conflict_count}",
-            failed_pairs=failed_pairs,
-        )
         self._record_failed_pairs(failed_pairs)
         return failed_pairs
 #     def cluster_nodes(self, num_clusters=6):

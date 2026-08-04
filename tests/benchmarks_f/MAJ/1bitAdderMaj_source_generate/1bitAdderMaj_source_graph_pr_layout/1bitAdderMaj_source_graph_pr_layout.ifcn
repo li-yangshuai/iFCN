@@ -1,0 +1,50 @@
+#circuit name: 1bitAdderMaj_source.v
+
+#designed by compact Graph Draw: OGDF crossing minimization + unit-spacing placement + conflict-driven row/column expansion + random-phase closure with encoded 4-phase clock tiles.
+
+#gate level placement and routing infomation
+#algorithm: compact Graph Draw: OGDF crossing minimization + unit-spacing placement + conflict-driven row/column expansion + random-phase closure
+#gates number: 9
+#input/output: 3 / 1
+#edges number: 11
+#total layers: 5
+#layout area: width: 6, height: 7, area: 42
+#phase origin: top-left=(2,4), saved coordinates are normalized to (0,0)
+#phase count: 4
+#runtime: 3.383s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, x0, input, (2,0);
+1, x1, input, (4,0);
+2, x2, input, (5,0);
+3, y0, output, (4,5);
+4, n4, maj, (4,4);
+5, n4_0, and, (2,1);
+6, ~x2, not, (4,1);
+7, n4_1, and, (2,3);
+8, n4_2, and, (4,3);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,5): (2,0),(2,1);
+(0,7): (2,0),(1,0),(1,1),(1,2),(1,3),(2,3);
+(1,5): (4,0),(3,0),(3,1),(2,1);
+(1,8): (4,0),(3,0),(3,1),(3,2),(3,3),(4,3);
+(2,6): (5,0),(5,1),(4,1);
+(4,3): (4,4),(4,5);
+(5,4): (2,1),(1,1),(0,1),(0,2),(0,3),(0,4),(1,4),(2,4),(3,4),(4,4);
+(6,7): (4,1),(4,2),(3,2),(2,2),(2,3);
+(6,8): (4,1),(4,2),(4,3);
+(7,4): (2,3),(2,4),(2,5),(3,5),(3,6),(4,6),(5,6),(5,5),(5,4),(4,4);
+(8,4): (4,3),(4,4);
+#paths info
+#phase map
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0x0056ba8f;
+tile(1,0):0x0f010203;
+tile(0,1):0x93e0c000;
+tile(1,1):0x0b040400;
+#phase map

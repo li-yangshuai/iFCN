@@ -232,6 +232,10 @@ def run_layout_trial(args, benchmark_path, output_dir, stage_tex_dir, seed, atte
         snapshot_dir=trial_stage_dir,
     )
     run_time = time.perf_counter() - start_time
+    contraction_runtime = max(
+        0.0, float(getattr(draw, "contraction_runtime_sec", 0.0) or 0.0)
+    )
+    layout_routing_runtime = max(0.0, float(run_time) - contraction_runtime)
 
     width, height = draw.mapChessboard.computeLayoutArea()
     if width < 0 or height < 0:
@@ -239,6 +243,8 @@ def run_layout_trial(args, benchmark_path, output_dir, stage_tex_dir, seed, atte
     draw.width = width
     draw.height = height
     draw.run_time_sec = run_time
+    draw.layout_routing_runtime_sec = layout_routing_runtime
+    draw.contraction_runtime_sec = contraction_runtime
     draw.algorithm_description = ALGO_DESC
 
     failed_count = len(failed_pairs or {})
@@ -440,6 +446,12 @@ def main():
         "benchmark": benchmark_path,
         "resolved_benchmark": resolved_benchmark_path,
         "parser_safe_generated": bool(parser_safe_generated),
+        "node_count": int(draw.parse.effective_nodes_num),
+        "edge_count": int(draw.parse.effective_edges_num),
+        "input_count": int(draw.parse.InputNodesNum),
+        "output_count": int(draw.parse.OutputNodesNum),
+        "io_count": int(draw.parse.InputNodesNum + draw.parse.OutputNodesNum),
+        "layer_count": int(draw.parse.total_layers),
         "seed": int(best_trial["seed"]),
         "seed_attempts": [
             {
@@ -508,6 +520,9 @@ def main():
         "contraction_empty_line_evaluations": int(
             getattr(draw, "contraction_empty_line_evaluations", 0)
         ),
+        "contraction_layer_merge_evaluations": int(
+            getattr(draw, "contraction_layer_merge_evaluations", 0)
+        ),
         "contraction_exhausted": bool(
             getattr(draw, "contraction_exhausted", False)
         ),
@@ -539,6 +554,12 @@ def main():
         "width": int(width),
         "height": int(height),
         "area": final_area,
+        "layout_routing_runtime_sec": float(
+            getattr(draw, "layout_routing_runtime_sec", run_time)
+        ),
+        "contraction_runtime_sec": float(
+            getattr(draw, "contraction_runtime_sec", 0.0)
+        ),
         "run_time_sec": float(run_time),
         "algorithm_description": ALGO_DESC,
     }

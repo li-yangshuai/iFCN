@@ -6,15 +6,13 @@
 
 #include <algorithm>
 #include <array>
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
-#include <map>
 #include <utility>
 #include <vector>
 
-#include "Simulation.hpp"
+#include "OrderedInteractionGraph.hpp"
 
 namespace simon {
 
@@ -26,6 +24,7 @@ namespace simon {
  * samples, or replace the coherence-vector equations with a surrogate.
  */
 struct AcceleratedCoherenceStatistics {
+    std::size_t total_cells = 0;
     std::size_t samples = 0;
     std::size_t cell_updates = 0;
     std::size_t field_accumulations = 0;
@@ -39,7 +38,15 @@ struct AcceleratedCoherenceStatistics {
     std::size_t graph_all_pair_checks = 0;
     bool clock_cache_used = false;
     bool input_cache_used = false;
+    bool graph_spatial_buckets_used = false;
+    bool graph_reused = false;
+    bool precompiled_graph_rejected = false;
+    bool fused_integration_used = false;
     bool strict_equivalent = true;
+    double interaction_graph_seconds = 0.0;
+    double energy_materialization_seconds = 0.0;
+    double kernel_compilation_seconds = 0.0;
+    double generator_cache_seconds = 0.0;
 };
 
 /**
@@ -75,8 +82,14 @@ struct AcceleratedCoherenceEngine : public CoherenceEngine<Host> {
     void initialize_design(QCADesign &design) {
         statistics_ = {};
         initialize_sparse_design(design);
+        const auto kernel_begin = std::chrono::steady_clock::now();
         compile_kernel(design);
+        statistics_.kernel_compilation_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - kernel_begin).count();
+        const auto cache_begin = std::chrono::steady_clock::now();
         build_generator_caches();
+        statistics_.generator_cache_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - cache_begin).count();
     }
 
     void make_iterations(QCADesign &design, Result &result) {
@@ -122,7 +135,6 @@ struct AcceleratedCoherenceEngine : public CoherenceEngine<Host> {
 
         auto &self = static_cast<Host&>(*this);
         const double time = this->option.time_step * static_cast<double>(sample);
-        (void)time;
 
         // The four values are shared by every cell in the corresponding clock
         // zone.  Loading them once also keeps the hot cell traversal local.
@@ -160,8 +172,24 @@ struct AcceleratedCoherenceEngine : public CoherenceEngine<Host> {
             // Fused evaluation computes the field/clock-only magnitude and
             // thermal factor once.  The component-specific Euler/RK stages
             // retain the exact legacy expressions and parenthesization.
-            const IntegratedState next = integrate_fused(
-                    field, gamma, lambda_x_old, lambda_y_old, lambda_z_old);
+            IntegratedState next;
+            if (this->option.acceleration.use_fused_integration) {
+                next = integrate_fused(
+                        field, gamma, lambda_x_old, lambda_y_old, lambda_z_old);
+            } else {
+                // Exact legacy component paths provide an explicit ablation of
+                // common-expression fusion without changing graph storage.
+                next = IntegratedState{
+                        this->lambda_x_next(time, field, gamma,
+                                            lambda_x_old, lambda_y_old,
+                                            lambda_z_old),
+                        this->lambda_y_next(time, field, gamma,
+                                            lambda_x_old, lambda_y_old,
+                                            lambda_z_old),
+                        this->lambda_z_next(time, field, gamma,
+                                            lambda_x_old, lambda_y_old,
+                                            lambda_z_old)};
+            }
 
             prepared.state->lambda_x = next.x;
             prepared.state->lambda_y = next.y;
@@ -175,6 +203,9 @@ struct AcceleratedCoherenceEngine : public CoherenceEngine<Host> {
             statistics_.clock_generator_evaluations += cells_.size();
         }
         ++statistics_.samples;
+        this->record_trace_frame(design,
+                                 SimulationTraceFrame::CoherenceTimeStep,
+                                 sample);
     }
 
 private:
@@ -196,9 +227,6 @@ private:
         double y = 0.0;
         double z = 0.0;
     };
-
-    static constexpr std::size_t cache_budget_bytes =
-            std::size_t{512} * 1024 * 1024;
 
     static bool byte_size_fits(std::size_t value_count,
                                std::size_t budget_bytes) noexcept {
@@ -288,12 +316,7 @@ private:
      * order, identical to the baseline.
      */
     void initialize_sparse_design(QCADesign &design) {
-        struct IndexedCell {
-            QCACell *cell = nullptr;
-            std::size_t index = 0;
-        };
-
-        std::vector<IndexedCell> all_cells;
+        std::vector<QCACell*> all_cells;
         for (auto &layer : design) {
             for (auto &cell : layer) {
                 extrinsics(cell).reset();
@@ -302,65 +325,52 @@ private:
                 if (function(cell) == FCNCellFunction::FIXED) {
                     polarization(cell) = calculate_cell_polarization(cell);
                 }
-                all_cells.push_back(IndexedCell{&cell, all_cells.size()});
+                all_cells.push_back(&cell);
             }
         }
 
-        const std::size_t cell_count = all_cells.size();
-        if (cell_count > 0 && cell_count - 1 <=
-                                  std::numeric_limits<std::size_t>::max() /
-                                          cell_count) {
-            statistics_.graph_all_pair_checks = cell_count * (cell_count - 1);
+        const auto graph_begin = std::chrono::steady_clock::now();
+        const OrderedInteractionGraph *graph =
+                this->option.acceleration.precompiled_graph;
+        statistics_.graph_reused =
+                graph != nullptr && graph->matches(design, this->option);
+        statistics_.precompiled_graph_rejected =
+                graph != nullptr && !statistics_.graph_reused;
+        if (!statistics_.graph_reused) {
+            owned_graph_ = OrderedInteractionGraph::compile(
+                    design,
+                    this->option,
+                    this->option.acceleration.use_spatial_buckets);
+            graph = &owned_graph_;
         }
 
-        const double bucket_size = std::max(1.0, this->option.radius_effect);
-        auto bucket_coordinate = [bucket_size](double value) {
-            return static_cast<long long>(std::floor(value / bucket_size));
-        };
+        const OrderedInteractionGraph::Statistics &graph_statistics =
+                graph->statistics();
+        statistics_.total_cells = graph_statistics.cells;
+        statistics_.graph_candidate_checks = graph_statistics.candidate_checks;
+        statistics_.graph_all_pair_checks = graph_statistics.all_pair_checks;
+        statistics_.graph_spatial_buckets_used =
+                graph_statistics.spatial_buckets_used;
+        statistics_.interaction_graph_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - graph_begin).count();
 
-        std::map<std::pair<long long, long long>, std::vector<IndexedCell>> buckets;
-        for (const IndexedCell &indexed : all_cells) {
-            buckets[{bucket_coordinate(x(*indexed.cell)),
-                     bucket_coordinate(y(*indexed.cell))}].push_back(indexed);
-        }
-
-        std::vector<IndexedCell> candidates;
-        for (const IndexedCell &source : all_cells) {
-            candidates.clear();
-            const long long bucket_x = bucket_coordinate(x(*source.cell));
-            const long long bucket_y = bucket_coordinate(y(*source.cell));
-
-            for (long long dx = -1; dx <= 1; ++dx) {
-                for (long long dy = -1; dy <= 1; ++dy) {
-                    const auto found = buckets.find({bucket_x + dx, bucket_y + dy});
-                    if (found != buckets.end()) {
-                        candidates.insert(candidates.end(),
-                                          found->second.begin(),
-                                          found->second.end());
-                    }
-                }
-            }
-
-            std::sort(candidates.begin(), candidates.end(),
-                      [](const IndexedCell &left, const IndexedCell &right) {
-                          return left.index < right.index;
-                      });
-
-            for (const IndexedCell &candidate : candidates) {
-                if (source.cell == candidate.cell) {
-                    continue;
-                }
-                ++statistics_.graph_candidate_checks;
-                if (calculate_inter_cell_distance(
-                            *source.cell, *candidate.cell, this->option) <=
-                    this->option.radius_effect) {
-                    this->neighbours(*source.cell).push_back(candidate.cell);
-                    this->kink_energies(*source.cell).push_back(
-                            calculate_inter_cell_kink_energy(
-                                    *source.cell, *candidate.cell, this->option));
-                }
+        const auto materialization_begin = std::chrono::steady_clock::now();
+        for (std::size_t source = 0; source < all_cells.size(); ++source) {
+            auto &cell_neighbours = this->neighbours(*all_cells[source]);
+            auto &cell_energies = this->kink_energies(*all_cells[source]);
+            const std::size_t begin = graph->row_begin(source);
+            const std::size_t end = graph->row_end(source);
+            cell_neighbours.reserve(end - begin);
+            cell_energies.reserve(end - begin);
+            for (std::size_t coupling = begin; coupling < end; ++coupling) {
+                cell_neighbours.push_back(
+                        all_cells[graph->coupling(coupling).neighbour_index]);
+                cell_energies.push_back(
+                        graph->kink_energy(coupling, this->option.epsilon_r));
             }
         }
+        statistics_.energy_materialization_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - materialization_begin).count();
     }
 
     void compile_kernel(QCADesign &design) {
@@ -396,6 +406,8 @@ private:
         }
 
         statistics_.dynamic_cells = cells_.size();
+        statistics_.fused_integration_used =
+                this->option.acceleration.use_fused_integration;
     }
 
     void build_generator_caches() {
@@ -406,9 +418,12 @@ private:
         const std::size_t samples = self.number_of_samples;
         constexpr std::size_t phases = 4;
 
-        if (samples <= std::numeric_limits<std::size_t>::max() / phases) {
+        if (this->option.acceleration.use_clock_cache &&
+            samples <= std::numeric_limits<std::size_t>::max() / phases) {
             const std::size_t clock_values = phases * samples;
-            if (byte_size_fits(clock_values, cache_budget_bytes)) {
+            if (byte_size_fits(
+                    clock_values,
+                    this->option.acceleration.cache_budget_bytes)) {
                 clock_cache_.resize(clock_values);
                 for (std::size_t sample = 0; sample < samples; ++sample) {
                     for (std::size_t phase = 0; phase < phases; ++phase) {
@@ -425,12 +440,12 @@ private:
         const std::size_t clock_bytes =
                 statistics_.clock_cache_values * sizeof(double);
         const std::size_t remaining_budget =
-                cache_budget_bytes > clock_bytes
-                        ? cache_budget_bytes - clock_bytes
+                this->option.acceleration.cache_budget_bytes > clock_bytes
+                        ? this->option.acceleration.cache_budget_bytes - clock_bytes
                         : 0;
 
         const std::size_t input_count = self.inputs.size();
-        if (input_count != 0 &&
+        if (this->option.acceleration.use_input_cache && input_count != 0 &&
             samples <= std::numeric_limits<std::size_t>::max() / input_count) {
             const std::size_t input_values = input_count * samples;
             if (byte_size_fits(input_values, remaining_budget)) {
@@ -452,6 +467,7 @@ private:
     std::vector<Coupling> couplings_;
     std::vector<double> clock_cache_;
     std::vector<double> input_cache_;
+    OrderedInteractionGraph owned_graph_;
     AcceleratedCoherenceStatistics statistics_;
 };
 

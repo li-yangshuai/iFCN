@@ -1,0 +1,252 @@
+%%% -*-BibTeX-*-
+%%% Do NOT edit. File created by BibTeX with style
+%%% ACM-Reference-Format-Journals [18-Jan-2012].
+
+\begin{thebibliography}{13}
+
+%%% ====================================================================
+%%% NOTE TO THE USER: you can override these defaults by providing
+%%% customized versions of any of these macros before the \bibliography
+%%% command.  Each of them MUST provide its own final punctuation,
+%%% except for \shownote{}, \showDOI{}, and \showURL{}.  The latter two
+%%% do not use final punctuation, in order to avoid confusing it with
+%%% the Web address.
+%%%
+%%% To suppress output of a particular field, define its macro to expand
+%%% to an empty string, or better, \unskip, like this:
+%%%
+%%% \newcommand{\showDOI}[1]{\unskip}   % LaTeX syntax
+%%%
+%%% \def \showDOI #1{\unskip}           % plain TeX syntax
+%%%
+%%% ====================================================================
+
+\ifx \showCODEN    \undefined \def \showCODEN     #1{\unskip}     \fi
+\ifx \showDOI      \undefined \def \showDOI       #1{#1}\fi
+\ifx \showISBNx    \undefined \def \showISBNx     #1{\unskip}     \fi
+\ifx \showISBNxiii \undefined \def \showISBNxiii  #1{\unskip}     \fi
+\ifx \showISSN     \undefined \def \showISSN      #1{\unskip}     \fi
+\ifx \showLCCN     \undefined \def \showLCCN      #1{\unskip}     \fi
+\ifx \shownote     \undefined \def \shownote      #1{#1}          \fi
+\ifx \showarticletitle \undefined \def \showarticletitle #1{#1}   \fi
+\ifx \showURL      \undefined \def \showURL       {\relax}        \fi
+% The following commands are used for tagged output and should be
+% invisible to TeX
+\providecommand\bibfield[2]{#2}
+\providecommand\bibinfo[2]{#2}
+\providecommand\natexlab[1]{#1}
+\providecommand\showeprint[2][]{arXiv:#2}
+
+\bibitem[\protect\citeauthoryear{Drewniok, Walter, Ng, Walus, and
+  Wille}{Drewniok et~al\mbox{.}}{2023}]%
+        {drewniok2023quicksim}
+\bibfield{author}{\bibinfo{person}{Jan Drewniok}, \bibinfo{person}{Marcel
+  Walter}, \bibinfo{person}{Samuel Sze~Hang Ng}, \bibinfo{person}{Konrad
+  Walus}, {and} \bibinfo{person}{Robert Wille}.}
+  \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{{QuickSim}: Efficient and Accurate Physical
+  Simulation of Silicon Dangling Bond Logic}.
+\newblock \bibinfo{journal}{\emph{CoRR}}  \bibinfo{volume}{abs/2303.03422}
+  (\bibinfo{year}{2023}).
+\newblock
+\showeprint[arxiv]{2303.03422}
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2303.03422}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Drewniok, Walter, and Wille}{Drewniok
+  et~al\mbox{.}}{2024}]%
+        {drewniok2024quickexact}
+\bibfield{author}{\bibinfo{person}{Jan Drewniok}, \bibinfo{person}{Marcel
+  Walter}, {and} \bibinfo{person}{Robert Wille}.}
+  \bibinfo{year}{2024}\natexlab{}.
+\newblock \showarticletitle{The Need for Speed: Efficient Exact Simulation of
+  Silicon Dangling Bond Logic}. In \bibinfo{booktitle}{\emph{Proceedings of the
+  29th Asia and South Pacific Design Automation Conference}}.
+  \bibinfo{pages}{576--581}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1109/ASP-DAC58780.2024.10473946}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Georges, Buytaert, and Eeckhout}{Georges
+  et~al\mbox{.}}{2007}]%
+        {georges2007}
+\bibfield{author}{\bibinfo{person}{Andy Georges}, \bibinfo{person}{Dries
+  Buytaert}, {and} \bibinfo{person}{Lieven Eeckhout}.}
+  \bibinfo{year}{2007}\natexlab{}.
+\newblock \showarticletitle{Statistically Rigorous Java Performance
+  Evaluation}. In \bibinfo{booktitle}{\emph{Proceedings of the 22nd ACM SIGPLAN
+  Conference on Object-Oriented Programming Systems and Applications}}.
+  \bibinfo{pages}{57--76}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/1297105.1297033}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Hennessy and Lent}{Hennessy and Lent}{2001}]%
+        {hennessy2001}
+\bibfield{author}{\bibinfo{person}{Kevin Hennessy} {and}
+  \bibinfo{person}{Craig~S. Lent}.} \bibinfo{year}{2001}\natexlab{}.
+\newblock \showarticletitle{Clocking of Molecular Quantum-Dot Cellular
+  Automata}.
+\newblock \bibinfo{journal}{\emph{Journal of Vacuum Science \& Technology B}}
+  \bibinfo{volume}{19}, \bibinfo{number}{5} (\bibinfo{year}{2001}),
+  \bibinfo{pages}{1752--1755}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1116/1.1394729}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Lent, Tougaw, Porod, and Bernstein}{Lent
+  et~al\mbox{.}}{1993}]%
+        {lent1993}
+\bibfield{author}{\bibinfo{person}{Craig~S. Lent}, \bibinfo{person}{P.~Douglas
+  Tougaw}, \bibinfo{person}{Wolfgang Porod}, {and} \bibinfo{person}{Gary~H.
+  Bernstein}.} \bibinfo{year}{1993}\natexlab{}.
+\newblock \showarticletitle{Quantum Cellular Automata}.
+\newblock \bibinfo{journal}{\emph{Nanotechnology}} \bibinfo{volume}{4},
+  \bibinfo{number}{1} (\bibinfo{year}{1993}), \bibinfo{pages}{49--57}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1088/0957-4484/4/1/004}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Li, Peng, Tong, Zhu, Han, and Xie}{Li
+  et~al\mbox{.}}{2026}]%
+        {li2026}
+\bibfield{author}{\bibinfo{person}{Yangshuai Li}, \bibinfo{person}{Fei Peng},
+  \bibinfo{person}{Xiansheng Tong}, \bibinfo{person}{Rongjie Zhu},
+  \bibinfo{person}{Qian Han}, {and} \bibinfo{person}{Guangjun Xie}.}
+  \bibinfo{year}{2026}\natexlab{}.
+\newblock \showarticletitle{{iFCN}: An Automated {RTL}-to-Device Framework for
+  Molecular Field-Coupled Nanocomputing Circuits}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Circuits and Systems I:
+  Regular Papers}} \bibinfo{volume}{73}, \bibinfo{number}{2}
+  (\bibinfo{year}{2026}), \bibinfo{pages}{1196--1208}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1109/TCSI.2025.3599115}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Peng, Xiao, Xu, Huang, and Xie}{Peng
+  et~al\mbox{.}}{2019}]%
+        {peng2019}
+\bibfield{author}{\bibinfo{person}{Fei Peng}, \bibinfo{person}{Zhenjie Xiao},
+  \bibinfo{person}{Dong Xu}, \bibinfo{person}{Jianhong Huang}, {and}
+  \bibinfo{person}{Guangjun Xie}.} \bibinfo{year}{2019}\natexlab{}.
+\newblock \showarticletitle{Automatic Object Model Generation for
+  Nanoelectronics Using {C++} Meta Programming}.
+\newblock \bibinfo{journal}{\emph{Electronics Letters}} \bibinfo{volume}{55},
+  \bibinfo{number}{24} (\bibinfo{year}{2019}), \bibinfo{pages}{1286--1288}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1049/el.2019.1861}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Timler and Lent}{Timler and Lent}{2002}]%
+        {timler2002}
+\bibfield{author}{\bibinfo{person}{John Timler} {and} \bibinfo{person}{Craig~S.
+  Lent}.} \bibinfo{year}{2002}\natexlab{}.
+\newblock \showarticletitle{Power Gain and Dissipation in Quantum-Dot Cellular
+  Automata}.
+\newblock \bibinfo{journal}{\emph{Journal of Applied Physics}}
+  \bibinfo{volume}{91}, \bibinfo{number}{2} (\bibinfo{year}{2002}),
+  \bibinfo{pages}{823--831}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1063/1.1421217}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Torres, Wille, Niemann, and Drechsler}{Torres
+  et~al\mbox{.}}{2018}]%
+        {torres2018}
+\bibfield{author}{\bibinfo{person}{Frank~Sill Torres}, \bibinfo{person}{Robert
+  Wille}, \bibinfo{person}{Philipp Niemann}, {and} \bibinfo{person}{Rolf
+  Drechsler}.} \bibinfo{year}{2018}\natexlab{}.
+\newblock \showarticletitle{An Energy-Aware Model for the Logic Synthesis of
+  Quantum-Dot Cellular Automata}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Computer-Aided Design of
+  Integrated Circuits and Systems}} \bibinfo{volume}{37}, \bibinfo{number}{12}
+  (\bibinfo{year}{2018}), \bibinfo{pages}{3031--3041}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1109/TCAD.2018.2789782}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Tougaw and Lent}{Tougaw and Lent}{1994}]%
+        {tougaw1994}
+\bibfield{author}{\bibinfo{person}{P.~Douglas Tougaw} {and}
+  \bibinfo{person}{Craig~S. Lent}.} \bibinfo{year}{1994}\natexlab{}.
+\newblock \showarticletitle{Logical Devices Implemented Using Quantum Cellular
+  Automata}.
+\newblock \bibinfo{journal}{\emph{Journal of Applied Physics}}
+  \bibinfo{volume}{75}, \bibinfo{number}{3} (\bibinfo{year}{1994}),
+  \bibinfo{pages}{1818--1825}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1063/1.356375}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Tougaw and Lent}{Tougaw and Lent}{1996}]%
+        {tougaw1996}
+\bibfield{author}{\bibinfo{person}{P.~Douglas Tougaw} {and}
+  \bibinfo{person}{Craig~S. Lent}.} \bibinfo{year}{1996}\natexlab{}.
+\newblock \showarticletitle{Dynamic Behavior of Quantum Cellular Automata}.
+\newblock \bibinfo{journal}{\emph{Journal of Applied Physics}}
+  \bibinfo{volume}{80}, \bibinfo{number}{8} (\bibinfo{year}{1996}),
+  \bibinfo{pages}{4722--4736}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1063/1.363455}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Walter, Wille, Torres, Gro{\ss}e, and
+  Drechsler}{Walter et~al\mbox{.}}{2019}]%
+        {walter2019}
+\bibfield{author}{\bibinfo{person}{Marcel Walter}, \bibinfo{person}{Robert
+  Wille}, \bibinfo{person}{Frank~Sill Torres}, \bibinfo{person}{Daniel
+  Gro{\ss}e}, {and} \bibinfo{person}{Rolf Drechsler}.}
+  \bibinfo{year}{2019}\natexlab{}.
+\newblock \showarticletitle{fiction: An Open Source Framework for the Design of
+  Field-Coupled Nanocomputing Circuits}.
+\newblock \bibinfo{journal}{\emph{CoRR}}  \bibinfo{volume}{abs/1905.02477}
+  (\bibinfo{year}{2019}).
+\newblock
+\showeprint[arxiv]{1905.02477}
+\urldef\tempurl%
+\url{https://arxiv.org/abs/1905.02477}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Walus, Dysart, Jullien, and Budiman}{Walus
+  et~al\mbox{.}}{2004}]%
+        {walus2004}
+\bibfield{author}{\bibinfo{person}{Konrad Walus}, \bibinfo{person}{Timothy~J.
+  Dysart}, \bibinfo{person}{Graham~A. Jullien}, {and} \bibinfo{person}{R.~Arief
+  Budiman}.} \bibinfo{year}{2004}\natexlab{}.
+\newblock \showarticletitle{{QCADesigner}: A Rapid Design and Simulation Tool
+  for Quantum-Dot Cellular Automata}.
+\newblock \bibinfo{journal}{\emph{IEEE Transactions on Nanotechnology}}
+  \bibinfo{volume}{3}, \bibinfo{number}{1} (\bibinfo{year}{2004}),
+  \bibinfo{pages}{26--31}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1109/TNANO.2003.820815}
+\showDOI{\tempurl}
+
+
+\end{thebibliography}

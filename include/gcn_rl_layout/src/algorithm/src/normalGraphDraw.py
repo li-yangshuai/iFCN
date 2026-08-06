@@ -91,7 +91,9 @@ class NormalGraphDraw:
         self.contraction_global_evaluations = 0
         self.contraction_recursive_evaluations = 0
         self.contraction_empty_line_evaluations = 0
+        self.contraction_layer_merge_evaluations = 0
         self.contraction_exhausted = False
+        self.contraction_runtime_sec = 0.0
         self.clock_template_ok = False
         self.clock_template_conflict_count = 0
         self.phase_assignment_ok = False
@@ -895,15 +897,118 @@ class NormalGraphDraw:
             )
         return False, prev_metrics, None
 
+    def _adjacent_layer_merge_candidates(self):
+        """Return occupied adjacent rows/columns that can be projected together.
+
+        Unlike blank-line deletion, both physical layers contain nodes.  A
+        cheap projection test rejects a boundary when the two layers would put
+        two nodes in the same cell.  Routing, phase, and right/down legality are
+        checked later against the complete layout.
+        """
+        min_x, min_y, max_x, max_y = self.mapChessboard.findLayoutBoard()
+        if max_x < min_x or max_y < min_y:
+            return []
+
+        self._ensure_coord_cache()
+        x_projections = defaultdict(set)
+        y_projections = defaultdict(set)
+        x_counts = Counter()
+        y_counts = Counter()
+        for x, y in self._node_coord.values():
+            x, y = int(x), int(y)
+            x_projections[x].add(y)
+            y_projections[y].add(x)
+            x_counts[x] += 1
+            y_counts[y] += 1
+
+        width = int(max_x) - int(min_x) + 1
+        height = int(max_y) - int(min_y) + 1
+        candidates = []
+        for axis, lower, upper, projections, counts, area_saving in (
+            ("x", int(min_x), int(max_x), x_projections, x_counts, height),
+            ("y", int(min_y), int(max_y), y_projections, y_counts, width),
+        ):
+            for line in range(lower, upper):
+                first = projections.get(line, set())
+                second = projections.get(line + 1, set())
+                if not first or not second or first.intersection(second):
+                    continue
+                candidates.append(
+                    {
+                        "axis": axis,
+                        "line": int(line),
+                        "first_layer_node_count": int(counts[line]),
+                        "second_layer_node_count": int(counts[line + 1]),
+                        "moved_node_count": int(
+                            sum(count for layer, count in counts.items() if layer > line)
+                        ),
+                        "area_saving_upper_bound": int(area_saving),
+                    }
+                )
+
+        # Move the smallest suffix first.  This is the occupied-layer form of
+        # outside-in contraction and tends to perturb fewer routed terminals.
+        candidates.sort(
+            key=lambda item: (
+                int(item["moved_node_count"]),
+                -int(item["area_saving_upper_bound"]),
+                0 if item["axis"] == "x" else 1,
+                -int(item["line"]),
+            )
+        )
+        return candidates
+
+    def _try_merge_adjacent_layers(self, candidate, verbose=False):
+        """Project two occupied physical layers and accept only a legal reroute."""
+        axis = str(candidate["axis"])
+        line = int(candidate["line"])
+        if axis not in {"x", "y"}:
+            raise ValueError(f"Unknown adjacent-layer merge axis: {axis}")
+
+        prev_coords = self.coords.clone()
+        prev_fanin_directions = dict(self.fanin_directions)
+        prev_route_priority = set(self._last_route_priority)
+        prev_reverse_priority = bool(self._last_route_reverse_priority)
+        prev_reverse_remaining = bool(self._last_route_reverse_remaining)
+        prev_explicit_priority = tuple(self._last_route_explicit_priority)
+        prev_metrics = self._current_phase_contraction_metrics()
+
+        if axis == "x":
+            self.move_cols_left_after(line, 1)
+        else:
+            self.move_rows_up_after(line, 1)
+
+        self._ensure_coord_cache()
+        unique_node_cells = len(self._coord_set) == len(self._node_coord)
+        geometry_ok = unique_node_cells and not self._right_down_invariant_violations()
+        if geometry_ok and self._reroute_and_validate_current_coords(verbose=verbose):
+            new_metrics = self._current_phase_contraction_metrics()
+            if new_metrics["area"] < prev_metrics["area"]:
+                return True, prev_metrics, new_metrics
+
+        self.coords = prev_coords
+        self._coord_cache_dirty = True
+        self.fanin_directions = prev_fanin_directions
+        self._last_route_priority = prev_route_priority
+        self._last_route_reverse_priority = prev_reverse_priority
+        self._last_route_reverse_remaining = prev_reverse_remaining
+        self._last_route_explicit_priority = prev_explicit_priority
+        restored = self._reroute_and_validate_current_coords(verbose=False)
+        if not restored:
+            raise RuntimeError(
+                "failed to restore legal layout after rejected adjacent-layer merge"
+            )
+        return False, prev_metrics, None
+
     def compact_layout(self, max_iters=64, verbose=False):
         """Contract a top-down layout by moving nodes into their own wire cells.
 
         The full vertical interval is contracted first, followed recursively
         by its internal layer intervals.  Every interval has a local center;
         upper nodes move downward and lower nodes move upward.  Each accepted
-        local move is rerouted and phase-verified.  A final fixed-point stage
-        deletes rows and columns that contain no nodes.  Wires may cross those
-        lines: they are discarded and rerouted after every coordinate collapse.
+        local move is rerouted and phase-verified.  Final fixed-point stages
+        delete node-empty lines and then merge compatible occupied adjacent
+        layers.  Wires are discarded and rerouted after every collapse.
         """
         max_iters = max(0, int(max_iters))
         if max_iters <= 0:
@@ -951,6 +1056,24 @@ class NormalGraphDraw:
                 )
             ),
         )
+        layer_merge_evaluation_budget = max(
+            1,
+            int(
+                os.environ.get(
+                    "IFCN_LAYER_MERGE_CONTRACTION_EVALUATIONS",
+                    str(global_evaluation_budget),
+                )
+            ),
+        )
+        layer_merge_time_limit = max(
+            1.0,
+            float(
+                os.environ.get(
+                    "IFCN_LAYER_MERGE_CONTRACTION_TIMEOUT",
+                    str(global_time_limit),
+                )
+            ),
+        )
         window_evaluation_limit = max(
             1, int(os.environ.get("IFCN_CONTRACTION_WINDOW_EVALUATIONS", "4"))
         )
@@ -961,6 +1084,7 @@ class NormalGraphDraw:
         self.contraction_global_evaluations = 0
         self.contraction_recursive_evaluations = 0
         self.contraction_empty_line_evaluations = 0
+        self.contraction_layer_merge_evaluations = 0
         self.contraction_exhausted = False
         _, min_y, _, max_y = self.mapChessboard.findLayoutBoard()
         if max_y < min_y:
@@ -1175,8 +1299,94 @@ class NormalGraphDraw:
             if empty_line_exhausted or not improved_this_round:
                 break
 
+        # Stage 4: merge adjacent occupied physical layers.  Nodes in the
+        # second layer are projected onto the first and the downstream suffix
+        # is shifted by one cell.  This is a real layer merge, not whitespace
+        # removal; every proposal must survive a full reroute and phase check.
+        layer_merge_started = time.perf_counter()
+        layer_merge_reductions = 0
+        layer_merge_exhausted = False
+        while layer_merge_reductions < max_iters:
+            merge_candidates = self._adjacent_layer_merge_candidates()
+            if not merge_candidates:
+                break
+            improved_this_round = False
+            for candidate in merge_candidates:
+                if (
+                    self.contraction_layer_merge_evaluations
+                    >= layer_merge_evaluation_budget
+                    or time.perf_counter() - layer_merge_started
+                    >= layer_merge_time_limit
+                ):
+                    layer_merge_exhausted = True
+                    break
+                self.contraction_layer_merge_evaluations += 1
+                self.contraction_evaluations += 1
+                success, old_metrics, new_metrics = self._try_merge_adjacent_layers(
+                    candidate,
+                    verbose=False,
+                )
+                if not success:
+                    continue
+
+                reductions += 1
+                layer_merge_reductions += 1
+                improved_this_round = True
+                last_legal_coords = self.coords.clone()
+                axis = str(candidate["axis"])
+                self.contraction_history.append(
+                    {
+                        "step": int(reductions),
+                        "mode": (
+                            "adjacent_row_merge" if axis == "y"
+                            else "adjacent_col_merge"
+                        ),
+                        "axis": axis,
+                        "line": int(candidate["line"]),
+                        "merged_layers": [
+                            int(candidate["line"]),
+                            int(candidate["line"]) + 1,
+                        ],
+                        "first_layer_node_count": int(
+                            candidate["first_layer_node_count"]
+                        ),
+                        "second_layer_node_count": int(
+                            candidate["second_layer_node_count"]
+                        ),
+                        "moved_node_count": int(candidate["moved_node_count"]),
+                        "old_width": int(old_metrics["width"]),
+                        "old_height": int(old_metrics["height"]),
+                        "width": int(new_metrics["width"]),
+                        "height": int(new_metrics["height"]),
+                        "area": int(new_metrics["area"]),
+                        "old_used_cell_count": int(old_metrics["used_cell_count"]),
+                        "used_cell_count": int(new_metrics["used_cell_count"]),
+                        "old_routed_wire_cells": int(
+                            old_metrics["routed_wire_cells"]
+                        ),
+                        "routed_wire_cells": int(new_metrics["routed_wire_cells"]),
+                    }
+                )
+                if verbose:
+                    print(
+                        "[verified phase contract:merge-{}] layers {}+{}, "
+                        "area={}x{}".format(
+                            "row" if axis == "y" else "col",
+                            candidate["line"],
+                            int(candidate["line"]) + 1,
+                            new_metrics["width"],
+                            new_metrics["height"],
+                        )
+                    )
+                break
+            if layer_merge_exhausted or not improved_this_round:
+                break
+
         self.contraction_exhausted = bool(
-            global_exhausted or recursive_exhausted or empty_line_exhausted
+            global_exhausted
+            or recursive_exhausted
+            or empty_line_exhausted
+            or layer_merge_exhausted
         )
 
         if not self._reroute_and_validate_current_coords(verbose=False):
@@ -2434,7 +2644,9 @@ class NormalGraphDraw:
         self.contraction_global_evaluations = 0
         self.contraction_recursive_evaluations = 0
         self.contraction_empty_line_evaluations = 0
+        self.contraction_layer_merge_evaluations = 0
         self.contraction_exhausted = False
+        self.contraction_runtime_sec = 0.0
         if ml_tuning:
             self.set_ml_tuning(**ml_tuning)
 
@@ -2486,11 +2698,16 @@ class NormalGraphDraw:
                 # 4) Only a completely legal result may be contracted.  Nodes
                 # absorb adjacent cells of their own single wires in top-down
                 # and bottom-up sweeps, recursively compact internal layers,
-                # then delete blank rows/columns; every rejected action restores
-                # and reroutes the preceding legal state.
+                # delete blank rows/columns, and merge compatible occupied
+                # layers; every rejected action restores and reroutes the
+                # preceding legal state.
+                contraction_started = time.perf_counter()
                 compact_reductions = self.compact_layout(
                     max_iters=compact_iters,
                     verbose=verbose,
+                )
+                self.contraction_runtime_sec += float(
+                    time.perf_counter() - contraction_started
                 )
                 # ``compact_layout`` validates and reroutes every accepted cut;
                 # rerouting once more with a different edge order can destroy

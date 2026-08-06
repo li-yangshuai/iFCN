@@ -13,7 +13,7 @@
 #cross count: 58
 #phase origin: top-left=(3,4), saved coordinates are normalized to (0,0)
 #phase count: 4
-#runtime: 6.035s
+#runtime: 65.553s
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###

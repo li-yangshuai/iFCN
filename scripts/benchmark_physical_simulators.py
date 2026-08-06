@@ -38,6 +38,15 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--logic-threshold", type=float, default=0.1)
     parser.add_argument("--equivalence-tolerance", type=float, default=0.0)
     parser.add_argument("--require-equivalent", action="store_true")
+    parser.add_argument("--verify-internal-state", action="store_true",
+                        help="run an untimed full internal-state certificate pass")
+    parser.add_argument("--graph-mode",
+                        choices=("spatial", "all-pairs", "reuse"),
+                        default="spatial",
+                        help="interaction-graph ablation/reuse mode")
+    parser.add_argument("--disable-clock-cache", action="store_true")
+    parser.add_argument("--disable-input-cache", action="store_true")
+    parser.add_argument("--disable-fusion", action="store_true")
     parser.add_argument("--include-energy-input", action="store_true",
                         help="include derived *_energy_input.qca files")
     parser.add_argument("--max-circuits", type=int)
@@ -46,6 +55,8 @@ def parse_arguments() -> argparse.Namespace:
                         help="JSON object mapping absolute/relative QCA paths or basenames to VT files")
     parser.add_argument("--bootstrap-resamples", type=int, default=5000)
     parser.add_argument("--bootstrap-seed", type=int, default=20260712)
+    parser.add_argument("--cpu-affinity",
+                        help="Linux taskset CPU list, e.g. 0 or 2-3")
 
     # The wrapper deliberately exposes the same physical parameters as the
     # paired runner.  Values left as None retain the C++ baseline defaults.
@@ -60,6 +71,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--steady-state-tolerance", type=float)
     parser.add_argument("--max-steady-state-iterations", type=int)
     parser.add_argument("--numeric-method", choices=("euler", "rk4"))
+    parser.add_argument("--cache-budget-bytes", type=int)
     parser.add_argument("--epsilon-r", type=float)
     parser.add_argument("--layer-separation", type=float)
     parser.add_argument("--radius-effect", type=float)
@@ -146,6 +158,7 @@ def append_optional_arguments(command: list[str], args: argparse.Namespace) -> N
         ("steady_state_tolerance", "--steady-state-tolerance"),
         ("max_steady_state_iterations", "--max-steady-state-iterations"),
         ("numeric_method", "--numeric-method"),
+        ("cache_budget_bytes", "--cache-budget-bytes"),
         ("epsilon_r", "--epsilon-r"),
         ("layer_separation", "--layer-separation"),
         ("radius_effect", "--radius-effect"),
@@ -200,6 +213,35 @@ def geometric_mean(values: Sequence[float]) -> float:
     return math.exp(sum(math.log(value) for value in positive) / len(positive))
 
 
+def suite_speedup(rows: Sequence[dict[str, Any]]) -> float:
+    reference = sum(float(row["reference_median_seconds"]) for row in rows)
+    candidate = sum(float(row["candidate_median_seconds"]) for row in rows)
+    return reference / candidate if candidate > 0.0 else math.nan
+
+
+def bootstrap_row_interval(rows: Sequence[dict[str, Any]],
+                           statistic: Callable[[Sequence[dict[str, Any]]], float],
+                           resamples: int,
+                           rng: random.Random) -> list[float] | None:
+    if not rows or resamples == 0:
+        return None
+    sampled = []
+    for _ in range(resamples):
+        sample = [rows[rng.randrange(len(rows))] for _ in rows]
+        sampled.append(statistic(sample))
+    sampled.sort()
+    return [percentile(sampled, 0.025), percentile(sampled, 0.975)]
+
+
+def two_sided_sign_test(wins: int, losses: int) -> float:
+    trials = wins + losses
+    if trials == 0:
+        return 1.0
+    tail = min(wins, losses)
+    probability = sum(math.comb(trials, value) for value in range(tail + 1))
+    return min(1.0, 2.0 * probability / (2 ** trials))
+
+
 def aggregate_model(rows: Sequence[dict[str, Any]], resamples: int,
                     rng: random.Random) -> dict[str, Any]:
     stable_samples = sum(int(row["stable_reference_samples"]) for row in rows)
@@ -216,6 +258,15 @@ def aggregate_model(rows: Sequence[dict[str, Any]], resamples: int,
     maes = [float(row["mae"]) for row in rows]
     reference_time = sum(float(row["reference_median_seconds"]) for row in rows)
     candidate_time = sum(float(row["candidate_median_seconds"]) for row in rows)
+    sorted_speedups = sorted(speedups)
+    wins = sum(value > 1.0 for value in speedups)
+    losses = sum(value < 1.0 for value in speedups)
+    ties = len(speedups) - wins - losses
+    slower_circuits = [
+        {"circuit": row["circuit"], "speedup": float(row["speedup"])}
+        for row in sorted(rows, key=lambda item: float(item["speedup"]))
+        if float(row["speedup"]) < 1.0
+    ]
 
     result: dict[str, Any] = {
         "circuits": len(rows),
@@ -239,8 +290,38 @@ def aggregate_model(rows: Sequence[dict[str, Any]], resamples: int,
         "suite_speedup": reference_time / candidate_time if candidate_time > 0.0 else math.nan,
         "geometric_mean_speedup": geometric_mean(speedups),
         "median_speedup": statistics.median(speedups) if rows else math.nan,
+        "speedup_q1": percentile(sorted_speedups, 0.25),
+        "speedup_q3": percentile(sorted_speedups, 0.75),
+        "minimum_speedup": min(speedups, default=math.nan),
+        "maximum_speedup": max(speedups, default=math.nan),
+        "circuits_faster_than_baseline": wins,
+        "circuits_slower_than_baseline": losses,
+        "circuits_tied_with_baseline": ties,
+        "two_sided_sign_test_p_value": two_sided_sign_test(wins, losses),
+        "slower_circuit_details": slower_circuits,
+        "maximum_peak_process_rss_kib": max(
+            (int(row["peak_process_rss_kib"]) for row in rows), default=0),
+        "minimum_total_cells": min(
+            (int(row["total_cells"]) for row in rows), default=0),
+        "maximum_total_cells": max(
+            (int(row["total_cells"]) for row in rows), default=0),
+        "minimum_directed_couplings": min(
+            (int(row["directed_couplings"]) for row in rows), default=0),
+        "maximum_directed_couplings": max(
+            (int(row["directed_couplings"]) for row in rows), default=0),
+        "all_internal_state_checked": all(
+            bool(row["internal_state_checked"]) for row in rows),
+        "all_internal_state_equivalent": all(
+            (not bool(row["internal_state_checked"])) or
+            bool(row["internal_state_equivalent"]) for row in rows),
+        "internal_state_frames": sum(
+            int(row["internal_state_frames"]) for row in rows),
+        "internal_state_values": sum(
+            int(row["internal_state_values"]) for row in rows),
     }
     result["bootstrap_95_percent_ci"] = {
+        "suite_speedup": bootstrap_row_interval(
+            rows, suite_speedup, resamples, rng),
         "geometric_mean_speedup": bootstrap_interval(
             speedups, geometric_mean, resamples, rng),
         "macro_sign_agreement": bootstrap_interval(
@@ -260,12 +341,20 @@ def machine_metadata(executable: Path) -> dict[str, Any]:
             if line.lower().startswith("model name") and ":" in line:
                 cpu_model = line.split(":", 1)[1].strip()
                 break
+    affinity = None
+    if hasattr(os, "sched_getaffinity"):
+        affinity = sorted(os.sched_getaffinity(0))
+    governor_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+    governor = (governor_path.read_text(encoding="utf-8").strip()
+                if governor_path.is_file() else None)
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
         "processor": platform.processor(),
         "cpu_model": cpu_model,
         "logical_cpu_count": os.cpu_count(),
+        "process_cpu_affinity": affinity,
+        "scaling_governor": governor,
         "python": platform.python_version(),
         "benchmark_executable": str(executable.resolve()),
     }
@@ -274,15 +363,70 @@ def machine_metadata(executable: Path) -> dict[str, Any]:
 def flatten_comparison(circuit: Path, report: dict[str, Any],
                        comparison: dict[str, Any]) -> dict[str, Any]:
     accuracy = comparison["accuracy"]
+    certificate = comparison.get("internal_state_certificate", {})
+    reference_phases = comparison.get("reference_phase_timings", {})
+    candidate_phases = comparison.get("candidate_phase_timings", {})
+    components = comparison.get("component_seconds", {})
+    component_timings = comparison.get("candidate_component_timings", {})
+    work = comparison.get("work", {})
+    options = comparison.get("options", {})
+    graph_candidates = work.get(
+        "graph_candidate_checks", work.get("spatial_candidates", 0))
+    all_pair_checks = work.get("graph_all_pair_checks", 0)
+
+    def phase_median(phases: dict[str, Any], name: str) -> float:
+        return float(phases.get(name, {}).get("median_seconds", math.nan))
+
+    def component_median(name: str) -> float:
+        if name in component_timings:
+            return float(component_timings[name]["median_seconds"])
+        return float(components.get(name, math.nan))
+
     return {
         "circuit": str(circuit),
         "model": comparison["model"],
         "simulation_mode": report["simulation_mode"],
         "vector_table": report["vector_table"],
         "repetitions": report["repetitions"],
+        "epsilon_r": options.get("epsilon_r", math.nan),
+        "numeric_method": comparison.get("numeric_method", ""),
+        "peak_process_rss_kib": report.get("peak_process_rss_kib", 0),
+        "total_cells": work.get("total_cells", 0),
+        "dynamic_cells": work.get("dynamic_cells", 0),
+        "directed_couplings": work.get("directed_couplings", 0),
+        "graph_candidate_checks": graph_candidates,
+        "graph_all_pair_checks": all_pair_checks,
+        "graph_candidate_fraction": (
+            float(graph_candidates) / float(all_pair_checks)
+            if all_pair_checks else 0.0),
+        "clock_cache_used": work.get("clock_cache_used", False),
+        "input_cache_used": work.get("input_cache_used", False),
+        "fused_integration_used": work.get("fused_integration_used", False),
         "reference_median_seconds": comparison["reference_timing"]["median_seconds"],
         "candidate_median_seconds": comparison["candidate_timing"]["median_seconds"],
         "speedup": comparison["speedup"],
+        "graph_mode": comparison.get("graph_mode"),
+        "graph_precompile_seconds": comparison.get(
+            "graph_precompile_seconds", 0.0),
+        "reference_design_initialization_median_seconds": phase_median(
+            reference_phases, "design_initialization"),
+        "candidate_design_initialization_median_seconds": phase_median(
+            candidate_phases, "design_initialization"),
+        "reference_iterations_median_seconds": phase_median(
+            reference_phases, "iterations"),
+        "candidate_iterations_median_seconds": phase_median(
+            candidate_phases, "iterations"),
+        "interaction_graph_seconds": component_median("interaction_graph"),
+        "energy_materialization_seconds": component_median(
+            "energy_materialization"),
+        "kernel_compilation_seconds": component_median("kernel_compilation"),
+        "generator_cache_seconds": component_median("generator_cache"),
+        "internal_state_checked": certificate.get("checked", False),
+        "internal_state_equivalent": certificate.get("equivalent", False),
+        "internal_state_frames": certificate.get("frames", 0),
+        "internal_state_values": certificate.get("values", 0),
+        "reference_state_digest": certificate.get("reference_digest", ""),
+        "candidate_state_digest": certificate.get("candidate_digest", ""),
         "comparable": accuracy["comparable"],
         "incompatibility": accuracy["incompatibility"],
         "output_samples": accuracy["output_samples"],
@@ -324,6 +468,7 @@ def main() -> int:
 
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    benchmark_protocol: dict[str, Any] | None = None
     for index, circuit in enumerate(circuits, start=1):
         report_path = raw_directory / f"{safe_report_stem(circuit)}.json"
         command = [
@@ -333,6 +478,7 @@ def main() -> int:
             "--warmup", str(args.warmup),
             "--logic-threshold", str(args.logic_threshold),
             "--equivalence-tolerance", str(args.equivalence_tolerance),
+            "--graph-mode", args.graph_mode,
             "--json", str(report_path),
         ]
         vector = vector_for_circuit(circuit, vector_manifest)
@@ -340,9 +486,19 @@ def main() -> int:
             command.extend(("--vectors", str(vector)))
         if args.require_equivalent:
             command.append("--require-equivalent")
+        if args.verify_internal_state:
+            command.append("--verify-internal-state")
+        if args.disable_clock_cache:
+            command.append("--disable-clock-cache")
+        if args.disable_input_cache:
+            command.append("--disable-input-cache")
+        if args.disable_fusion:
+            command.append("--disable-fusion")
         append_optional_arguments(command, args)
 
         print(f"[{index}/{len(circuits)}] {circuit}", flush=True)
+        if args.cpu_affinity:
+            command = ["taskset", "--cpu-list", args.cpu_affinity, *command]
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
         if completed.returncode != 0:
             failure = {
@@ -361,6 +517,7 @@ def main() -> int:
             continue
 
         report = json.loads(report_path.read_text(encoding="utf-8"))
+        benchmark_protocol = report.get("benchmark_protocol", benchmark_protocol)
         for comparison in report["comparisons"]:
             rows.append(flatten_comparison(circuit, report, comparison))
 
@@ -374,11 +531,15 @@ def main() -> int:
         if any(row["model"] == model for row in rows)
     }
     summary = {
-        "schema_version": 1,
+        "schema_version": 3,
         "requested_circuits": len(circuits),
         "successful_circuits": len({row["circuit"] for row in rows}),
         "failed_circuits": len(failures),
         "model": args.model,
+        "graph_mode": args.graph_mode,
+        "verify_internal_state": args.verify_internal_state,
+        "requested_cpu_affinity": args.cpu_affinity,
+        "benchmark_protocol": benchmark_protocol,
         "vector_manifest": str(vector_manifest_path) if vector_manifest_path else None,
         "machine": machine_metadata(executable),
         "models": model_summaries,

@@ -1,0 +1,109 @@
+\begin{thebibliography}{13}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Lent et~al.(1993)Lent, Tougaw, Porod, and Bernstein]{lent1993}
+Craig~S. Lent, P.~Douglas Tougaw, Wolfgang Porod, and Gary~H. Bernstein.
+\newblock Quantum cellular automata.
+\newblock \emph{Nanotechnology}, 4\penalty0 (1):\penalty0 49--57, 1993.
+\newblock \doi{10.1088/0957-4484/4/1/004}.
+
+\bibitem[Tougaw and Lent(1994)]{tougaw1994}
+P.~Douglas Tougaw and Craig~S. Lent.
+\newblock Logical devices implemented using quantum cellular automata.
+\newblock \emph{Journal of Applied Physics}, 75\penalty0 (3):\penalty0
+  1818--1825, 1994.
+\newblock \doi{10.1063/1.356375}.
+
+\bibitem[Peng et~al.(2019)Peng, Xiao, Xu, Huang, and Xie]{peng2019}
+Fei Peng, Zhenjie Xiao, Dong Xu, Jianhong Huang, and Guangjun Xie.
+\newblock Automatic object model generation for nanoelectronics using {C++}
+  meta programming.
+\newblock \emph{Electronics Letters}, 55\penalty0 (24):\penalty0 1286--1288,
+  2019.
+\newblock \doi{10.1049/el.2019.1861}.
+
+\bibitem[Tougaw and Lent(1996)]{tougaw1996}
+P.~Douglas Tougaw and Craig~S. Lent.
+\newblock Dynamic behavior of quantum cellular automata.
+\newblock \emph{Journal of Applied Physics}, 80\penalty0 (8):\penalty0
+  4722--4736, 1996.
+\newblock \doi{10.1063/1.363455}.
+
+\bibitem[Hennessy and Lent(2001)]{hennessy2001}
+Kevin Hennessy and Craig~S. Lent.
+\newblock Clocking of molecular quantum-dot cellular automata.
+\newblock \emph{Journal of Vacuum Science \& Technology B}, 19\penalty0
+  (5):\penalty0 1752--1755, 2001.
+\newblock \doi{10.1116/1.1394729}.
+
+\bibitem[Walus et~al.(2004)Walus, Dysart, Jullien, and Budiman]{walus2004}
+Konrad Walus, Timothy~J. Dysart, Graham~A. Jullien, and R.~Arief Budiman.
+\newblock {QCADesigner}: A rapid design and simulation tool for quantum-dot
+  cellular automata.
+\newblock \emph{IEEE Transactions on Nanotechnology}, 3\penalty0 (1):\penalty0
+  26--31, 2004.
+\newblock \doi{10.1109/TNANO.2003.820815}.
+
+\bibitem[Timler and Lent(2002)]{timler2002}
+John Timler and Craig~S. Lent.
+\newblock Power gain and dissipation in quantum-dot cellular automata.
+\newblock \emph{Journal of Applied Physics}, 91\penalty0 (2):\penalty0
+  823--831, 2002.
+\newblock \doi{10.1063/1.1421217}.
+
+\bibitem[Torres et~al.(2018)Torres, Wille, Niemann, and Drechsler]{torres2018}
+Frank~Sill Torres, Robert Wille, Philipp Niemann, and Rolf Drechsler.
+\newblock An energy-aware model for the logic synthesis of quantum-dot cellular
+  automata.
+\newblock \emph{IEEE Transactions on Computer-Aided Design of Integrated
+  Circuits and Systems}, 37\penalty0 (12):\penalty0 3031--3041, 2018.
+\newblock \doi{10.1109/TCAD.2018.2789782}.
+
+\bibitem[Walter et~al.(2019)Walter, Wille, Torres, Gro{\ss}e, and
+  Drechsler]{walter2019}
+Marcel Walter, Robert Wille, Frank~Sill Torres, Daniel Gro{\ss}e, and Rolf
+  Drechsler.
+\newblock fiction: An open source framework for the design of field-coupled
+  nanocomputing circuits.
+\newblock \emph{CoRR}, abs/1905.02477, 2019.
+\newblock URL \url{https://arxiv.org/abs/1905.02477}.
+
+\bibitem[Li et~al.(2026)Li, Peng, Tong, Zhu, Han, and Xie]{li2026}
+Yangshuai Li, Fei Peng, Xiansheng Tong, Rongjie Zhu, Qian Han, and Guangjun
+  Xie.
+\newblock {iFCN}: An automated {RTL}-to-device framework for molecular
+  field-coupled nanocomputing circuits.
+\newblock \emph{IEEE Transactions on Circuits and Systems I: Regular Papers},
+  73\penalty0 (2):\penalty0 1196--1208, 2026.
+\newblock \doi{10.1109/TCSI.2025.3599115}.
+
+\bibitem[Drewniok et~al.(2023)Drewniok, Walter, Ng, Walus, and
+  Wille]{drewniok2023quicksim}
+Jan Drewniok, Marcel Walter, Samuel Sze~Hang Ng, Konrad Walus, and Robert
+  Wille.
+\newblock {QuickSim}: Efficient and accurate physical simulation of silicon
+  dangling bond logic.
+\newblock \emph{CoRR}, abs/2303.03422, 2023.
+\newblock URL \url{https://arxiv.org/abs/2303.03422}.
+
+\bibitem[Drewniok et~al.(2024)Drewniok, Walter, and
+  Wille]{drewniok2024quickexact}
+Jan Drewniok, Marcel Walter, and Robert Wille.
+\newblock The need for speed: Efficient exact simulation of silicon dangling
+  bond logic.
+\newblock In \emph{Proceedings of the 29th Asia and South Pacific Design
+  Automation Conference}, pages 576--581, 2024.
+\newblock \doi{10.1109/ASP-DAC58780.2024.10473946}.
+
+\bibitem[Georges et~al.(2007)Georges, Buytaert, and Eeckhout]{georges2007}
+Andy Georges, Dries Buytaert, and Lieven Eeckhout.
+\newblock Statistically rigorous java performance evaluation.
+\newblock In \emph{Proceedings of the 22nd ACM SIGPLAN Conference on
+  Object-Oriented Programming Systems and Applications}, pages 57--76, 2007.
+\newblock \doi{10.1145/1297105.1297033}.
+
+\end{thebibliography}

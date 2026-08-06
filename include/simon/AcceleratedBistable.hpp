@@ -8,12 +8,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <numeric>
 #include <utility>
 #include <vector>
 
-#include "Simulation.hpp"
+#include "OrderedInteractionGraph.hpp"
 
 namespace simon {
 
@@ -26,6 +25,7 @@ namespace simon {
  * contiguous simulation kernel before the time loop.
  */
 struct AcceleratedBistableStatistics {
+    std::size_t total_cells = 0;
     std::size_t samples = 0;
     std::size_t sweeps = 0;
     std::size_t cell_updates = 0;
@@ -34,6 +34,13 @@ struct AcceleratedBistableStatistics {
     std::size_t dynamic_cells = 0;
     std::size_t directed_couplings = 0;
     std::size_t spatial_candidates = 0;
+    std::size_t graph_all_pair_checks = 0;
+    bool graph_spatial_buckets_used = false;
+    bool graph_reused = false;
+    bool precompiled_graph_rejected = false;
+    double interaction_graph_seconds = 0.0;
+    double energy_materialization_seconds = 0.0;
+    double kernel_compilation_seconds = 0.0;
 };
 
 /**
@@ -75,6 +82,7 @@ struct AcceleratedBistableEngine : public QCAEnginePolicy<Host> {
      * baseline graph.
      */
     void initialize_design(QCADesign &design) {
+        std::vector<QCACell*> all_cells;
         for (auto &layer : design) {
             for (auto &cell : layer) {
                 extrinsics(cell).reset();
@@ -84,75 +92,51 @@ struct AcceleratedBistableEngine : public QCAEnginePolicy<Host> {
                 if (function(cell) == FCNCellFunction::FIXED) {
                     polarization(cell) = calculate_cell_polarization(cell);
                 }
+                all_cells.push_back(&cell);
             }
         }
 
-        struct IndexedCell {
-            QCACell *cell = nullptr;
-            std::size_t index = 0;
-        };
-
-        const double bucket_size = std::max(1.0, option.radius_effect);
-        const auto bucket_coordinate = [bucket_size](double value) {
-            return static_cast<long long>(std::floor(value / bucket_size));
-        };
-
-        std::vector<IndexedCell> all_cells;
-        std::map<std::pair<long long, long long>, std::vector<IndexedCell>> buckets;
-        for (auto &layer : design) {
-            for (auto &cell : layer) {
-                const IndexedCell indexed{&cell, all_cells.size()};
-                all_cells.push_back(indexed);
-                buckets[{bucket_coordinate(x(cell)),
-                         bucket_coordinate(y(cell))}].push_back(indexed);
-            }
+        const auto graph_begin = std::chrono::steady_clock::now();
+        const OrderedInteractionGraph *graph = option.acceleration.precompiled_graph;
+        graph_reused_ = graph != nullptr && graph->matches(design, option);
+        precompiled_graph_rejected_ = graph != nullptr && !graph_reused_;
+        if (!graph_reused_) {
+            owned_graph_ = OrderedInteractionGraph::compile(
+                    design, option, option.acceleration.use_spatial_buckets);
+            graph = &owned_graph_;
         }
 
-        graph_spatial_candidates_ = 0;
-        std::vector<IndexedCell> candidates;
-        for (auto &layer : design) {
-            for (auto &cell : layer) {
-                candidates.clear();
-                const long long bucket_x = bucket_coordinate(x(cell));
-                const long long bucket_y = bucket_coordinate(y(cell));
-                for (long long dx = -1; dx <= 1; ++dx) {
-                    for (long long dy = -1; dy <= 1; ++dy) {
-                        const auto found = buckets.find({bucket_x + dx,
-                                                         bucket_y + dy});
-                        if (found != buckets.end()) {
-                            candidates.insert(candidates.end(),
-                                              found->second.begin(),
-                                              found->second.end());
-                        }
-                    }
-                }
-
-                std::sort(candidates.begin(), candidates.end(),
-                          [](const IndexedCell &left, const IndexedCell &right) {
-                              return left.index < right.index;
-                          });
-                graph_spatial_candidates_ += candidates.size();
-
-                auto &cell_neighbours = neighbours(cell);
-                auto &cell_energies = kink_energies(cell);
-                for (const IndexedCell &candidate : candidates) {
-                    if (&cell != candidate.cell &&
-                        calculate_inter_cell_distance(cell, *candidate.cell, option) <=
-                                option.radius_effect) {
-                        cell_neighbours.push_back(candidate.cell);
-                        cell_energies.push_back(
-                                calculate_inter_cell_kink_energy(cell,
-                                                                 *candidate.cell,
-                                                                 option));
-                    }
-                }
+        graph_statistics_ = graph->statistics();
+        interaction_graph_seconds_ = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - graph_begin).count();
+        const auto materialization_begin = std::chrono::steady_clock::now();
+        for (std::size_t source = 0; source < all_cells.size(); ++source) {
+            auto &cell_neighbours = neighbours(*all_cells[source]);
+            auto &cell_energies = kink_energies(*all_cells[source]);
+            const std::size_t begin = graph->row_begin(source);
+            const std::size_t end = graph->row_end(source);
+            cell_neighbours.reserve(end - begin);
+            cell_energies.reserve(end - begin);
+            for (std::size_t coupling = begin; coupling < end; ++coupling) {
+                cell_neighbours.push_back(
+                        all_cells[graph->coupling(coupling).neighbour_index]);
+                cell_energies.push_back(
+                        graph->kink_energy(coupling, option.epsilon_r));
             }
         }
+        energy_materialization_seconds_ = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - materialization_begin).count();
     }
 
     void before_iterations(QCADesign &design, const Result &result) {
+        if (option.trace_recorder != nullptr) {
+            option.trace_recorder->reset();
+        }
         seed_simulation_random_generator(option.random_seed);
+        const auto kernel_begin = std::chrono::steady_clock::now();
         compile_kernel(design, result);
+        statistics_.kernel_compilation_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - kernel_begin).count();
     }
 
     void compute_current_iteration(std::size_t sample,
@@ -210,6 +194,20 @@ struct AcceleratedBistableEngine : public QCAEnginePolicy<Host> {
                     ++statistics_.cell_updates;
                 }
             }
+
+            if (option.trace_recorder != nullptr) {
+                option.trace_recorder->begin_frame(
+                        SimulationTraceFrame::BistableSweep,
+                        sample,
+                        iteration);
+                for (const auto &trace_layer : design) {
+                    for (const auto &trace_cell : trace_layer) {
+                        option.trace_recorder->record(
+                                simon::polarization(trace_cell));
+                    }
+                }
+                option.trace_recorder->end_frame();
+            }
         }
 
         ++statistics_.samples;
@@ -241,7 +239,16 @@ private:
 
     void compile_kernel(QCADesign &design, const Result &result) {
         statistics_ = {};
-        statistics_.spatial_candidates = graph_spatial_candidates_;
+        statistics_.total_cells = graph_statistics_.cells;
+        statistics_.spatial_candidates = graph_statistics_.candidate_checks;
+        statistics_.graph_all_pair_checks = graph_statistics_.all_pair_checks;
+        statistics_.graph_spatial_buckets_used =
+                graph_statistics_.spatial_buckets_used;
+        statistics_.graph_reused = graph_reused_;
+        statistics_.precompiled_graph_rejected = precompiled_graph_rejected_;
+        statistics_.interaction_graph_seconds = interaction_graph_seconds_;
+        statistics_.energy_materialization_seconds =
+                energy_materialization_seconds_;
         layers_.clear();
         layers_.reserve(size(design));
         couplings_.clear();
@@ -299,7 +306,12 @@ private:
     std::vector<PreparedLayer> layers_;
     std::vector<Coupling> couplings_;
     AcceleratedBistableStatistics statistics_;
-    std::size_t graph_spatial_candidates_ = 0;
+    OrderedInteractionGraph owned_graph_;
+    OrderedInteractionGraph::Statistics graph_statistics_;
+    bool graph_reused_ = false;
+    bool precompiled_graph_rejected_ = false;
+    double interaction_graph_seconds_ = 0.0;
+    double energy_materialization_seconds_ = 0.0;
 };
 
 using AcceleratedBistableAlgorithm =

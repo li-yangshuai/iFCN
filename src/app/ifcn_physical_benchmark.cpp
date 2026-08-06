@@ -14,15 +14,21 @@
 #include <iostream>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/resource.h>
+#endif
+
 namespace {
 
 enum class RequestedModel { Bistable, Coherence, Both };
+enum class GraphMode { SpatialCold, AllPairsCold, SpatialReuse };
 
 struct CommandLine {
     std::string design_path;
@@ -31,9 +37,11 @@ struct CommandLine {
     std::string json_path;
     std::string csv_path;
     RequestedModel model = RequestedModel::Both;
+    GraphMode graph_mode = GraphMode::SpatialCold;
     std::size_t repetitions = 3;
     std::size_t warmup = 0;
     bool require_equivalent = false;
+    bool verify_internal_state = false;
     double equivalence_tolerance = 0.0;
     simon::SimulationComparisonOption comparison;
     simon::QCABistableOption bistable;
@@ -55,12 +63,48 @@ struct PairRecord {
     std::string candidate_name;
     TimingSummary reference_timing;
     TimingSummary candidate_timing;
+    std::map<std::string, TimingSummary> reference_phase_timings;
+    std::map<std::string, TimingSummary> candidate_phase_timings;
     simon::SimulationComparisonMetrics comparison;
     std::map<std::string, double> option_values;
     std::map<std::string, std::size_t> work_counters;
     std::map<std::string, bool> work_flags;
+    std::map<std::string, double> component_seconds;
+    std::map<std::string, TimingSummary> candidate_component_timings;
     std::string numeric_method;
+    std::string graph_mode;
+    double graph_precompile_seconds = 0.0;
+    bool internal_state_checked = false;
+    bool internal_state_equivalent = false;
+    std::size_t internal_state_frames = 0;
+    std::size_t internal_state_values = 0;
+    std::string reference_state_digest;
+    std::string candidate_state_digest;
 };
+
+std::size_t peak_process_rss_kib() {
+#if defined(__unix__) || defined(__APPLE__)
+    struct rusage usage {};
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+#if defined(__APPLE__)
+        return static_cast<std::size_t>(usage.ru_maxrss / 1024);
+#else
+        return static_cast<std::size_t>(usage.ru_maxrss);
+#endif
+    }
+#endif
+    return 0;
+}
+
+const char *compiler_family() {
+#if defined(__clang__)
+    return "clang";
+#elif defined(__GNUC__)
+    return "gcc";
+#else
+    return "unknown";
+#endif
+}
 
 void print_usage(std::ostream &stream) {
     stream
@@ -76,7 +120,10 @@ void print_usage(std::ostream &stream) {
         << "  --json PATH                      write machine-readable report\n"
         << "  --csv PATH                       write one summary row per model\n"
         << "  --require-equivalent             non-zero exit if equivalence fails\n"
+        << "  --verify-internal-state          untimed full-state trajectory certificate\n"
         << "  --equivalence-tolerance X        allowed max polarization error\n"
+        << "  --graph-mode spatial|all-pairs|reuse\n"
+        << "                                    graph ablation/reuse mode (default: spatial)\n"
         << "\n"
         << "Shared physical/clock options:\n"
         << "  --epsilon-r X --layer-separation X --radius-effect X\n"
@@ -89,7 +136,9 @@ void print_usage(std::ostream &stream) {
         << "Coherence-vector options:\n"
         << "  --temperature X --relaxation X --time-step X --duration X\n"
         << "  --steady-state-tolerance X --max-steady-state-iterations N\n"
-        << "  --numeric-method euler|rk4\n";
+        << "  --numeric-method euler|rk4\n"
+        << "  --cache-budget-bytes N\n"
+        << "  --disable-clock-cache --disable-input-cache --disable-fusion\n";
 }
 
 std::string require_value(int argc, char **argv, int &index,
@@ -156,9 +205,17 @@ CommandLine parse_command_line(int argc, char **argv) {
             command.csv_path = require_value(argc, argv, index, argument);
         } else if (argument == "--require-equivalent") {
             command.require_equivalent = true;
+        } else if (argument == "--verify-internal-state") {
+            command.verify_internal_state = true;
         } else if (argument == "--equivalence-tolerance") {
             command.equivalence_tolerance =
                 std::stod(require_value(argc, argv, index, argument));
+        } else if (argument == "--graph-mode") {
+            const std::string value = require_value(argc, argv, index, argument);
+            if (value == "spatial") command.graph_mode = GraphMode::SpatialCold;
+            else if (value == "all-pairs") command.graph_mode = GraphMode::AllPairsCold;
+            else if (value == "reuse") command.graph_mode = GraphMode::SpatialReuse;
+            else throw std::runtime_error("unknown graph mode: " + value);
         } else if (argument == "--epsilon-r") {
             const double value = std::stod(require_value(argc, argv, index, argument));
             command.bistable.epsilon_r = value;
@@ -228,6 +285,15 @@ CommandLine parse_command_line(int argc, char **argv) {
             } else {
                 throw std::runtime_error("unknown numeric method: " + value);
             }
+        } else if (argument == "--cache-budget-bytes") {
+            command.coherence.acceleration.cache_budget_bytes =
+                std::stoull(require_value(argc, argv, index, argument));
+        } else if (argument == "--disable-clock-cache") {
+            command.coherence.acceleration.use_clock_cache = false;
+        } else if (argument == "--disable-input-cache") {
+            command.coherence.acceleration.use_input_cache = false;
+        } else if (argument == "--disable-fusion") {
+            command.coherence.acceleration.use_fused_integration = false;
         } else {
             throw std::runtime_error("unknown argument: " + argument);
         }
@@ -280,7 +346,32 @@ TimingSummary summarize(std::vector<double> seconds) {
 struct TimedResult {
     simon::Result result;
     double seconds = 0.0;
+    simon::SimulationPhaseTimings phase_timings;
 };
+
+std::map<std::string, TimingSummary> summarize_phase_timings(
+        const std::vector<simon::SimulationPhaseTimings> &samples) {
+    using Member = double simon::SimulationPhaseTimings::*;
+    const std::array<std::pair<const char *, Member>, 7> phases{{
+        {"preparation", &simon::SimulationPhaseTimings::preparation_seconds},
+        {"design_initialization",
+         &simon::SimulationPhaseTimings::design_initialization_seconds},
+        {"result", &simon::SimulationPhaseTimings::result_seconds},
+        {"before_iterations", &simon::SimulationPhaseTimings::before_iterations_seconds},
+        {"iterations", &simon::SimulationPhaseTimings::iterations_seconds},
+        {"after_iterations", &simon::SimulationPhaseTimings::after_iterations_seconds},
+        {"total", &simon::SimulationPhaseTimings::total_seconds},
+    }};
+
+    std::map<std::string, TimingSummary> summaries;
+    for (const auto &[name, member] : phases) {
+        std::vector<double> values;
+        values.reserve(samples.size());
+        for (const auto &sample : samples) values.push_back(sample.*member);
+        summaries.emplace(name, summarize(std::move(values)));
+    }
+    return summaries;
+}
 
 template<typename Algorithm, typename Option>
 TimedResult run_algorithm(const simon::QCADesign &prototype,
@@ -293,6 +384,7 @@ TimedResult run_algorithm(const simon::QCADesign &prototype,
     const auto start = std::chrono::steady_clock::now();
     Algorithm algorithm(option);
     algorithm.run(design, vectors, timed.result, mode);
+    timed.phase_timings = algorithm.phase_timings();
     timed.seconds = std::chrono::duration<double>(
                         std::chrono::steady_clock::now() - start).count();
     return timed;
@@ -310,9 +402,19 @@ std::pair<TimedResult, Statistics> run_accelerated(
     const auto start = std::chrono::steady_clock::now();
     Algorithm algorithm(option);
     algorithm.run(design, vectors, timed.result, mode);
+    timed.phase_timings = algorithm.phase_timings();
     timed.seconds = std::chrono::duration<double>(
                         std::chrono::steady_clock::now() - start).count();
     return {std::move(timed), algorithm.statistics()};
+}
+
+const char *graph_mode_name(GraphMode mode) {
+    switch (mode) {
+        case GraphMode::SpatialCold: return "spatial_cold";
+        case GraphMode::AllPairsCold: return "all_pairs_cold";
+        case GraphMode::SpatialReuse: return "spatial_reuse";
+    }
+    return "unknown";
 }
 
 PairRecord benchmark_bistable(const CommandLine &command,
@@ -322,6 +424,37 @@ PairRecord benchmark_bistable(const CommandLine &command,
                               simon::Result &reference_result,
                               simon::Result &candidate_result) {
     auto option = command.bistable;
+    option.acceleration.use_spatial_buckets =
+            command.graph_mode != GraphMode::AllPairsCold;
+    std::optional<simon::OrderedInteractionGraph> precompiled_graph;
+    double graph_precompile_seconds = 0.0;
+    if (command.graph_mode == GraphMode::SpatialReuse) {
+        simon::QCADesign compilation_design = prototype;
+        const auto begin = std::chrono::steady_clock::now();
+        precompiled_graph.emplace(simon::OrderedInteractionGraph::compile(
+                compilation_design, option, true));
+        graph_precompile_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - begin).count();
+        option.acceleration.precompiled_graph = &*precompiled_graph;
+    }
+
+    // Retain the complete IEEE-754 word streams during the untimed
+    // verification pass.  This makes equivalence a direct sequence
+    // comparison rather than a probabilistic digest comparison.
+    simon::SimulationTraceRecorder reference_trace(true);
+    simon::SimulationTraceRecorder candidate_trace(true);
+    if (command.verify_internal_state) {
+        auto trace_reference_option = option;
+        auto trace_candidate_option = option;
+        trace_reference_option.trace_recorder = &reference_trace;
+        trace_candidate_option.trace_recorder = &candidate_trace;
+        (void)run_algorithm<simon::BistableAlgorithm>(
+                prototype, vector_prototype, mode, trace_reference_option);
+        (void)run_accelerated<simon::AcceleratedBistableAlgorithm,
+                              simon::QCABistableOption,
+                              simon::AcceleratedBistableStatistics>(
+                prototype, vector_prototype, mode, trace_candidate_option);
+    }
     for (std::size_t index = 0; index < command.warmup; ++index) {
         (void)run_algorithm<simon::BistableAlgorithm>(prototype, vector_prototype,
                                                        mode, option);
@@ -333,12 +466,18 @@ PairRecord benchmark_bistable(const CommandLine &command,
 
     std::vector<double> reference_seconds;
     std::vector<double> candidate_seconds;
+    std::vector<simon::SimulationPhaseTimings> reference_phases;
+    std::vector<simon::SimulationPhaseTimings> candidate_phases;
+    std::vector<double> interaction_graph_seconds;
+    std::vector<double> energy_materialization_seconds;
+    std::vector<double> kernel_compilation_seconds;
     simon::AcceleratedBistableStatistics final_statistics;
     for (std::size_t repetition = 0; repetition < command.repetitions; ++repetition) {
         auto run_reference = [&]() {
             auto run = run_algorithm<simon::BistableAlgorithm>(
                 prototype, vector_prototype, mode, option);
             reference_seconds.push_back(run.seconds);
+            reference_phases.push_back(run.phase_timings);
             reference_result = std::move(run.result);
         };
         auto run_candidate = [&]() {
@@ -347,8 +486,15 @@ PairRecord benchmark_bistable(const CommandLine &command,
                                        simon::AcceleratedBistableStatistics>(
                 prototype, vector_prototype, mode, option);
             candidate_seconds.push_back(run.first.seconds);
+            candidate_phases.push_back(run.first.phase_timings);
             candidate_result = std::move(run.first.result);
             final_statistics = run.second;
+            interaction_graph_seconds.push_back(
+                    run.second.interaction_graph_seconds);
+            energy_materialization_seconds.push_back(
+                    run.second.energy_materialization_seconds);
+            kernel_compilation_seconds.push_back(
+                    run.second.kernel_compilation_seconds);
         };
         // Alternate AB/BA to reduce systematic thermal/frequency bias.
         if (repetition % 2 == 0) {
@@ -366,6 +512,20 @@ PairRecord benchmark_bistable(const CommandLine &command,
     record.candidate_name = "AcceleratedBistableAlgorithm";
     record.reference_timing = summarize(std::move(reference_seconds));
     record.candidate_timing = summarize(std::move(candidate_seconds));
+    record.reference_phase_timings = summarize_phase_timings(reference_phases);
+    record.candidate_phase_timings = summarize_phase_timings(candidate_phases);
+    record.graph_mode = graph_mode_name(command.graph_mode);
+    record.graph_precompile_seconds = graph_precompile_seconds;
+    record.internal_state_checked = command.verify_internal_state;
+    record.internal_state_equivalent =
+            command.verify_internal_state &&
+            reference_trace.equivalent_to(candidate_trace);
+    record.internal_state_frames = reference_trace.frame_count();
+    record.internal_state_values = reference_trace.value_count();
+    if (command.verify_internal_state) {
+        record.reference_state_digest = reference_trace.digest();
+        record.candidate_state_digest = candidate_trace.digest();
+    }
     record.comparison = simon::compare_simulation_results(
         reference_result, candidate_result, command.comparison);
     record.option_values = {
@@ -386,6 +546,7 @@ PairRecord benchmark_bistable(const CommandLine &command,
             option.jitters[index];
     }
     record.work_counters = {
+        {"total_cells", final_statistics.total_cells},
         {"samples", final_statistics.samples},
         {"sweeps", final_statistics.sweeps},
         {"cell_updates", final_statistics.cell_updates},
@@ -394,7 +555,27 @@ PairRecord benchmark_bistable(const CommandLine &command,
         {"dynamic_cells", final_statistics.dynamic_cells},
         {"directed_couplings", final_statistics.directed_couplings},
         {"spatial_candidates", final_statistics.spatial_candidates},
+        {"graph_all_pair_checks", final_statistics.graph_all_pair_checks},
     };
+    record.work_flags = {
+        {"graph_spatial_buckets_used", final_statistics.graph_spatial_buckets_used},
+        {"graph_reused", final_statistics.graph_reused},
+        {"precompiled_graph_rejected", final_statistics.precompiled_graph_rejected},
+    };
+    record.component_seconds = {
+        {"interaction_graph", final_statistics.interaction_graph_seconds},
+        {"energy_materialization", final_statistics.energy_materialization_seconds},
+        {"kernel_compilation", final_statistics.kernel_compilation_seconds},
+    };
+    record.candidate_component_timings = {
+        {"interaction_graph", summarize(std::move(interaction_graph_seconds))},
+        {"energy_materialization",
+         summarize(std::move(energy_materialization_seconds))},
+        {"kernel_compilation", summarize(std::move(kernel_compilation_seconds))},
+    };
+    for (const auto &[name, timing] : record.candidate_component_timings) {
+        record.component_seconds[name] = timing.median;
+    }
     return record;
 }
 
@@ -405,6 +586,34 @@ PairRecord benchmark_coherence(const CommandLine &command,
                                simon::Result &reference_result,
                                simon::Result &candidate_result) {
     auto option = command.coherence;
+    option.acceleration.use_spatial_buckets =
+            command.graph_mode != GraphMode::AllPairsCold;
+    std::optional<simon::OrderedInteractionGraph> precompiled_graph;
+    double graph_precompile_seconds = 0.0;
+    if (command.graph_mode == GraphMode::SpatialReuse) {
+        simon::QCADesign compilation_design = prototype;
+        const auto begin = std::chrono::steady_clock::now();
+        precompiled_graph.emplace(simon::OrderedInteractionGraph::compile(
+                compilation_design, option, true));
+        graph_precompile_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - begin).count();
+        option.acceleration.precompiled_graph = &*precompiled_graph;
+    }
+
+    simon::SimulationTraceRecorder reference_trace(true);
+    simon::SimulationTraceRecorder candidate_trace(true);
+    if (command.verify_internal_state) {
+        auto trace_reference_option = option;
+        auto trace_candidate_option = option;
+        trace_reference_option.trace_recorder = &reference_trace;
+        trace_candidate_option.trace_recorder = &candidate_trace;
+        (void)run_algorithm<simon::CoherenceAlgorithm>(
+                prototype, vector_prototype, mode, trace_reference_option);
+        (void)run_accelerated<simon::AcceleratedCoherenceAlgorithm,
+                              simon::QCACoherenceOption,
+                              simon::AcceleratedCoherenceStatistics>(
+                prototype, vector_prototype, mode, trace_candidate_option);
+    }
     for (std::size_t index = 0; index < command.warmup; ++index) {
         (void)run_algorithm<simon::CoherenceAlgorithm>(prototype, vector_prototype,
                                                        mode, option);
@@ -416,12 +625,19 @@ PairRecord benchmark_coherence(const CommandLine &command,
 
     std::vector<double> reference_seconds;
     std::vector<double> candidate_seconds;
+    std::vector<simon::SimulationPhaseTimings> reference_phases;
+    std::vector<simon::SimulationPhaseTimings> candidate_phases;
+    std::vector<double> interaction_graph_seconds;
+    std::vector<double> energy_materialization_seconds;
+    std::vector<double> kernel_compilation_seconds;
+    std::vector<double> generator_cache_seconds;
     simon::AcceleratedCoherenceStatistics final_statistics;
     for (std::size_t repetition = 0; repetition < command.repetitions; ++repetition) {
         auto run_reference = [&]() {
             auto run = run_algorithm<simon::CoherenceAlgorithm>(
                 prototype, vector_prototype, mode, option);
             reference_seconds.push_back(run.seconds);
+            reference_phases.push_back(run.phase_timings);
             reference_result = std::move(run.result);
         };
         auto run_candidate = [&]() {
@@ -430,8 +646,17 @@ PairRecord benchmark_coherence(const CommandLine &command,
                                        simon::AcceleratedCoherenceStatistics>(
                 prototype, vector_prototype, mode, option);
             candidate_seconds.push_back(run.first.seconds);
+            candidate_phases.push_back(run.first.phase_timings);
             candidate_result = std::move(run.first.result);
             final_statistics = run.second;
+            interaction_graph_seconds.push_back(
+                    run.second.interaction_graph_seconds);
+            energy_materialization_seconds.push_back(
+                    run.second.energy_materialization_seconds);
+            kernel_compilation_seconds.push_back(
+                    run.second.kernel_compilation_seconds);
+            generator_cache_seconds.push_back(
+                    run.second.generator_cache_seconds);
         };
         if (repetition % 2 == 0) {
             run_reference();
@@ -448,6 +673,20 @@ PairRecord benchmark_coherence(const CommandLine &command,
     record.candidate_name = "AcceleratedCoherenceAlgorithm";
     record.reference_timing = summarize(std::move(reference_seconds));
     record.candidate_timing = summarize(std::move(candidate_seconds));
+    record.reference_phase_timings = summarize_phase_timings(reference_phases);
+    record.candidate_phase_timings = summarize_phase_timings(candidate_phases);
+    record.graph_mode = graph_mode_name(command.graph_mode);
+    record.graph_precompile_seconds = graph_precompile_seconds;
+    record.internal_state_checked = command.verify_internal_state;
+    record.internal_state_equivalent =
+            command.verify_internal_state &&
+            reference_trace.equivalent_to(candidate_trace);
+    record.internal_state_frames = reference_trace.frame_count();
+    record.internal_state_values = reference_trace.value_count();
+    if (command.verify_internal_state) {
+        record.reference_state_digest = reference_trace.digest();
+        record.candidate_state_digest = candidate_trace.digest();
+    }
     record.comparison = simon::compare_simulation_results(
         reference_result, candidate_result, command.comparison);
     record.numeric_method = option.algorithm == simon::NumericMethod::Euler
@@ -467,12 +706,15 @@ PairRecord benchmark_coherence(const CommandLine &command,
         {"steady_state_tolerance", option.steady_state_tolerance},
         {"max_steady_state_iterations",
          static_cast<double>(option.max_steady_state_iterations)},
+        {"cache_budget_bytes",
+         static_cast<double>(option.acceleration.cache_budget_bytes)},
     };
     for (std::size_t index = 0; index < option.jitters.size(); ++index) {
         record.option_values["jitter_" + std::to_string(index) + "_degrees"] =
             option.jitters[index];
     }
     record.work_counters = {
+        {"total_cells", final_statistics.total_cells},
         {"samples", final_statistics.samples},
         {"cell_updates", final_statistics.cell_updates},
         {"field_accumulations", final_statistics.field_accumulations},
@@ -488,8 +730,28 @@ PairRecord benchmark_coherence(const CommandLine &command,
     record.work_flags = {
         {"clock_cache_used", final_statistics.clock_cache_used},
         {"input_cache_used", final_statistics.input_cache_used},
+        {"graph_spatial_buckets_used", final_statistics.graph_spatial_buckets_used},
+        {"graph_reused", final_statistics.graph_reused},
+        {"precompiled_graph_rejected", final_statistics.precompiled_graph_rejected},
+        {"fused_integration_used", final_statistics.fused_integration_used},
         {"strict_equivalent", final_statistics.strict_equivalent},
     };
+    record.component_seconds = {
+        {"interaction_graph", final_statistics.interaction_graph_seconds},
+        {"energy_materialization", final_statistics.energy_materialization_seconds},
+        {"kernel_compilation", final_statistics.kernel_compilation_seconds},
+        {"generator_cache", final_statistics.generator_cache_seconds},
+    };
+    record.candidate_component_timings = {
+        {"interaction_graph", summarize(std::move(interaction_graph_seconds))},
+        {"energy_materialization",
+         summarize(std::move(energy_materialization_seconds))},
+        {"kernel_compilation", summarize(std::move(kernel_compilation_seconds))},
+        {"generator_cache", summarize(std::move(generator_cache_seconds))},
+    };
+    for (const auto &[name, timing] : record.candidate_component_timings) {
+        record.component_seconds[name] = timing.median;
+    }
     return record;
 }
 
@@ -525,6 +787,20 @@ void write_timing_json(std::ostream &output, const TimingSummary &timing) {
         output << timing.raw_seconds[index];
     }
     output << "]}";
+}
+
+void write_phase_timings_json(
+        std::ostream &output,
+        const std::map<std::string, TimingSummary> &phase_timings) {
+    output << '{';
+    bool first = true;
+    for (const auto &[name, timing] : phase_timings) {
+        if (!first) output << ',';
+        output << '"' << json_escape(name) << "\":";
+        write_timing_json(output, timing);
+        first = false;
+    }
+    output << '}';
 }
 
 void write_comparison_json(std::ostream &output,
@@ -568,7 +844,7 @@ void write_json_report(const CommandLine &command, simon::SimulationMode mode,
     std::ofstream output(command.json_path);
     if (!output) throw std::runtime_error("cannot write JSON: " + command.json_path);
     output << std::setprecision(17)
-           << "{\"schema_version\":1,\"circuit\":\""
+           << "{\"schema_version\":3,\"circuit\":\""
            << json_escape(std::filesystem::absolute(command.design_path).string()) << '"'
            << ",\"simulation_mode\":\""
            << (mode == simon::SimulationMode::Selective ? "selective" : "exhaustive") << '"'
@@ -579,6 +855,20 @@ void write_json_report(const CommandLine &command, simon::SimulationMode mode,
     output << ",\"repetitions\":" << command.repetitions
            << ",\"warmup\":" << command.warmup
            << ",\"logic_threshold\":" << command.comparison.logic_threshold
+           << ",\"peak_process_rss_kib\":" << peak_process_rss_kib()
+           << ",\"benchmark_protocol\":{\"pair_order\":\"alternating_ab_ba\""
+           << ",\"compiler_family\":\"" << compiler_family() << "\""
+           << ",\"compiler_version\":\"" << json_escape(__VERSION__) << "\""
+#ifdef __FAST_MATH__
+           << ",\"fast_math\":true"
+#else
+           << ",\"fast_math\":false"
+#endif
+#ifdef NDEBUG
+           << ",\"release_build\":true}"
+#else
+           << ",\"release_build\":false}"
+#endif
            << ",\"comparisons\":[";
     for (std::size_t index = 0; index < records.size(); ++index) {
         if (index != 0) output << ',';
@@ -594,6 +884,13 @@ void write_json_report(const CommandLine &command, simon::SimulationMode mode,
         write_timing_json(output, record.reference_timing);
         output << ",\"candidate_timing\":";
         write_timing_json(output, record.candidate_timing);
+        output << ",\"graph_mode\":\"" << json_escape(record.graph_mode) << '"'
+               << ",\"graph_precompile_seconds\":"
+               << record.graph_precompile_seconds
+               << ",\"reference_phase_timings\":";
+        write_phase_timings_json(output, record.reference_phase_timings);
+        output << ",\"candidate_phase_timings\":";
+        write_phase_timings_json(output, record.candidate_phase_timings);
         output << ",\"options\":{";
         bool first = true;
         for (const auto &[name, value] : record.option_values) {
@@ -618,8 +915,31 @@ void write_json_report(const CommandLine &command, simon::SimulationMode mode,
                    << (value ? "true" : "false");
             first = false;
         }
-        output << "},\"accuracy\":";
+        output << "},\"component_seconds\":{";
+        first = true;
+        for (const auto &[name, value] : record.component_seconds) {
+            if (!first) output << ',';
+            output << '"' << json_escape(name) << "\":" << value;
+            first = false;
+        }
+        output << "},\"candidate_component_timings\":";
+        write_phase_timings_json(output, record.candidate_component_timings);
+        output << ",\"accuracy\":";
         write_comparison_json(output, record.comparison);
+        output << ",\"internal_state_certificate\":{"
+               << "\"checked\":"
+               << (record.internal_state_checked ? "true" : "false")
+               << ",\"equivalent\":"
+               << (record.internal_state_equivalent ? "true" : "false")
+               << ",\"comparison\":\"exact_ieee754_word_sequence\""
+               << ",\"digest_algorithm\":\"dual_noncryptographic_64bit\""
+               << ",\"digest_bits\":128"
+               << ",\"frames\":" << record.internal_state_frames
+               << ",\"values\":" << record.internal_state_values
+               << ",\"reference_digest\":\""
+               << record.reference_state_digest << '"'
+               << ",\"candidate_digest\":\""
+               << record.candidate_state_digest << "\"}";
         output << '}';
     }
     output << "]}\n";
@@ -642,8 +962,14 @@ void write_csv_report(const CommandLine &command, simon::SimulationMode mode,
     ensure_parent_directory(command.csv_path);
     std::ofstream output(command.csv_path);
     if (!output) throw std::runtime_error("cannot write CSV: " + command.csv_path);
-    output << "circuit,model,simulation_mode,vector_table,repetitions,"
+    output << "circuit,model,simulation_mode,vector_table,repetitions,graph_mode,"
+              "graph_precompile_seconds,"
               "reference_median_seconds,candidate_median_seconds,speedup,"
+              "reference_design_initialization_median_seconds,"
+              "candidate_design_initialization_median_seconds,"
+              "reference_iterations_median_seconds,candidate_iterations_median_seconds,"
+              "internal_state_checked,internal_state_equivalent,internal_state_frames,"
+              "internal_state_values,reference_state_digest,candidate_state_digest,"
               "stable_reference_samples,sign_agreement,confident_logic_agreement,"
               "mae,rmse,max_absolute_error,weak_candidate_samples,comparable,incompatibility\n";
     output << std::setprecision(17);
@@ -657,8 +983,20 @@ void write_csv_report(const CommandLine &command, simon::SimulationMode mode,
                << record.model << ','
                << (mode == simon::SimulationMode::Selective ? "selective" : "exhaustive") << ','
                << csv_escape(command.vector_table_path) << ',' << command.repetitions << ','
+               << record.graph_mode << ',' << record.graph_precompile_seconds << ','
                << record.reference_timing.median << ',' << record.candidate_timing.median << ','
-               << speedup << ',' << accuracy.stable_reference_samples << ','
+               << speedup << ','
+               << record.reference_phase_timings.at("design_initialization").median << ','
+               << record.candidate_phase_timings.at("design_initialization").median << ','
+               << record.reference_phase_timings.at("iterations").median << ','
+               << record.candidate_phase_timings.at("iterations").median << ','
+               << (record.internal_state_checked ? "true" : "false") << ','
+               << (record.internal_state_equivalent ? "true" : "false") << ','
+               << record.internal_state_frames << ','
+               << record.internal_state_values << ','
+               << record.reference_state_digest << ','
+               << record.candidate_state_digest << ','
+               << accuracy.stable_reference_samples << ','
                << accuracy.sign_agreement() << ',' << accuracy.confident_logic_agreement() << ','
                << accuracy.mae() << ',' << accuracy.rmse() << ','
                << accuracy.maximum_absolute_error << ',' << accuracy.weak_candidate_samples << ','
@@ -677,6 +1015,23 @@ void print_record(const PairRecord &record) {
               << "reference_median_seconds=" << record.reference_timing.median << '\n'
               << "candidate_median_seconds=" << record.candidate_timing.median << '\n'
               << "speedup=" << speedup << '\n'
+              << "graph_mode=" << record.graph_mode << '\n'
+              << "graph_precompile_seconds=" << record.graph_precompile_seconds << '\n'
+              << "reference_design_initialization_median_seconds="
+              << record.reference_phase_timings.at("design_initialization").median << '\n'
+              << "candidate_design_initialization_median_seconds="
+              << record.candidate_phase_timings.at("design_initialization").median << '\n'
+              << "reference_iterations_median_seconds="
+              << record.reference_phase_timings.at("iterations").median << '\n'
+              << "candidate_iterations_median_seconds="
+              << record.candidate_phase_timings.at("iterations").median << '\n'
+              << "internal_state_checked=" << std::boolalpha
+              << record.internal_state_checked << '\n'
+              << "internal_state_equivalent="
+              << record.internal_state_equivalent << '\n'
+              << "internal_state_frames=" << record.internal_state_frames << '\n'
+              << "internal_state_values=" << record.internal_state_values << '\n'
+              << "internal_state_digest=" << record.reference_state_digest << '\n'
               << std::boolalpha
               << "comparable=" << record.comparison.comparable << '\n';
     if (!record.comparison.comparable) {
@@ -692,6 +1047,9 @@ void print_record(const PairRecord &record) {
               << "rmse=" << record.comparison.rmse() << '\n'
               << "max_absolute_error="
               << record.comparison.maximum_absolute_error << '\n';
+    for (const auto &[name, seconds] : record.component_seconds) {
+        std::cout << name << "_seconds=" << seconds << '\n';
+    }
 }
 
 void write_waveforms(const CommandLine &command, const std::string &model,
@@ -708,7 +1066,8 @@ void write_waveforms(const CommandLine &command, const std::string &model,
 bool equivalent(const PairRecord &record, double tolerance) {
     return record.comparison.comparable &&
            record.comparison.confident_logic_agreement() == 1.0 &&
-           record.comparison.maximum_absolute_error <= tolerance;
+           record.comparison.maximum_absolute_error <= tolerance &&
+           (!record.internal_state_checked || record.internal_state_equivalent);
 }
 
 } // namespace

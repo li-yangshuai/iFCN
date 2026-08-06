@@ -1,0 +1,61 @@
+This is BibTeX, Version 0.99d (TeX Live 2019/Debian)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: paper.aux
+The style file: ACM-Reference-Format.bst
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated wiz_functions (elt_size=4) to 6000 items from 3000.
+Database file #1: references.bib
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated glb_str_ptr (elt_size=4) to 20 items from 10.
+Reallocated global_strs (elt_size=200001) to 20 items from 10.
+Reallocated glb_str_end (elt_size=4) to 20 items from 10.
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Warning--page numbers missing in both pages and numpages fields in drewniok2023quicksim
+Warning--empty publisher in drewniok2024quickexact
+Warning--empty address in drewniok2024quickexact
+Warning--empty publisher in georges2007
+Warning--empty address in georges2007
+Warning--page numbers missing in both pages and numpages fields in walter2019
+You've used 13 entries,
+            5897 wiz_defined-function locations,
+            1413 strings with 17324 characters,
+and the built_in function-call counts, 17586 in all, are:
+= -- 2575
+> -- 653
+< -- 0
++ -- 221
+- -- 220
+* -- 1285
+:= -- 1702
+add.period$ -- 65
+call.type$ -- 13
+change.case$ -- 101
+chr.to.int$ -- 13
+cite$ -- 19
+duplicate$ -- 1391
+empty$ -- 980
+format.name$ -- 272
+if$ -- 4415
+int.to.chr$ -- 2
+int.to.str$ -- 1
+missing$ -- 54
+newline$ -- 185
+num.names$ -- 104
+pop$ -- 462
+preamble$ -- 1
+purify$ -- 216
+quote$ -- 0
+skip$ -- 479
+stack$ -- 0
+substring$ -- 1354
+swap$ -- 161
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 236
+warning$ -- 6
+while$ -- 101
+width$ -- 0
+write$ -- 299
+(There were 6 warnings)

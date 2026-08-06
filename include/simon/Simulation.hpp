@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cassert>
+#include <chrono>
 #include <type_traits>
 #include <random>
 #include <iostream>
@@ -41,6 +42,7 @@
 #include "Model.hpp"
 #include "IO.hpp"
 #include "Option.hpp"
+#include "SimulationTrace.hpp"
 
 
 namespace boost {
@@ -64,6 +66,23 @@ namespace boost {
 
 namespace simon
 {
+    /** Wall-clock decomposition for one simulation run.
+     *
+     * These timings deliberately surround the public policy stages instead of
+     * individual arithmetic expressions.  They therefore support an honest
+     * cold-start/steady-kernel decomposition without changing the simulated
+     * state or the floating-point operation order.
+     */
+    struct SimulationPhaseTimings {
+        double preparation_seconds = 0.0;
+        double design_initialization_seconds = 0.0;
+        double result_seconds = 0.0;
+        double before_iterations_seconds = 0.0;
+        double iterations_seconds = 0.0;
+        double after_iterations_seconds = 0.0;
+        double total_seconds = 0.0;
+    };
+
     template<typename Host>
     struct FCNSamplingPolicy {
         std::size_t number_of_samples;
@@ -290,8 +309,15 @@ namespace simon
         return ret;
     };
 
+    /** Geometry-only part of the inter-cell kink energy.
+     *
+     * Relative permittivity is intentionally excluded.  This makes the
+     * expensive 16 dot-pair interactions reusable across dielectric-parameter
+     * sweeps while preserving the legacy accumulation order exactly.
+     */
     template<typename Option>
-    inline double calculate_inter_cell_kink_energy(const QCACell &cell1, const QCACell &cell2, const Option &opt) {
+    inline double calculate_inter_cell_kink_energy_numerator(
+            const QCACell &cell1, const QCACell &cell2, const Option &opt) {
         using constants::QCHARGE_SQUARE_OVER_FOUR;
 
         static double same_polarization[4][4] = {
@@ -324,6 +350,45 @@ namespace simon
                 energy_diff += 1e9 * diff_polarization[i][j] / distance;
             }
         }
+        return energy_diff - energy_same;
+    };
+
+    template<typename Option>
+    inline double calculate_inter_cell_kink_energy(const QCACell &cell1, const QCACell &cell2, const Option &opt) {
+        using constants::QCHARGE_SQUARE_OVER_FOUR;
+
+        static double same_polarization[4][4] = {
+                {QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR},
+                {-QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR},
+                {QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR},
+                {-QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR}
+        };
+
+        static double diff_polarization[4][4] = {
+                {-QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR},
+                {QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR},
+                {-QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR},
+                {QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR, QCHARGE_SQUARE_OVER_FOUR, -QCHARGE_SQUARE_OVER_FOUR}
+        };
+
+        double vertical_distance_squared =
+                calculate_inter_cell_squared_vertical_distance(cell1, cell2, opt);
+
+        double distance    = 0.0;
+        double energy_same = 0.0;
+        double energy_diff = 0.0;
+
+        // Keep the legacy reference implementation independent from the
+        // parametric compiler so the comparison baseline is not co-refactored.
+        // 1e-9 is nano meter unit.
+        for(std::size_t i=0; i<4; ++i) {
+            for(std::size_t j=0; j<4; ++j) {
+                distance = sqrt(vertical_distance_squared +
+                                calculate_inter_dot_squared_horizontal_distance(dots(cell1)[i], dots(cell2)[j]));
+                energy_same += 1e9 * same_polarization[i][j] / distance;
+                energy_diff += 1e9 * diff_polarization[i][j] / distance;
+            }
+        }
         return 1 / (constants::FOUR_PI_EPSILON * opt.epsilon_r) * (energy_diff - energy_same);
     };
 
@@ -334,6 +399,10 @@ namespace simon
         std::vector<std::string> onames;
         std::vector<QCACell*> inputs;
         std::vector<QCACell*> outputs;
+
+        const SimulationPhaseTimings &phase_timings() const noexcept {
+            return phase_timings_;
+        }
 
         //initializations
         void initialize_io(QCADesign &design, VectorTable &vector_table,
@@ -462,23 +531,59 @@ namespace simon
         void run(QCADesign &design, VectorTable &vector_table, Result &result, SimulationMode mode,
                  std::vector<std::string> inames={}, std::vector<std::string> onames={}) {
             auto &self = static_cast<Host&>(*this);
-            //initilizations
+            using Clock = std::chrono::steady_clock;
+            const auto elapsed_seconds = [](Clock::time_point begin,
+                                            Clock::time_point end) {
+                return std::chrono::duration<double>(end - begin).count();
+            };
+
+            phase_timings_ = {};
+            const Clock::time_point total_begin = Clock::now();
+
+            const Clock::time_point preparation_begin = Clock::now();
             self.initialize_sample_size();
             self.initialize_io(design, vector_table, inames, onames);
 
             self.initialize_input_generator(mode, self.number_of_samples, vector_table);
             self.initialize_clock_generator(mode, self.number_of_samples, vector_table, self.inames);
+            const Clock::time_point preparation_end = Clock::now();
+            phase_timings_.preparation_seconds =
+                    elapsed_seconds(preparation_begin, preparation_end);
 
+            const Clock::time_point design_begin = Clock::now();
             self.initialize_design(design);
-            self.initialize_result(result, 4);
+            const Clock::time_point design_end = Clock::now();
+            phase_timings_.design_initialization_seconds =
+                    elapsed_seconds(design_begin, design_end);
 
-            //iteration
+            const Clock::time_point result_begin = Clock::now();
+            self.initialize_result(result, 4);
+            const Clock::time_point result_end = Clock::now();
+            phase_timings_.result_seconds = elapsed_seconds(result_begin, result_end);
+
+            const Clock::time_point before_begin = Clock::now();
             self.before_iterations(design, result);
+            const Clock::time_point before_end = Clock::now();
+            phase_timings_.before_iterations_seconds =
+                    elapsed_seconds(before_begin, before_end);
+
+            const Clock::time_point iterations_begin = Clock::now();
             self.make_iterations(design, result);
+            const Clock::time_point iterations_end = Clock::now();
+            phase_timings_.iterations_seconds =
+                    elapsed_seconds(iterations_begin, iterations_end);
+
+            const Clock::time_point after_begin = Clock::now();
             self.after_iterations(design, result);
+            const Clock::time_point after_end = Clock::now();
+            phase_timings_.after_iterations_seconds =
+                    elapsed_seconds(after_begin, after_end);
+            phase_timings_.total_seconds = elapsed_seconds(total_begin, after_end);
         }
 
     protected:
+        SimulationPhaseTimings phase_timings_;
+
         //Extrinsic Property Accessing API
         static inline std::vector<QCACell*> &neighbours(QCACell &cell) {
             return std::any_cast<typename Host::ExtrinsicProperty>(&extrinsics(cell))->neighbours;
@@ -511,6 +616,9 @@ namespace simon
         void before_iterations(QCADesign &design, const Result &result) {
             (void)design;
             (void)result;
+            if (option.trace_recorder != nullptr) {
+                option.trace_recorder->reset();
+            }
             seed_simulation_random_generator(option.random_seed);
         }
 
@@ -554,6 +662,18 @@ namespace simon
                         }
                     });
                 }
+
+                if (self.option.trace_recorder != nullptr) {
+                    self.option.trace_recorder->begin_frame(
+                            SimulationTraceFrame::BistableSweep, j, k);
+                    for (const auto &trace_layer : design) {
+                        for (const auto &trace_cell : trace_layer) {
+                            self.option.trace_recorder->record(
+                                    polarization(trace_cell));
+                        }
+                    }
+                    self.option.trace_recorder->end_frame();
+                }
             }
         };
 
@@ -578,6 +698,9 @@ namespace simon
         {}
 
         void before_iterations(QCADesign &design, const Result &result) {
+            if (option.trace_recorder != nullptr) {
+                option.trace_recorder->reset();
+            }
             converge_to_steady_state(design, result);
         }
 
@@ -620,6 +743,9 @@ namespace simon
                     polarization(cell) = -lambda_z_new;
                 }
             }
+            record_trace_frame(design,
+                               SimulationTraceFrame::CoherenceTimeStep,
+                               j);
         }
 
     protected:
@@ -643,6 +769,24 @@ namespace simon
         }
         static inline const double &lambda_z(const QCACell &cell) {
             return std::any_cast<typename Host::ExtrinsicProperty>(&extrinsics(cell))->lambda_z;
+        }
+
+        void record_trace_frame(const QCADesign &design,
+                                SimulationTraceFrame frame,
+                                std::size_t primary_index,
+                                std::size_t secondary_index = 0) const {
+            if (option.trace_recorder == nullptr) return;
+            option.trace_recorder->begin_frame(
+                    frame, primary_index, secondary_index);
+            for (const auto &layer : design) {
+                for (const auto &cell : layer) {
+                    option.trace_recorder->record(polarization(cell));
+                    option.trace_recorder->record(lambda_x(cell));
+                    option.trace_recorder->record(lambda_y(cell));
+                    option.trace_recorder->record(lambda_z(cell));
+                }
+            }
+            option.trace_recorder->end_frame();
         }
 
         void converge_to_steady_state(QCADesign &design, const Result &result) const {
@@ -690,6 +834,10 @@ namespace simon
                         stable = stable && cell_stable;
                     }
                 }
+                record_trace_frame(
+                        design,
+                        SimulationTraceFrame::CoherenceSteadyStateSweep,
+                        iteration);
             }
             if (!stable) {
                 throw std::runtime_error("coherence steady-state initialization did not converge");

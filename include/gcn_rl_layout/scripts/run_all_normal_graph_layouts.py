@@ -43,6 +43,9 @@ RESULT_FIELDS = (
     "source_bytes",
     "nodes",
     "edges",
+    "inputs",
+    "outputs",
+    "io_count",
     "layers",
     "crossings",
     "graphviz_seconds",
@@ -63,6 +66,7 @@ RESULT_FIELDS = (
     "contraction_global_evaluations",
     "contraction_recursive_evaluations",
     "contraction_empty_line_evaluations",
+    "contraction_layer_merge_evaluations",
     "pre_contraction_area",
     "contraction_area_reduction",
     "contraction_area_reduction_percent",
@@ -76,6 +80,8 @@ RESULT_FIELDS = (
     "width",
     "height",
     "area",
+    "layout_routing_runtime_sec",
+    "contraction_runtime_sec",
     "layout_runtime_sec",
     "wall_time_sec",
     "parser_safe_generated",
@@ -130,6 +136,18 @@ def parse_args():
         type=float,
         default=0.0,
         help="Blank-row/column deletion time budget; 0 reuses --contraction-timeout-sec.",
+    )
+    parser.add_argument(
+        "--layer-merge-contraction-evaluations",
+        type=int,
+        default=0,
+        help="Occupied adjacent-layer merge budget; 0 reuses --contraction-evaluations.",
+    )
+    parser.add_argument(
+        "--layer-merge-contraction-timeout-sec",
+        type=float,
+        default=0.0,
+        help="Occupied adjacent-layer merge time budget; 0 reuses --contraction-timeout-sec.",
     )
     parser.add_argument("--graphviz-timeout-sec", type=float, default=60.0)
     parser.add_argument("--sift-timeout-sec", type=float, default=20.0)
@@ -410,6 +428,16 @@ def run_one(index, total, args, benchmark_root, output_root, benchmark):
                 if args.empty_line_contraction_timeout_sec > 0
                 else args.contraction_timeout_sec
             ),
+            "IFCN_LAYER_MERGE_CONTRACTION_EVALUATIONS": str(
+                args.layer_merge_contraction_evaluations
+                if args.layer_merge_contraction_evaluations > 0
+                else args.contraction_evaluations
+            ),
+            "IFCN_LAYER_MERGE_CONTRACTION_TIMEOUT": str(
+                args.layer_merge_contraction_timeout_sec
+                if args.layer_merge_contraction_timeout_sec > 0
+                else args.contraction_timeout_sec
+            ),
         }
     )
     summary_path = output_dir / (benchmark.stem + "_normal_graph_draw_summary.json")
@@ -480,6 +508,12 @@ def run_one(index, total, args, benchmark_root, output_root, benchmark):
         "timed_out": timed_out,
         "source_bytes": benchmark.stat().st_size,
         **metrics,
+        "nodes": summary.get("node_count", metrics.get("nodes", "")) if isinstance(summary, dict) else metrics.get("nodes", ""),
+        "edges": summary.get("edge_count", metrics.get("edges", "")) if isinstance(summary, dict) else metrics.get("edges", ""),
+        "inputs": summary.get("input_count", "") if isinstance(summary, dict) else "",
+        "outputs": summary.get("output_count", "") if isinstance(summary, dict) else "",
+        "io_count": summary.get("io_count", "") if isinstance(summary, dict) else "",
+        "layers": summary.get("layer_count", metrics.get("layers", "")) if isinstance(summary, dict) else metrics.get("layers", ""),
         "seed": summary.get("seed", "") if isinstance(summary, dict) else "",
         "seed_attempt_count": len(summary.get("seed_attempts", [])) if isinstance(summary, dict) else 0,
         "failed_edge_count": summary.get("failed_edge_count", "") if isinstance(summary, dict) else "",
@@ -494,10 +528,13 @@ def run_one(index, total, args, benchmark_root, output_root, benchmark):
         "contraction_global_evaluations": summary.get("contraction_global_evaluations", "") if isinstance(summary, dict) else "",
         "contraction_recursive_evaluations": summary.get("contraction_recursive_evaluations", "") if isinstance(summary, dict) else "",
         "contraction_empty_line_evaluations": summary.get("contraction_empty_line_evaluations", "") if isinstance(summary, dict) else "",
+        "contraction_layer_merge_evaluations": summary.get("contraction_layer_merge_evaluations", "") if isinstance(summary, dict) else "",
         **contraction_metrics(summary),
         "width": summary.get("width", "") if isinstance(summary, dict) else "",
         "height": summary.get("height", "") if isinstance(summary, dict) else "",
         "area": summary.get("area", "") if isinstance(summary, dict) else "",
+        "layout_routing_runtime_sec": summary.get("layout_routing_runtime_sec", "") if isinstance(summary, dict) else "",
+        "contraction_runtime_sec": summary.get("contraction_runtime_sec", "") if isinstance(summary, dict) else "",
         "layout_runtime_sec": summary.get("run_time_sec", "") if isinstance(summary, dict) else "",
         "wall_time_sec": round(wall_time, 6),
         "parser_safe_generated": summary.get("parser_safe_generated", "") if isinstance(summary, dict) else "",
@@ -597,6 +634,16 @@ def write_reports(output_root, args, benchmark_root, records, complete):
             "empty_line_contraction_timeout_sec": (
                 args.empty_line_contraction_timeout_sec
                 if args.empty_line_contraction_timeout_sec > 0
+                else args.contraction_timeout_sec
+            ),
+            "layer_merge_contraction_evaluations": (
+                args.layer_merge_contraction_evaluations
+                if args.layer_merge_contraction_evaluations > 0
+                else args.contraction_evaluations
+            ),
+            "layer_merge_contraction_timeout_sec": (
+                args.layer_merge_contraction_timeout_sec
+                if args.layer_merge_contraction_timeout_sec > 0
                 else args.contraction_timeout_sec
             ),
             "graphviz_timeout_sec": args.graphviz_timeout_sec,

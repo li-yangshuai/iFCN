@@ -4,6 +4,8 @@
 #include <QFontDatabase>
 #include <QTimer>
 #include <QtGlobal>
+#include "controllers/VerilogHandler.h"
+#include "ui/mainwindow/MainWindow.h"
 #include "ui/mainwindow/TabbedMainWindow.h"
 
 namespace {
@@ -391,7 +393,14 @@ int main(int argc,char *argv[])
 
     TabbedMainWindow mainWindow;
     const QString screenshotPath = qEnvironmentVariable("IFCN_UI_SCREENSHOT").trimmed();
-    if (!screenshotPath.isEmpty()) {
+    const QString cellLayoutPath = qEnvironmentVariable("IFCN_EXPORT_CELL_LAYOUT").trimmed();
+    const QString circuitPath = qEnvironmentVariable("IFCN_EXPORT_CIRCUIT_SCHEMATIC").trimmed();
+    const QString structure3DPath = qEnvironmentVariable("IFCN_EXPORT_3D_STRUCTURE").trimmed();
+    const QString compactGraphInput = qEnvironmentVariable("IFCN_COMPACT_GRAPH_INPUT").trimmed();
+    const bool batchGraphicExport = !cellLayoutPath.isEmpty()
+        || !circuitPath.isEmpty()
+        || !structure3DPath.isEmpty();
+    if (!screenshotPath.isEmpty() || batchGraphicExport) {
         mainWindow.resize(1600, 900);
     }
     mainWindow.show();
@@ -399,21 +408,68 @@ int main(int argc,char *argv[])
     // Opening an IFCN/QCA path from the command line makes the desktop binary
     // directly testable and is also convenient for generated cell layouts.
     const QStringList commandLine = app.arguments();
+    MainWindow *openedEditor = nullptr;
     for (int index = 1; index < commandLine.size(); ++index) {
         const QFileInfo input(commandLine[index]);
         const QString suffix = input.suffix().toLower();
         if (input.isFile()
             && (suffix == QStringLiteral("ifcn") || suffix == QStringLiteral("qca"))) {
-            mainWindow.openFileInNewTab(input.absoluteFilePath());
+            openedEditor = mainWindow.openFileInNewTab(input.absoluteFilePath(), batchGraphicExport);
         }
     }
 
     // Opt-in visual smoke hook for offscreen CI and local theme review.
-    if (!screenshotPath.isEmpty()) {
+    if (!compactGraphInput.isEmpty()) {
+        const QFileInfo input(compactGraphInput);
+        if (!input.isFile()) {
+            qCritical("Compact Graph P&R input does not exist: %s", qPrintable(compactGraphInput));
+            return 2;
+        }
+
+        qputenv("IFCN_COMPACT_GRAPH_BATCH", QByteArrayLiteral("1"));
+        qputenv("IFCN_NONINTERACTIVE", QByteArrayLiteral("1"));
+
+        MainWindow *batchEditor = mainWindow.openVerilogSourceInNewTab(QString(), input.absoluteFilePath());
+        QObject::connect(batchEditor->layoutHandler(), &VerilogHandler::operationFinished,
+                         &app, [&app](const QString &message) {
+            qInfo("%s", qPrintable(message));
+            app.exit(0);
+        });
+        QObject::connect(batchEditor->layoutHandler(), &VerilogHandler::operationFailed,
+                         &app, [&app](const QString &message) {
+            qCritical("%s", qPrintable(message));
+            app.exit(2);
+        });
+        QTimer::singleShot(0, batchEditor, [batchEditor, input]() {
+            batchEditor->layoutHandler()->runGraphRenderForFile(input.absoluteFilePath());
+        });
+    } else if (!screenshotPath.isEmpty()) {
         QTimer::singleShot(800, &mainWindow, [&app, &mainWindow, screenshotPath]() {
             const QFileInfo target(screenshotPath);
             QDir().mkpath(target.absolutePath());
             mainWindow.grab().save(screenshotPath);
+            app.quit();
+        });
+    } else if (batchGraphicExport) {
+        QTimer::singleShot(1000, &mainWindow,
+                           [&app, openedEditor, cellLayoutPath, circuitPath, structure3DPath]() {
+            if (openedEditor != nullptr) {
+                if (!cellLayoutPath.isEmpty()) {
+                    const QFileInfo target(cellLayoutPath);
+                    QDir().mkpath(target.absolutePath());
+                    openedEditor->saveCellLevelLayoutGraphic(cellLayoutPath);
+                }
+                if (!circuitPath.isEmpty()) {
+                    const QFileInfo target(circuitPath);
+                    QDir().mkpath(target.absolutePath());
+                    openedEditor->saveCircuitSchematicGraphic(circuitPath);
+                }
+                if (!structure3DPath.isEmpty()) {
+                    const QFileInfo target(structure3DPath);
+                    QDir().mkpath(target.absolutePath());
+                    openedEditor->saveStructure3DGraphic(structure3DPath);
+                }
+            }
             app.quit();
         });
     }

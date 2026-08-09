@@ -160,16 +160,14 @@ struct LayoutBounds {
     int area = 0;
 };
 
-struct PhaseRepeatStats {
-    int repeatedAdjacent = 0;
-    int totalAdjacent = 0;
+struct PhaseRunStats {
     int maxRun = 1;
 };
 
 struct LayoutSearchResult {
     LayoutBounds bounds;
     int routeLength = 0;
-    PhaseRepeatStats phaseRepeats;
+    PhaseRunStats phaseRuns;
     unsigned int xSpacing = 0;
     unsigned int ySpacing = 0;
     double searchCost = 0.0;
@@ -211,6 +209,21 @@ using HeuristicProgressCallback = std::function<void(const QString &, int, int)>
 
 bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
 {
+    if (qEnvironmentVariableIsSet("IFCN_COMPACT_GRAPH_BATCH")) {
+        bool phaseOk = false;
+        const int phaseCount = qEnvironmentVariableIntValue("IFCN_COMPACT_GRAPH_PHASES", &phaseOk);
+        if (phaseOk && phaseCount >= 2) {
+            settings.phaseCount = phaseCount;
+        }
+
+        bool attemptsOk = false;
+        const int maxAttempts = qEnvironmentVariableIntValue("IFCN_COMPACT_GRAPH_ATTEMPTS", &attemptsOk);
+        if (attemptsOk && maxAttempts > 0) {
+            settings.maxAttempts = maxAttempts;
+        }
+        return true;
+    }
+
     QDialog dialog(parent);
     dialog.setWindowTitle(QObject::tr("Graph Render Options"));
 
@@ -942,9 +955,12 @@ QString safeParseNodeType(fcngraph::Parse &parse, unsigned int nodeIndex, const 
     return type.isEmpty() ? fallbackType : type;
 }
 
-QString rlStyleCoord(const fcngraph::position &pos, int gridHeight)
+QString rlStyleCoord(const fcngraph::position &pos)
 {
-    const int drawY = gridHeight - static_cast<int>(pos.second) - 1;
+    // Qt uses a downward-positive Y axis, while TikZ uses an upward-positive
+    // Y axis. Convert exactly once at the exporter boundary. Nodes, routes,
+    // and phase cells all use this helper, so their coordinates stay aligned.
+    const int drawY = -static_cast<int>(pos.second);
     return QStringLiteral("(%1,%2)").arg(pos.first).arg(drawY);
 }
 
@@ -1331,11 +1347,11 @@ int totalRouteLength(const std::map<std::pair<unsigned int, unsigned int>, std::
     return length;
 }
 
-PhaseRepeatStats calculatePhaseRepeatStats(
+PhaseRunStats calculatePhaseRunStats(
     const std::map<std::pair<unsigned int, unsigned int>, std::vector<fcngraph::position>> &routes,
     const std::unordered_map<fcngraph::position, fcngraph::GridCell, fcngraph::PositionHash> &gridCells)
 {
-    PhaseRepeatStats stats;
+    PhaseRunStats stats;
     for (const auto &route : routes) {
         int previousPhase = -1;
         int currentRun = 1;
@@ -1343,9 +1359,7 @@ PhaseRepeatStats calculatePhaseRepeatStats(
             auto cell = gridCells.find(pos);
             const int phase = (cell != gridCells.end()) ? cell->second.getPhase() : -1;
             if (phase >= 1 && previousPhase >= 1) {
-                ++stats.totalAdjacent;
                 if (phase == previousPhase) {
-                    ++stats.repeatedAdjacent;
                     ++currentRun;
                     stats.maxRun = std::max(stats.maxRun, currentRun);
                 } else {
@@ -1360,37 +1374,26 @@ PhaseRepeatStats calculatePhaseRepeatStats(
     return stats;
 }
 
-int phaseRepeatMaxRunLimit(int phaseCount)
+constexpr int phaseRunLimit()
 {
-    return std::max(phaseCount + 2, phaseCount * 2 + 2);
+    return 4;
 }
 
-bool hasAcceptablePhaseRepeats(const PhaseRepeatStats &stats, int phaseCount)
+bool hasAcceptablePhaseRun(const PhaseRunStats &stats)
 {
-    if (stats.maxRun > phaseRepeatMaxRunLimit(phaseCount)) {
-        return false;
-    }
-    if (stats.totalAdjacent == 0) {
-        return true;
-    }
-    return stats.repeatedAdjacent * 10 <= stats.totalAdjacent * 3;
+    return stats.maxRun <= phaseRunLimit();
 }
 
-int phaseRepeatPenalty(const PhaseRepeatStats &stats, int phaseCount)
+int phaseRunPenalty(const PhaseRunStats &stats)
 {
-    const int maxRunPenalty = std::max(0, stats.maxRun - phaseRepeatMaxRunLimit(phaseCount));
-    const int repeatPenalty = (stats.totalAdjacent == 0)
-        ? 0
-        : std::max(0, stats.repeatedAdjacent * 10 - stats.totalAdjacent * 3);
-    return maxRunPenalty * 100000 + repeatPenalty;
+    return std::max(0, stats.maxRun - phaseRunLimit());
 }
 
 bool isBetterLayout(const LayoutSearchResult &candidate,
-                    const LayoutSearchResult &currentBest,
-                    int phaseCount)
+                    const LayoutSearchResult &currentBest)
 {
-    const bool candidatePhaseOk = hasAcceptablePhaseRepeats(candidate.phaseRepeats, phaseCount);
-    const bool currentPhaseOk = hasAcceptablePhaseRepeats(currentBest.phaseRepeats, phaseCount);
+    const bool candidatePhaseOk = hasAcceptablePhaseRun(candidate.phaseRuns);
+    const bool currentPhaseOk = hasAcceptablePhaseRun(currentBest.phaseRuns);
     if (candidatePhaseOk != currentPhaseOk) {
         return candidatePhaseOk;
     }
@@ -1398,8 +1401,6 @@ bool isBetterLayout(const LayoutSearchResult &candidate,
     if (candidatePhaseOk) {
         const auto score = [](const LayoutSearchResult &layout) {
             return std::make_tuple(layout.bounds.area,
-                                   layout.phaseRepeats.maxRun,
-                                   layout.phaseRepeats.repeatedAdjacent,
                                    layout.routeLength,
                                    std::max(layout.bounds.width, layout.bounds.height),
                                    layout.bounds.width,
@@ -1410,10 +1411,9 @@ bool isBetterLayout(const LayoutSearchResult &candidate,
         return score(candidate) < score(currentBest);
     }
 
-    const auto score = [phaseCount](const LayoutSearchResult &layout) {
-        return std::make_tuple(phaseRepeatPenalty(layout.phaseRepeats, phaseCount),
-                               layout.phaseRepeats.maxRun,
-                               layout.phaseRepeats.repeatedAdjacent,
+    const auto score = [](const LayoutSearchResult &layout) {
+        return std::make_tuple(phaseRunPenalty(layout.phaseRuns),
+                               layout.phaseRuns.maxRun,
                                layout.bounds.area,
                                layout.routeLength,
                                std::max(layout.bounds.width, layout.bounds.height),
@@ -2633,6 +2633,7 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
         timer.start();  // 开始计时
 
         std::optional<LayoutSearchResult> bestLayout;
+        int bestUpdateCount = 0;
         std::string lastFailure;
         const auto attempts = buildLayoutAttempts();
         const int attemptLimit = std::min(settings.maxAttempts, static_cast<int>(attempts.size()));
@@ -2653,7 +2654,7 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
         for (int attemptIndex = 0; attemptIndex < attemptLimit; ++attemptIndex) {
             const auto &attempt = attempts[attemptIndex];
             const bool bestPhaseOk = bestLayout.has_value()
-                && hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
+                && hasAcceptablePhaseRun(bestLayout->phaseRuns);
             if (bestPhaseOk && placementAreaLowerBound(attempt) > bestLayout->bounds.area) {
                 continue;
             }
@@ -2670,12 +2671,12 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                     .arg(attempt.searchCost)
                     .arg(settings.phaseCount);
                 if (bestLayout.has_value()) {
-                    progress += QString("; best=%1x%2 area=%3 route=%4 max repeat=%5")
+                    progress += QString("; best=%1x%2 area=%3 route=%4 max same-phase run=%5")
                                     .arg(bestLayout->bounds.width)
                                     .arg(bestLayout->bounds.height)
                                     .arg(bestLayout->bounds.area)
                                     .arg(bestLayout->routeLength)
-                                    .arg(bestLayout->phaseRepeats.maxRun);
+                                    .arg(bestLayout->phaseRuns.maxRun);
                 }
                 emit operationProgress(progress, attemptIndex + 1, attemptLimit);
                 QCoreApplication::processEvents();
@@ -2704,7 +2705,7 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                 LayoutSearchResult result;
                 result.bounds = bounds.value();
                 result.routeLength = totalRouteLength(graph.routes);
-                result.phaseRepeats = calculatePhaseRepeatStats(graph.routes, chessboard.getGridMap());
+                result.phaseRuns = calculatePhaseRunStats(graph.routes, chessboard.getGridMap());
                 result.xSpacing = attempt.xSpacing;
                 result.ySpacing = attempt.ySpacing;
                 result.searchCost = attempt.searchCost;
@@ -2713,14 +2714,38 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                 result.gridCells = chessboard.getGridMap();
 
                 const bool isBetter = !bestLayout.has_value()
-                    || isBetterLayout(result, bestLayout.value(), settings.phaseCount);
+                    || isBetterLayout(result, bestLayout.value());
                 if (isBetter) {
                     bestLayout = std::move(result);
-                    const bool phaseOk = hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
-                    const double repeatRatio = bestLayout->phaseRepeats.totalAdjacent > 0
-                        ? static_cast<double>(bestLayout->phaseRepeats.repeatedAdjacent) / bestLayout->phaseRepeats.totalAdjacent
-                        : 0.0;
-                    QString message = QString("Candidate %1/%2 success: %3x%4=%5, phase=%6, spacing=(%7,%8), max repeat=%9, repeat ratio=%10% (%11)")
+                    ++bestUpdateCount;
+
+                    std::map<unsigned int, position> snapshotNodes;
+                    for (const auto &entry : bestLayout->nodePositions) {
+                        snapshotNodes[static_cast<unsigned int>(entry.first)] = entry.second;
+                    }
+                    std::map<position, int> snapshotPhases;
+                    for (const auto &entry : bestLayout->gridCells) {
+                        if (entry.second.getPhase() > 0) {
+                            snapshotPhases[entry.first] = entry.second.getPhase() - 1;
+                        }
+                    }
+                    saveGraphRenderLatex(
+                        filePath,
+                        parse,
+                        snapshotNodes,
+                        bestLayout->routes,
+                        snapshotPhases,
+                        settings.phaseCount,
+                        bestLayout->bounds.width,
+                        bestLayout->bounds.height,
+                        QStringLiteral("_graph_pr_stages"),
+                        QStringLiteral("_04_best_update_%1_area_%2.tex")
+                            .arg(bestUpdateCount, 2, 10, QLatin1Char('0'))
+                            .arg(bestLayout->bounds.area),
+                        false);
+
+                    const bool phaseOk = hasAcceptablePhaseRun(bestLayout->phaseRuns);
+                    QString message = QString("Candidate %1/%2 success: %3x%4=%5, phase=%6, spacing=(%7,%8), max same-phase run=%9/%10 (%11)")
                         .arg(attemptIndex + 1)
                         .arg(attemptLimit)
                         .arg(bestLayout->bounds.width)
@@ -2729,9 +2754,9 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                         .arg(settings.phaseCount)
                         .arg(bestLayout->xSpacing)
                         .arg(bestLayout->ySpacing)
-                        .arg(bestLayout->phaseRepeats.maxRun)
-                        .arg(repeatRatio * 100.0, 0, 'f', 1)
-                        .arg(phaseOk ? "phase-ok" : "phase-repeat-high");
+                        .arg(bestLayout->phaseRuns.maxRun)
+                        .arg(phaseRunLimit())
+                        .arg(phaseOk ? "phase-ok" : "phase-run-too-long");
                     emit operationProgress(message, attemptIndex + 1, attemptLimit);
                     QCoreApplication::processEvents();
                 }
@@ -2762,19 +2787,16 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                                         " \& " + QString::number(elapsedSeconds, 'f', 1) ;
         //测试时间
 
-        const bool phaseQualityOk = hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
-        const double repeatRatio = bestLayout->phaseRepeats.totalAdjacent > 0
-            ? static_cast<double>(bestLayout->phaseRepeats.repeatedAdjacent) / bestLayout->phaseRepeats.totalAdjacent
-            : 0.0;
+        const bool phaseQualityOk = hasAcceptablePhaseRun(bestLayout->phaseRuns);
         QString message =  "Graph layout success! " + elapsedStr +
                            QString(" ; best spacing=(%1,%2), route length=%3")
                                .arg(bestLayout->xSpacing)
                                .arg(bestLayout->ySpacing)
                                .arg(bestLayout->routeLength) +
-                           QString(" ; max phase repeat=%1 ; repeat ratio=%2% ; phase quality=%3")
-                               .arg(bestLayout->phaseRepeats.maxRun)
-                               .arg(repeatRatio * 100.0, 0, 'f', 1)
-                               .arg(phaseQualityOk ? "ok" : "high-repeat-warning");
+                           QString(" ; max same-phase run=%1/%2 ; phase quality=%3")
+                               .arg(bestLayout->phaseRuns.maxRun)
+                               .arg(phaseRunLimit())
+                               .arg(phaseQualityOk ? "ok" : "run-too-long-warning");
 
         std::map<unsigned int, position> node_pos;
         for (auto& pair : bestLayout->nodePositions) {
@@ -2830,6 +2852,57 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                 }
             }
         }
+
+        // Export the selected candidate at the meaningful P&R boundaries.
+        // All snapshots use exactly the same winning placement so that
+        // differences between figures reflect routing and phase assignment,
+        // rather than a different candidate's geometry.
+        const std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> noRoutes;
+        const std::map<position, int> noPhases;
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             noRoutes,
+                             noPhases,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_stages"),
+                             QStringLiteral("_01_layered_placement.tex"),
+                             false);
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             routes_trans,
+                             noPhases,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_stages"),
+                             QStringLiteral("_02_astar_routing.tex"),
+                             false);
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             routes_trans,
+                             pos_phase,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_stages"),
+                             QStringLiteral("_03_clock_phase_assignment.tex"),
+                             false);
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             routes_trans,
+                             pos_phase,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_stages"),
+                             QStringLiteral("_05_compact_final.tex"),
+                             false);
 
         const QString ifcnPath = saveGateLevelIfcn(filePath,
                                                    parse,
@@ -3856,7 +3929,8 @@ void VerilogHandler::saveGraphRenderLatex(
     int width,
     int height,
     const QString &outputDirSuffix,
-    const QString &outputFileSuffix)
+    const QString &outputFileSuffix,
+    bool showNullLabels)
 {
     const QFileInfo sourceInfo(sourceFilePath);
     const QString outputStem = layoutOutputStem(sourceInfo, parse);
@@ -3979,15 +4053,20 @@ void VerilogHandler::saveGraphRenderLatex(
     for (int y = 0; y < normalizedHeight; ++y) {
         for (int x = 0; x < normalizedWidth; ++x) {
             const position pos{static_cast<unsigned int>(x), static_cast<unsigned int>(y)};
-            const QString coord = rlStyleCoord(pos, normalizedHeight);
+            const QString coord = rlStyleCoord(pos);
             if (usedPositions.find(pos) == usedPositions.end()) {
-                out << "\\node[c-1] at " << coord << "{\\phasecell{null}};\n";
+                out << "\\node[c-1] at " << coord
+                    << (showNullLabels ? "{\\phasecell{null}};\n" : "{};\n");
                 continue;
             }
 
             const auto phaseIt = normalizedPosPhase.find(pos);
-            const int phase = rlStylePhase(phaseIt != normalizedPosPhase.end() ? phaseIt->second : 0,
-                                           phaseCount);
+            if (phaseIt == normalizedPosPhase.end()) {
+                out << "\\node[c-1] at " << coord
+                    << (showNullLabels ? "{\\phasecell{null}};\n" : "{};\n");
+                continue;
+            }
+            const int phase = rlStylePhase(phaseIt->second, phaseCount);
             out << "\\node[c" << phase << "] at " << coord
                 << "{\\phasecell{" << phase << "}};\n";
         }
@@ -3995,7 +4074,7 @@ void VerilogHandler::saveGraphRenderLatex(
 
     for (const auto &entry : normalizedNodePositions) {
         out << "\\node[v] (" << entry.first << ") at "
-            << rlStyleCoord(entry.second, normalizedHeight)
+            << rlStyleCoord(entry.second)
             << "{" << entry.first << "};\n";
     }
 
@@ -4005,7 +4084,7 @@ void VerilogHandler::saveGraphRenderLatex(
         }
         out << "\\draw[route](" << route.first.first << ")--";
         for (std::size_t i = 1; i + 1 < route.second.size(); ++i) {
-            out << rlStyleCoord(route.second[i], normalizedHeight) << "--";
+            out << rlStyleCoord(route.second[i]) << "--";
         }
         out << "(" << route.first.second << ");\n";
     }

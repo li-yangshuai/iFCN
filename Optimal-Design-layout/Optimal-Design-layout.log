@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.20 (TeX Live 2019/Debian) (preloaded format=pdflatex 2026.5.18)  28 JUL 2026 06:05
+This is pdfTeX, Version 3.14159265-2.6-1.40.20 (TeX Live 2019/Debian) (preloaded format=pdflatex 2026.5.18)  7 AUG 2026 14:12
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -1585,13 +1585,13 @@ Package atveryend Info: Empty hook `AtVeryVeryEnd' on input line 312.
 Here is how much of TeX's memory you used:
  31007 strings out of 482590
  545430 string characters out of 5953557
- 848855 words of memory out of 5000000
+ 848856 words of memory out of 5000000
  45454 multiletter control sequences out of 15000+600000
  771238 words of font info for 260 fonts, out of 8000000 for 9000
  335 hyphenation exceptions out of 8191
  67i,11n,79p,1484b,705s stack positions out of 5000i,500n,10000p,200000b,80000s
  </home/lys/.texlive2019/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0900.600pk> </home/lys/.texlive2019/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0800.600pk>{/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathit-bold.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathcal.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathscr.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathit.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-t1.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathrm.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathex.enc}</usr/share/texlive/texmf-dist/fonts/type1/public/stix2/STIX2Math.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/stix2/STIX2Text-Bold.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/stix2/STIX2Text-BoldItalic.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/stix2/STIX2Text-Italic.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/stix2/STIX2Text-Regular.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt8.pfb>
-Output written on /home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.pdf (7 pages, 1017658 bytes).
+Output written on /home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.pdf (7 pages, 1017662 bytes).
 PDF statistics:
  369 PDF objects out of 1000 (max. 8388607)
  273 compressed objects within 3 object streams

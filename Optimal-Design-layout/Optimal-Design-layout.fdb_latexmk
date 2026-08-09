@@ -1,16 +1,16 @@
 # Fdb version 3
-["bibtex Optimal-Design-layout"] 1785189589 "Optimal-Design-layout.aux" "Optimal-Design-layout.bbl" "Optimal-Design-layout" 1785189921
+["bibtex Optimal-Design-layout"] 1785189589 "Optimal-Design-layout.aux" "Optimal-Design-layout.bbl" "Optimal-Design-layout" 1786083156
   "/usr/share/texlive/texmf-dist/bibtex/bst/natbib/unsrtnat.bst" 1233624470 24550 a41a6405f4de768c43e871d9fbce2bc8 ""
-  "Optimal-Design-layout.aux" 1785189921 10642 4fc854f3ed39f3eb3af7b62426231ca8 "pdflatex"
+  "Optimal-Design-layout.aux" 1786083155 10642 4fc854f3ed39f3eb3af7b62426231ca8 "pdflatex"
   "references.bib" 1785164802 4768 599e311767e9e509a6c6eaec6a922779 ""
   (generated)
-  "Optimal-Design-layout.blg"
   "Optimal-Design-layout.bbl"
-["pdflatex"] 1785189920 "Optimal-Design-layout.tex" "/home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.pdf" "Optimal-Design-layout" 1785189921
+  "Optimal-Design-layout.blg"
+["pdflatex"] 1786083152 "Optimal-Design-layout.tex" "/home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.pdf" "Optimal-Design-layout" 1786083156
   "/etc/texmf/web2c/texmf.cnf" 1745829228 476 26cfcd22e1594e09b574dc87545bc483 ""
   "/home/lys/.texlive2019/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0800.600pk" 1785165043 15172 363ec453d86362fbcc9657cc1b4748c5 ""
   "/home/lys/.texlive2019/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0900.600pk" 1785165044 17492 39d39ab0742ea974ed6a3f9b4bf0dd7c ""
-  "/home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.aux" 1785189921 10642 4fc854f3ed39f3eb3af7b62426231ca8 ""
+  "/home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.aux" 1786083155 10642 4fc854f3ed39f3eb3af7b62426231ca8 ""
   "/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathcal.enc" 1525198975 3356 2818ff063f8b5d0d850e1203330b9fda ""
   "/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathex.enc" 1525198975 3374 7b7c21d9493820ef4980dfa6fd22840f ""
   "/usr/share/texlive/texmf-dist/fonts/enc/dvips/stix2/stix2-mathit-bold.enc" 1525198975 3402 463aa77cccaed5276381cbb20340cbef ""
@@ -264,7 +264,7 @@
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1779111976 5154082 1c426fbbfec95bf70ec93502840133ed ""
   "LETTERSP.STY" 1785164396 12163 b6de1fa5e93e58dc68ba3c77a1af2e61 ""
   "NJDnatbib.sty" 1785164397 46229 b23b408004050376b05f17f766e34127 ""
-  "Optimal-Design-layout.aux" 1785189921 10642 4fc854f3ed39f3eb3af7b62426231ca8 "pdflatex"
+  "Optimal-Design-layout.aux" 1786083155 10642 4fc854f3ed39f3eb3af7b62426231ca8 "pdflatex"
   "Optimal-Design-layout.bbl" 1785189589 4801 6a6df326ee0d24cc44c9d3de6b84d07d "bibtex Optimal-Design-layout"
   "Optimal-Design-layout.tex" 1785189485 29273 0b960687231115691252cdd19e026784 ""
   "USG.cls" 1785164397 95431 0244fdb94a6bc18f048db962c353f564 ""
@@ -272,16 +272,16 @@
   "algorithmicx.sty" 1785164396 26750 ce139c05a983e19ddca355b43e29c395 ""
   "amssymb.sty" 1785164396 13840 8d3b8c6243767e151b5342193a010577 ""
   "cell_level_results_table.tex" 1785189584 2858 ad2aad890edd6f23d099c1f4390f0ebf ""
-  "figures/qca_simulation_workflow.pdf" 1785164867 108251 737a98e94684ab6ad85ff277b0c2f46b ""
-  "figures/random_clock_scaling.pdf" 1785164874 20655 caa0f065299a18ef1ba4457c0c64d0ff ""
+  "figures/qca_simulation_workflow.pdf" 1785997003 108251 525e95b174ddf5b2f5ffa61234bc7c2c ""
+  "figures/random_clock_scaling.pdf" 1785475898 20655 09f7732fa0aae23b0bba39c3aa0f1fe0 ""
   "images/Wiley_logo.eps" 1785164397 413570 ef0fb6bc9fa87a993ec36489549c55eb ""
   "images/allergy.eps" 1785164397 1473554 5474cdf595b147e9b4c229b7a46fb2dc ""
   "images/openaccess.eps" 1785164397 1230946 a908289c03b32c6490d7d4f2594739db ""
   "random_clock_results_table.tex" 1785164921 4201 aa0d5ee4e47c813c7b03524d06c277c8 ""
   (generated)
-  "/home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.log"
-  "Optimal-Design-layout.log"
-  "Optimal-Design-layout.pdf"
-  "Optimal-Design-layout.aux"
   "Optimal-Design-layout.pag"
+  "/home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.log"
+  "Optimal-Design-layout.pdf"
+  "Optimal-Design-layout.log"
   "/home/lys/project/github/iFCN/Optimal-Design-layout/Optimal-Design-layout.pdf"
+  "Optimal-Design-layout.aux"

@@ -89,7 +89,8 @@ private:
                               int width,
                               int height,
                               const QString &outputDirSuffix,
-                              const QString &outputFileSuffix);
+                              const QString &outputFileSuffix,
+                              bool showNullLabels = true);
 
 
 };

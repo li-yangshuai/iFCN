@@ -20,6 +20,10 @@
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QMessageBox>
+#include <QPageLayout>
+#include <QPageSize>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -30,6 +34,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QSvgGenerator>
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
@@ -1353,9 +1358,7 @@ void MainWindow::exportStructure3DGraphic()
         filePath += QLatin1Char('.') + suffix;
     }
 
-    const bool saved = suffix == QStringLiteral("pdf")
-        ? structure3DView->exportToPdf(filePath)
-        : structure3DView->exportToSvg(filePath);
+    const bool saved = saveStructure3DGraphic(filePath);
 
     if (!saved) {
         QMessageBox::warning(this,
@@ -1366,6 +1369,92 @@ void MainWindow::exportStructure3DGraphic()
 
     printToStatusBar(tr("3D structure saved: %1")
                          .arg(QDir::toNativeSeparators(filePath)));
+}
+
+bool MainWindow::saveStructure3DGraphic(const QString &filePath)
+{
+    if (structure3DView == nullptr || filePath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    updateStructure3DView();
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    if (suffix == QStringLiteral("pdf")) {
+        return structure3DView->exportToPdf(filePath);
+    }
+    if (suffix == QStringLiteral("svg")) {
+        return structure3DView->exportToSvg(filePath);
+    }
+    return false;
+}
+
+bool MainWindow::saveCellLevelLayoutGraphic(const QString &filePath)
+{
+    if (scene == nullptr || filePath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    QRectF sourceRect = scene->exportContentBounds();
+    if (!sourceRect.isValid() || sourceRect.isEmpty()) {
+        return false;
+    }
+    sourceRect = sourceRect.normalized();
+
+    const QSize exportSize(qMax(1, static_cast<int>(std::ceil(sourceRect.width()))),
+                           qMax(1, static_cast<int>(std::ceil(sourceRect.height()))));
+    const QSizeF figureSize(exportSize);
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+
+    if (suffix == QStringLiteral("pdf")) {
+        QPdfWriter writer(filePath);
+        writer.setResolution(72);
+        writer.setTitle(QStringLiteral("iFCN cell-level layout"));
+        writer.setCreator(QStringLiteral("iFCN"));
+        const QPageSize pageSize(figureSize,
+                                 QPageSize::Point,
+                                 QStringLiteral("iFCN cell-level layout"));
+        QPageLayout pageLayout(pageSize,
+                               QPageLayout::Portrait,
+                               QMarginsF(0.0, 0.0, 0.0, 0.0),
+                               QPageLayout::Point);
+        pageLayout.setMode(QPageLayout::FullPageMode);
+        writer.setPageLayout(pageLayout);
+
+        QPainter painter(&writer);
+        if (!painter.isActive()) {
+            return false;
+        }
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setRenderHint(QPainter::TextAntialiasing, true);
+        scene->renderForExport(&painter,
+                               QRectF(QPointF(0.0, 0.0), figureSize),
+                               sourceRect,
+                               Qt::IgnoreAspectRatio);
+        return painter.end();
+    }
+
+    if (suffix == QStringLiteral("svg")) {
+        QSvgGenerator generator;
+        generator.setFileName(filePath);
+        generator.setSize(exportSize);
+        generator.setViewBox(QRect(QPoint(0, 0), exportSize));
+        generator.setTitle(QStringLiteral("iFCN cell-level layout"));
+        generator.setDescription(QStringLiteral("Vector cell-level layout exported by iFCN."));
+
+        QPainter painter(&generator);
+        if (!painter.isActive()) {
+            return false;
+        }
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setRenderHint(QPainter::TextAntialiasing, true);
+        scene->renderForExport(&painter,
+                               QRectF(QPointF(0.0, 0.0), figureSize),
+                               sourceRect,
+                               Qt::IgnoreAspectRatio);
+        return painter.end();
+    }
+
+    return false;
 }
 
 void MainWindow::centerViewOnItems(bool fitToView)

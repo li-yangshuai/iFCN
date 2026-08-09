@@ -277,12 +277,17 @@ void TabbedMainWindow::openNewTab()
     addEditorTab(tr("Untitled"));
 }
 
-void TabbedMainWindow::openFileInNewTab(const QString &fileName)
+MainWindow *TabbedMainWindow::openFileInNewTab(const QString &fileName, bool forceGateLevelMapping)
 {
     MainWindow *editor = addEditorTab(tr("Untitled"));
     editor->disableStartupRestore();
-    editor->loadFile(fileName);
+    if (forceGateLevelMapping && QFileInfo(fileName).suffix().compare(QStringLiteral("ifcn"), Qt::CaseInsensitive) == 0) {
+        editor->mapIfcnFile(fileName);
+    } else {
+        editor->loadFile(fileName);
+    }
     updateTabTitle(editor, fileName);
+    return editor;
 }
 
 MainWindow *TabbedMainWindow::openVerilogSourceInNewTab(const QString &sourceText,

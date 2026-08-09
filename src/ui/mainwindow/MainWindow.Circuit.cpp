@@ -174,9 +174,7 @@ void MainWindow::exportCircuitSchematicSvg()
         filePath += QLatin1Char('.') + suffix;
     }
 
-    const bool saved = suffix == QStringLiteral("pdf")
-        ? circuitSchematicView->exportToPdf(filePath)
-        : circuitSchematicView->exportToSvg(filePath);
+    const bool saved = saveCircuitSchematicGraphic(filePath);
     if (!saved) {
         QMessageBox::warning(this,
                              tr("Save Circuit Structure"),
@@ -186,6 +184,22 @@ void MainWindow::exportCircuitSchematicSvg()
 
     printToStatusBar(tr("Circuit structure saved: %1")
                          .arg(QDir::toNativeSeparators(filePath)));
+}
+
+bool MainWindow::saveCircuitSchematicGraphic(const QString &filePath)
+{
+    if (circuitSchematicView == nullptr || filePath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    if (suffix == QStringLiteral("pdf")) {
+        return circuitSchematicView->exportToPdf(filePath);
+    }
+    if (suffix == QStringLiteral("svg")) {
+        return circuitSchematicView->exportToSvg(filePath);
+    }
+    return false;
 }
 
 void MainWindow::slotCircuitNodeActivated(int nodeIndex)

@@ -82,6 +82,10 @@ public:
         QString verilogSourceContent() const;
         QString verilogSourcePath() const;
         void disableStartupRestore();
+        bool saveCellLevelLayoutGraphic(const QString &filePath);
+        bool saveCircuitSchematicGraphic(const QString &filePath);
+        bool saveStructure3DGraphic(const QString &filePath);
+        VerilogHandler *layoutHandler() const { return verilogHandler; }
 
 public:
         void printToStatusBar(const QString &message);

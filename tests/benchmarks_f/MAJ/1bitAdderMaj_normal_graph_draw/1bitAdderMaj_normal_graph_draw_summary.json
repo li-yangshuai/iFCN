@@ -1,0 +1,186 @@
+{
+  "benchmark": "/home/lys/project/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj.v",
+  "resolved_benchmark": "/home/lys/project/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj.v",
+  "parser_safe_generated": false,
+  "node_count": 9,
+  "edge_count": 11,
+  "input_count": 3,
+  "output_count": 1,
+  "io_count": 4,
+  "layer_count": 5,
+  "seed": 1,
+  "seed_attempts": [
+    {
+      "seed": 1,
+      "failed_edge_count": 0,
+      "clock_template_ok": true,
+      "clock_template_conflicts": 0,
+      "area": 54,
+      "route_expansion_rounds": 1,
+      "route_expansion_exhausted": false
+    }
+  ],
+  "output_dir": "/home/lys/project/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj_normal_graph_draw",
+  "ifcn": "/home/lys/project/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj_normal_graph_draw/1bitAdderMaj_normal_graph_draw.ifcn",
+  "encoded_ifcn": "/home/lys/project/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj_normal_graph_draw/1bitAdderMaj_normal_graph_draw_encoded.ifcn",
+  "raw_svg": "/home/lys/project/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj_normal_graph_draw/1bitAdderMaj_raw.svg",
+  "ordered_svg": "/home/lys/project/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj_normal_graph_draw/1bitAdderMaj.svg",
+  "physical_svg": "/home/lys/project/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj_normal_graph_draw/1bitAdderMaj_physical.svg",
+  "stage_tex_dir": "",
+  "failed_edge_count": 0,
+  "failed_edges": [],
+  "layout_legal": true,
+  "route_expansion_round_count": 1,
+  "route_expansion_exhausted": false,
+  "route_incompatibility_reason": "",
+  "right_down_port_capacity_nodes": [
+    {
+      "node": 4,
+      "fanin_count": 3,
+      "node_type": "maj"
+    }
+  ],
+  "route_expansion_history": [
+    {
+      "round": 1,
+      "previous_failed": 2,
+      "failed": 0,
+      "inserted_rows": [
+        1,
+        2
+      ],
+      "inserted_cols": [
+        3,
+        4
+      ],
+      "shifted_target_rows": 0,
+      "propagated_right_down_moves": 0,
+      "route_variant": "failed-first",
+      "width": 9,
+      "height": 10,
+      "elapsed_sec": 0.0011024010018445551
+    }
+  ],
+  "contraction_step_count": 5,
+  "contraction_evaluations": 31,
+  "contraction_global_evaluations": 5,
+  "contraction_recursive_evaluations": 6,
+  "contraction_empty_line_evaluations": 16,
+  "contraction_layer_merge_evaluations": 4,
+  "contraction_exhausted": false,
+  "contraction_history": [
+    {
+      "step": 1,
+      "mode": "phase_node_global_bottom_up",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        9
+      ],
+      "node": 7,
+      "from_coord": [
+        8,
+        6
+      ],
+      "to_coord": [
+        8,
+        5
+      ],
+      "route_edge": [
+        0,
+        7
+      ],
+      "phase_from": 2,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 9,
+      "old_height": 10,
+      "width": 9,
+      "height": 10,
+      "area": 90,
+      "old_used_cell_count": 48,
+      "used_cell_count": 48,
+      "old_routed_wire_cells": 50,
+      "routed_wire_cells": 49
+    },
+    {
+      "step": 2,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 1,
+      "old_width": 9,
+      "old_height": 10,
+      "width": 8,
+      "height": 10,
+      "area": 80,
+      "old_used_cell_count": 48,
+      "used_cell_count": 47,
+      "old_routed_wire_cells": 49,
+      "routed_wire_cells": 47
+    },
+    {
+      "step": 3,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 2,
+      "old_width": 8,
+      "old_height": 10,
+      "width": 7,
+      "height": 10,
+      "area": 70,
+      "old_used_cell_count": 47,
+      "used_cell_count": 44,
+      "old_routed_wire_cells": 47,
+      "routed_wire_cells": 44
+    },
+    {
+      "step": 4,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 5,
+      "old_width": 7,
+      "old_height": 10,
+      "width": 6,
+      "height": 10,
+      "area": 60,
+      "old_used_cell_count": 44,
+      "used_cell_count": 41,
+      "old_routed_wire_cells": 44,
+      "routed_wire_cells": 40
+    },
+    {
+      "step": 5,
+      "mode": "empty_row_delete",
+      "axis": "y",
+      "line": 7,
+      "old_width": 6,
+      "old_height": 10,
+      "width": 6,
+      "height": 9,
+      "area": 54,
+      "old_used_cell_count": 41,
+      "used_cell_count": 38,
+      "old_routed_wire_cells": 40,
+      "routed_wire_cells": 37
+    }
+  ],
+  "pre_contraction_width": 9,
+  "pre_contraction_height": 10,
+  "pre_contraction_area": 90,
+  "contraction_area_reduction": 36,
+  "contraction_area_reduction_percent": 40.0,
+  "pre_contraction_used_cell_count": 48,
+  "used_cell_count": 38,
+  "contraction_used_cell_reduction": 10,
+  "contraction_used_cell_reduction_percent": 20.833333333333332,
+  "pre_contraction_routed_wire_cells": 50,
+  "routed_wire_cells": 37,
+  "contraction_routed_wire_cell_reduction": 13,
+  "width": 6,
+  "height": 9,
+  "area": 54,
+  "layout_routing_runtime_sec": 0.5782156680361368,
+  "contraction_runtime_sec": 0.0197374289855361,
+  "run_time_sec": 0.5979530970216729,
+  "algorithm_description": "normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, right-down reachable initialization, structural-feature-guided node reposition, failure-directed row/column expansion, legality-verified recursive top-down/bottom-up phase-aware node-to-wire contraction, fixed-point blank-row/column deletion, and post-routing 2DDWave template consistency verification"
+}

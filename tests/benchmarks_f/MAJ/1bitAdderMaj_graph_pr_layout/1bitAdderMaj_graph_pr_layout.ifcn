@@ -8,47 +8,44 @@
 #input/output: 3 / 1
 #edges number: 11
 #total layers: 5
-#layout area: width: 5, height: 9, area: 45
-#cell count: 190
+#layout area: width: 4, height: 9, area: 36
+#cell count: 193
 #cross count: 4
-#phase origin: top-left=(4,4), saved coordinates are normalized to (0,0)
+#phase origin: top-left=(3,4), saved coordinates are normalized to (0,0)
 #phase count: 4
-#runtime: 14.912s
+#runtime: 8.621s
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###
-0, x0, input, (0,0);
-1, x1, input, (4,0);
+0, x0, input, (1,0);
+1, x1, input, (3,0);
 2, x2, input, (2,0);
 3, y0, output, (2,8);
 4, n4, maj, (2,6);
 5, n4_0, and, (1,2);
-6, ~x2, not, (3,2);
+6, ~x2, not, (2,2);
 7, n4_1, and, (1,4);
-8, n4_2, and, (3,4);
+8, n4_2, and, (2,4);
 #nodes info 
 
 #paths info
 ### {node1, node2} : path ###
-(0,5): (0,0),(0,1),(0,2),(1,2);
-(0,7): (0,0),(0,1),(0,2),(0,3),(0,4),(1,4);
-(1,5): (4,0),(3,0),(3,1),(2,1),(1,1),(1,2);
-(1,8): (4,0),(3,0),(3,1),(2,1),(2,2),(2,3),(2,4),(3,4);
-(2,6): (2,0),(2,1),(2,2),(3,2);
+(0,5): (1,0),(1,1),(1,2);
+(0,7): (1,0),(1,1),(0,1),(0,2),(0,3),(0,4),(1,4);
+(1,5): (3,0),(3,1),(2,1),(1,1),(0,1),(0,2),(1,2);
+(1,8): (3,0),(3,1),(3,2),(3,3),(2,3),(2,4);
+(2,6): (2,0),(2,1),(2,2);
 (4,3): (2,6),(2,7),(2,8);
 (5,4): (1,2),(1,3),(0,3),(0,4),(0,5),(0,6),(1,6),(2,6);
-(6,7): (3,2),(3,3),(2,3),(1,3),(1,4);
-(6,8): (3,2),(3,3),(3,4);
+(6,7): (2,2),(2,3),(1,3),(1,4);
+(6,8): (2,2),(2,3),(3,3),(3,4),(2,4);
 (7,4): (1,4),(1,5),(2,5),(2,6);
-(8,4): (3,4),(3,5),(3,6),(2,6);
+(8,4): (2,4),(2,5),(3,5),(3,6),(2,6);
 #paths info
 #phase map
 #phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
 ### tile(x,y) : packed_hex for a 4x4 phase block ###
-tile(0,0):0xf30459aa;
-tile(1,0):0x02000000;
-tile(0,1):0xff106930;
-tile(1,1):0x00000000;
-tile(0,2):0x00000000;
-tile(1,2):0x00000000;
+tile(0,0):0xfc0155aa;
+tile(0,1):0xff405520;
+tile(0,2):0x30000000;
 #phase map

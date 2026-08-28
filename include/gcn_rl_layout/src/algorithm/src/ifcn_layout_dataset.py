@@ -28,6 +28,8 @@ from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, 
 
 
 SCHEMA_VERSION = 1
+MAPPING_MODE_COMBINATIONAL = "combinational"
+MAPPING_MODE_SEQUENTIAL = "sequential"
 Coord = Tuple[int, int]
 FloatCoord = Tuple[float, float]
 PathLike = Union[str, Path]
@@ -52,10 +54,47 @@ _PACKED_BLOCK_RE = re.compile(
     r"\(\s*([+-]?\d+)\s*,\s*([+-]?\d+)\s*\)\s*:\s*(0x[0-9a-fA-F]+)\s*;",
     re.IGNORECASE,
 )
+_ITERATION_DISTANCE_RE = re.compile(
+    r"^\s*#\s*iteration(?:_|\s+)distance\s*(?:=|:)\s*([+-]?\d+)\s*$",
+    re.IGNORECASE,
+)
+_ITERATION_DISTANCE_PREFIX_RE = re.compile(
+    r"^\s*#\s*iteration(?:_|\s+)distance\b",
+    re.IGNORECASE,
+)
+_MAPPING_MODE_RE = re.compile(
+    r"^\s*#\s*mapping\s+mode\s*:\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
+_MAPPING_MODE_KEY_RE = re.compile(
+    r"^\s*#\s*mapping\s+mode\b.*$",
+    re.IGNORECASE,
+)
+_FLOW_RE = re.compile(r"^\s*#\s*flow\s*:\s*(.*?)\s*$", re.IGNORECASE)
+_LEGACY_SEQUENTIAL_FLOWS = {
+    "sequential register-cut p&r v0",
+    "sampled-state physical-feedback p&r experiment v0",
+}
+_MAX_IFCN_ITERATION_DISTANCE = (1 << 32) - 1
 
 
 def _normalise_key(value: str) -> str:
     return " ".join(value.strip().lower().split())
+
+
+def normalize_mapping_mode(value: object = None) -> str:
+    """Normalize a valid explicit mode, defaulting only missing values.
+
+    Unknown explicit values are metadata errors, not aliases for the legacy
+    combinational mode.  IFCN parsing records such errors in its quality report.
+    """
+
+    if value is None:
+        return MAPPING_MODE_COMBINATIONAL
+    normalized = str(value).strip().lower()
+    if normalized in {MAPPING_MODE_COMBINATIONAL, MAPPING_MODE_SEQUENTIAL}:
+        return normalized
+    raise ValueError(f"unsupported IFCN mapping mode: {normalized}")
 
 
 def _maybe_int(value: Optional[str]) -> Optional[int]:
@@ -167,16 +206,27 @@ class IFCNPath:
     turns: int = 0
     detour_ratio: float = 1.0
     endpoint_match: bool = False
+    iteration_distance: int = 0
+
+    def __post_init__(self) -> None:
+        self.iteration_distance = int(self.iteration_distance)
+        if self.iteration_distance < 0:
+            raise ValueError("IFCN path iteration_distance must be non-negative")
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "IFCNPath":
         def coords(key: str) -> Tuple[Coord, ...]:
             return tuple(tuple(int(item) for item in coord) for coord in value.get(key, []))  # type: ignore[arg-type]
 
+        iteration_distance = int(value.get("iteration_distance", 0))
+        if iteration_distance < 0:
+            raise ValueError("IFCN path iteration_distance must be non-negative")
+
         return cls(
             source=int(value["source"]),
             target=int(value["target"]),
             points=coords("points"),
+            iteration_distance=iteration_distance,
             directions=tuple(str(item) for item in value.get("directions", [])),  # type: ignore[arg-type]
             direction_counts={
                 str(key): int(item)
@@ -353,6 +403,20 @@ class IFCNLayout:
     quality: IFCNQualityReport
     bounds: Optional[Tuple[int, int, int, int]] = None
     schema_version: int = SCHEMA_VERSION
+    mapping_mode: str = ""
+
+    def __post_init__(self) -> None:
+        raw_mode = self.mapping_mode or self.header.get("mapping mode")
+        if raw_mode is not None:
+            self.mapping_mode = normalize_mapping_mode(raw_mode)
+            return
+        legacy_flow = str(self.header.get("flow", "")).strip().lower()
+        self.mapping_mode = (
+            MAPPING_MODE_SEQUENTIAL
+            if any(path.iteration_distance > 0 for path in self.paths)
+            or legacy_flow in _LEGACY_SEQUENTIAL_FLOWS
+            else MAPPING_MODE_COMBINATIONAL
+        )
 
     @property
     def circuit_name(self) -> str:
@@ -378,6 +442,7 @@ class IFCNLayout:
             "schema_version": self.schema_version,
             "source_path": self.source_path,
             "header": dict(self.header),
+            "mapping_mode": self.mapping_mode,
             "nodes": [asdict(node) for node in self.nodes],
             "paths": [asdict(path) for path in self.paths],
             "raw_phase_map": [
@@ -405,9 +470,13 @@ class IFCNLayout:
         }
         packed = value.get("packed_phase")
         bounds = value.get("bounds")
+        header = {
+            str(key): str(item)
+            for key, item in value.get("header", {}).items()  # type: ignore[union-attr]
+        }
         return cls(
             source_path=str(value["source_path"]),
-            header={str(key): str(item) for key, item in value.get("header", {}).items()},  # type: ignore[union-attr]
+            header=header,
             nodes=tuple(IFCNNode.from_dict(item) for item in value.get("nodes", [])),  # type: ignore[arg-type]
             paths=tuple(IFCNPath.from_dict(item) for item in value.get("paths", [])),  # type: ignore[arg-type]
             raw_phase_map=raw_phase_map,
@@ -416,21 +485,97 @@ class IFCNLayout:
             layout_hash=str(value["layout_hash"]),
             quality=IFCNQualityReport.from_dict(value["quality"]),  # type: ignore[arg-type]
             bounds=tuple(int(item) for item in bounds) if bounds is not None else None,  # type: ignore[arg-type]
+            mapping_mode=str(value.get("mapping_mode") or ""),
             schema_version=schema_version,
         )
 
 
-def topology_fingerprint(nodes: Sequence[IFCNNode], paths: Sequence[IFCNPath]) -> str:
+def topology_fingerprint(
+    nodes: Sequence[IFCNNode],
+    paths: Sequence[IFCNPath],
+    mapping_mode: object = MAPPING_MODE_COMBINATIONAL,
+) -> str:
     """Return a directed WL topology hash independent of node IDs and order.
 
-    Node types, edge direction and edge multiplicity participate in the hash;
-    node names, coordinates, paths and clock values intentionally do not.  WL
+    Node types, edge direction and edge multiplicity participate in the hash.
+    Sequential mode and non-zero iteration distances additionally make this an
+    edge-labelled topology hash.  The legacy all-zero combinational code path
+    is kept byte-for-byte compatible with existing online topology hashes.
+    Node names, coordinates, paths and clock values intentionally do not.  WL
     is not a full graph-isomorphism solver, but the retained round histograms
     and final colour-edge multiset make accidental collisions unlikely for the
     sparse directed logic graphs used here.
     """
 
+    normalized_mode = normalize_mapping_mode(mapping_mode)
+    semantic_edges = (
+        normalized_mode == MAPPING_MODE_SEQUENTIAL
+        or any(path.iteration_distance != 0 for path in paths)
+    )
     node_types = {node.node_id: _normalise_node_type(node.node_type) for node in nodes}
+
+    if semantic_edges:
+        labelled_predecessors: Dict[int, List[Tuple[int, int]]] = {
+            node_id: [] for node_id in node_types
+        }
+        labelled_successors: Dict[int, List[Tuple[int, int]]] = {
+            node_id: [] for node_id in node_types
+        }
+        labelled_edges: List[Tuple[int, int, int]] = []
+        for path in paths:
+            if path.source not in node_types or path.target not in node_types:
+                continue
+            distance = int(path.iteration_distance)
+            labelled_successors[path.source].append((path.target, distance))
+            labelled_predecessors[path.target].append((path.source, distance))
+            labelled_edges.append((path.source, path.target, distance))
+
+        labels = {
+            node_id: _stable_digest(
+                [
+                    node_types[node_id],
+                    sorted(distance for _, distance in labelled_predecessors[node_id]),
+                    sorted(distance for _, distance in labelled_successors[node_id]),
+                ]
+            )
+            for node_id in node_types
+        }
+        round_histograms: List[List[Tuple[str, int]]] = [
+            sorted(Counter(labels.values()).items())
+        ]
+        rounds = min(max(len(nodes), 1), 16)
+        for _ in range(rounds):
+            labels = {
+                node_id: _stable_digest(
+                    [
+                        node_types[node_id],
+                        labels[node_id],
+                        sorted(
+                            (labels[parent], distance)
+                            for parent, distance in labelled_predecessors[node_id]
+                        ),
+                        sorted(
+                            (labels[child], distance)
+                            for child, distance in labelled_successors[node_id]
+                        ),
+                    ]
+                )
+                for node_id in node_types
+            }
+            round_histograms.append(sorted(Counter(labels.values()).items()))
+
+        signature = {
+            "mapping_mode": normalized_mode,
+            "node_count": len(nodes),
+            "edge_count": len(labelled_edges),
+            "round_histograms": round_histograms,
+            "final_edges": sorted(
+                (labels[source], labels[target], distance)
+                for source, target, distance in labelled_edges
+            ),
+        }
+        return _stable_digest(signature)
+
     predecessors: Dict[int, List[int]] = {node_id: [] for node_id in node_types}
     successors: Dict[int, List[int]] = {node_id: [] for node_id in node_types}
     valid_edges: List[Tuple[int, int]] = []
@@ -477,7 +622,13 @@ def _layout_fingerprint(
     paths: Sequence[IFCNPath],
     phase_map: Mapping[Coord, int],
     topology_hash: str,
+    mapping_mode: object = MAPPING_MODE_COMBINATIONAL,
 ) -> str:
+    normalized_mode = normalize_mapping_mode(mapping_mode)
+    semantic_edges = (
+        normalized_mode == MAPPING_MODE_SEQUENTIAL
+        or any(path.iteration_distance != 0 for path in paths)
+    )
     if nodes or paths:
         all_coords = [node.position for node in nodes]
         all_coords.extend(point for path in paths for point in path.points)
@@ -502,6 +653,11 @@ def _layout_fingerprint(
                 node_descriptor.get(path.source, ("?", str(path.source), 0, 0)),
                 node_descriptor.get(path.target, ("?", str(path.target), 0, 0)),
                 tuple((x - min_x, y - min_y) for x, y in path.points),
+                *(
+                    (int(path.iteration_distance),)
+                    if semantic_edges
+                    else ()
+                ),
             )
             for path in paths
         ),
@@ -509,6 +665,8 @@ def _layout_fingerprint(
             (x - min_x, y - min_y, int(phase)) for (x, y), phase in phase_map.items()
         ),
     }
+    if semantic_edges:
+        geometry["mapping_mode"] = normalized_mode
     return _stable_digest(geometry)
 
 
@@ -532,6 +690,45 @@ def _parse_header(lines: Sequence[str]) -> Tuple[Dict[str, str], str]:
     if algorithm:
         header.setdefault("algorithm", algorithm)
     return header, algorithm
+
+
+def _parse_mapping_metadata(
+    lines: Sequence[str],
+) -> Tuple[bool, Optional[str], bool, List[str]]:
+    """Collect mapping declarations without losing duplicates or malformed keys."""
+
+    explicit_declared = False
+    explicit_modes: List[str] = []
+    legacy_sequential_flow = False
+    errors: List[str] = []
+    for line_number, line in enumerate(lines, start=1):
+        if _MAPPING_MODE_KEY_RE.match(line):
+            explicit_declared = True
+            match = _MAPPING_MODE_RE.match(line)
+            if match is None:
+                errors.append(
+                    f"line {line_number}: malformed IFCN mapping mode declaration"
+                )
+                continue
+            try:
+                explicit_modes.append(normalize_mapping_mode(match.group(1)))
+            except ValueError as error:
+                errors.append(f"line {line_number}: {error}")
+            continue
+
+        flow_match = _FLOW_RE.match(line)
+        if flow_match is not None:
+            normalized_flow = flow_match.group(1).strip().lower()
+            legacy_sequential_flow = (
+                legacy_sequential_flow
+                or normalized_flow in _LEGACY_SEQUENTIAL_FLOWS
+            )
+
+    distinct_modes = set(explicit_modes)
+    if len(distinct_modes) > 1:
+        errors.append("conflicting IFCN mapping mode declarations")
+    explicit_mode = explicit_modes[0] if explicit_modes else None
+    return explicit_declared, explicit_mode, legacy_sequential_flow, errors
 
 
 def _packed_metadata(
@@ -644,6 +841,7 @@ def _enrich_geometry(
                 source=path.source,
                 target=path.target,
                 points=path.points,
+                iteration_distance=path.iteration_distance,
                 directions=directions,
                 direction_counts=dict(sorted(Counter(directions).items())),
                 waypoints=waypoints,
@@ -664,6 +862,7 @@ def _enrich_geometry(
 
 def _build_quality_report(
     header: Mapping[str, str],
+    mapping_mode: str,
     nodes: Sequence[IFCNNode],
     paths: Sequence[IFCNPath],
     raw_phase_map: Mapping[Coord, int],
@@ -673,6 +872,11 @@ def _build_quality_report(
 ) -> IFCNQualityReport:
     errors = list(parse_errors)
     warnings: List[str] = []
+    sequential_training_unsupported = mapping_mode == MAPPING_MODE_SEQUENTIAL
+    if sequential_training_unsupported:
+        warnings.append(
+            "sequential mapping recurrence is unsupported by offline DAG training"
+        )
     declared_nodes = _maybe_int(header.get("gates number"))
     declared_edges = _maybe_int(header.get("edges number"))
     node_ids = [node.node_id for node in nodes]
@@ -761,7 +965,12 @@ def _build_quality_report(
     phase_available = bool(phase_map) and phase_coverage >= 1.0
     return IFCNQualityReport(
         complete=complete,
-        valid_for_training=complete and phase_available and not phase_disabled,
+        valid_for_training=(
+            complete
+            and phase_available
+            and not phase_disabled
+            and not sequential_training_unsupported
+        ),
         errors=tuple(dict.fromkeys(errors)),
         warnings=tuple(dict.fromkeys(warnings)),
         declared_nodes=declared_nodes,
@@ -789,32 +998,85 @@ def parse_ifcn(path: PathLike) -> IFCNLayout:
     source = Path(path)
     lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
     header, _ = _parse_header(lines)
+    (
+        explicit_mode_declared,
+        explicit_mapping_mode,
+        legacy_sequential_flow,
+        mapping_metadata_errors,
+    ) = _parse_mapping_metadata(lines)
     nodes: List[IFCNNode] = []
     paths: List[IFCNPath] = []
     raw_phase_map: Dict[Coord, int] = {}
     tiles: List[PackedPhaseTile] = []
-    errors: List[str] = []
+    errors: List[str] = list(mapping_metadata_errors)
     section: Optional[str] = None
     packed_disabled = False
+    mapping_mode = MAPPING_MODE_COMBINATIONAL
+    pending_iteration_distance: Optional[int] = None
+    pending_iteration_distance_line: Optional[int] = None
+    paths_with_explicit_iteration_distance = 0
+
+    def switch_section(next_section: str, line_number: int) -> None:
+        nonlocal section, pending_iteration_distance, pending_iteration_distance_line
+        if section == "paths" and pending_iteration_distance is not None:
+            errors.append(
+                f"line {pending_iteration_distance_line}: dangling iteration_distance "
+                f"before paths section ended at line {line_number}"
+            )
+        pending_iteration_distance = None
+        pending_iteration_distance_line = None
+        section = None if section == next_section else next_section
 
     for line_number, line in enumerate(lines, start=1):
         stripped = line.strip()
         marker = stripped.lower()
         if marker == "#nodes info":
-            section = None if section == "nodes" else "nodes"
+            switch_section("nodes", line_number)
             continue
         if marker == "#paths info":
-            section = None if section == "paths" else "paths"
+            switch_section("paths", line_number)
             continue
         if marker == "#phase map":
-            section = None if section == "raw_phase" else "raw_phase"
+            switch_section("raw_phase", line_number)
             continue
         if marker == "#encoded phase map":
-            section = None if section == "packed_phase" else "packed_phase"
+            switch_section("packed_phase", line_number)
             continue
         if stripped.startswith("###"):
             if "disabled" in marker and section in {"raw_phase", "packed_phase"}:
                 packed_disabled = True
+            continue
+        if _ITERATION_DISTANCE_PREFIX_RE.match(stripped):
+            if section != "paths":
+                errors.append(
+                    f"line {line_number}: iteration_distance is only valid inside "
+                    "the paths section"
+                )
+                continue
+            distance_match = _ITERATION_DISTANCE_RE.match(stripped)
+            if pending_iteration_distance is not None:
+                errors.append(
+                    f"line {pending_iteration_distance_line}: iteration_distance was not "
+                    f"consumed before another directive at line {line_number}"
+                )
+            pending_iteration_distance = None
+            pending_iteration_distance_line = None
+            if distance_match is None:
+                errors.append(f"line {line_number}: malformed iteration_distance")
+                continue
+            distance = int(distance_match.group(1))
+            if distance < 0:
+                errors.append(
+                    f"line {line_number}: iteration_distance must be non-negative"
+                )
+                continue
+            if distance > _MAX_IFCN_ITERATION_DISTANCE:
+                errors.append(
+                    f"line {line_number}: IFCN iteration_distance is out of range"
+                )
+                continue
+            pending_iteration_distance = distance
+            pending_iteration_distance_line = line_number
             continue
         if not stripped or stripped.startswith("#"):
             continue
@@ -842,7 +1104,22 @@ def parse_ifcn(path: PathLike) -> IFCNLayout:
                 continue
             source_id, target_id, point_text = match.groups()
             points = tuple((int(x), int(y)) for x, y in _COORD_RE.findall(point_text))
-            paths.append(IFCNPath(source=int(source_id), target=int(target_id), points=points))
+            if pending_iteration_distance is not None:
+                paths_with_explicit_iteration_distance += 1
+            paths.append(
+                IFCNPath(
+                    source=int(source_id),
+                    target=int(target_id),
+                    points=points,
+                    iteration_distance=(
+                        pending_iteration_distance
+                        if pending_iteration_distance is not None
+                        else 0
+                    ),
+                )
+            )
+            pending_iteration_distance = None
+            pending_iteration_distance_line = None
             continue
 
         if section == "raw_phase":
@@ -881,15 +1158,50 @@ def parse_ifcn(path: PathLike) -> IFCNLayout:
             else:
                 errors.append(f"line {line_number}: malformed packed phase entry")
 
+    if section == "paths" and pending_iteration_distance is not None:
+        errors.append(
+            f"line {pending_iteration_distance_line}: dangling iteration_distance at end of file"
+        )
+
+    positive_iteration_distance = any(
+        path.iteration_distance > 0 for path in paths
+    )
+    if explicit_mode_declared:
+        if explicit_mapping_mode is not None:
+            mapping_mode = explicit_mapping_mode
+            if (
+                mapping_mode == MAPPING_MODE_COMBINATIONAL
+                and positive_iteration_distance
+            ):
+                errors.append(
+                    "combinational IFCN declares a positive iteration distance"
+                )
+            if (
+                mapping_mode == MAPPING_MODE_SEQUENTIAL
+                and paths_with_explicit_iteration_distance != len(paths)
+            ):
+                errors.append(
+                    "sequential IFCN requires iteration_distance before every route"
+                )
+    elif positive_iteration_distance or legacy_sequential_flow:
+        mapping_mode = MAPPING_MODE_SEQUENTIAL
+
     packed_phase = _packed_metadata(header, tiles, packed_disabled)
     enriched_nodes, enriched_paths, bounds = _enrich_geometry(nodes, paths)
-    topology_hash = topology_fingerprint(enriched_nodes, enriched_paths)
+    topology_hash = topology_fingerprint(
+        enriched_nodes, enriched_paths, mapping_mode=mapping_mode
+    )
     effective_phase = raw_phase_map or (packed_phase.decode() if packed_phase is not None else {})
     layout_hash = _layout_fingerprint(
-        enriched_nodes, enriched_paths, effective_phase, topology_hash
+        enriched_nodes,
+        enriched_paths,
+        effective_phase,
+        topology_hash,
+        mapping_mode=mapping_mode,
     )
     quality = _build_quality_report(
         header,
+        mapping_mode,
         enriched_nodes,
         enriched_paths,
         raw_phase_map,
@@ -908,6 +1220,7 @@ def parse_ifcn(path: PathLike) -> IFCNLayout:
         layout_hash=layout_hash,
         quality=quality,
         bounds=bounds,
+        mapping_mode=mapping_mode,
     )
 
 
@@ -1173,6 +1486,8 @@ __all__ = [
     "IFCNNode",
     "IFCNPath",
     "IFCNQualityReport",
+    "MAPPING_MODE_COMBINATIONAL",
+    "MAPPING_MODE_SEQUENTIAL",
     "PackedPhaseMetadata",
     "PackedPhaseTile",
     "assert_no_topology_leakage",
@@ -1180,6 +1495,7 @@ __all__ = [
     "deduplicate_layouts",
     "load_jsonl",
     "load_jsonl_index",
+    "normalize_mapping_mode",
     "iter_ifcn",
     "pareto_by_topology",
     "pareto_frontier",

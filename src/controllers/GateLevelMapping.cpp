@@ -7,18 +7,34 @@
 #include <QTimer>
 #include <QApplication>
 #include <QScreen>
+#include <QSet>
 #include <QShowEvent>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QWindow>
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 #include <limits>
 #include <exception>
+#include <string>
 #include <autopr/algorithms/phase_codec.h>
+#include <autopr/io/ifcnMappingMetadata.h>
 #include "ui/mainwindow/MainWindow.h"
 
 namespace {
+QScreen *screenForWidget(QWidget *widget)
+{
+    if (widget != nullptr) {
+        QWidget *topLevel = widget->window();
+        if (topLevel != nullptr && topLevel->windowHandle() != nullptr
+            && topLevel->windowHandle()->screen() != nullptr) {
+            return topLevel->windowHandle()->screen();
+        }
+    }
+    return QApplication::primaryScreen();
+}
+
 struct ShiftedPosition {
     position pos{0, 0};
     bool valid = false;
@@ -149,7 +165,7 @@ private:
         QScreen *screen = nullptr;
         if (target != nullptr) {
             centerPoint = target->mapToGlobal(target->rect().center());
-            screen = target->screen();
+            screen = screenForWidget(target);
         } else {
             screen = QApplication::primaryScreen();
             if (screen != nullptr) {
@@ -185,6 +201,10 @@ void showCenteredMessageBox(QWidget *parent,
                             const QString &title,
                             const QString &text)
 {
+    if (qEnvironmentVariableIntValue("IFCN_NONINTERACTIVE") != 0) {
+        qInfo().noquote() << "[GateLevelMapping]" << title << "-" << text;
+        return;
+    }
     CenteredMessageBox box(parent, icon, title, text);
     box.exec();
 }
@@ -257,42 +277,252 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
     QTextStream in(&file);
     nodes.clear();
     routes.clear();
+    routeIterationDistances.clear();
     mappedRouteCells.clear();
     coordPhaseMap.clear();
+    physicalPhaseMap.clear();
+    hasPhysicalPhaseMap = false;
+    exactPhysicalPhaseTrace = false;
     metadata.clear();
     currentMappingFilePath = filePath;
     phaseCodecPhaseCount = 4;
     phaseCodecBlockSize = 4;
+    mappingMode = MappingMode::Combinational;
+    mappingModeExplicit = false;
 
     bool nodeSection = false;
     bool pathSection = false;
     bool phaseSection = false;
+    bool physicalPhaseSection = false;
+    bool physicalPhaseSectionSeen = false;
+    bool physicalPhaseTraceSeen = false;
+    bool phaseGranularitySeen = false;
+    QString phaseGranularityValue;
+    qsizetype physicalPhaseEntryCount = 0;
+    bool hasPendingIterationDistance = false;
+    unsigned int pendingIterationDistance = 0;
+    QMap<QPair<int, int>, bool> routesWithExplicitDistance;
+    fcngraph::IfcnMappingModeResolver mappingModeResolver;
+    QString parseError;
+    const QRegularExpression mappingModePattern(
+        QStringLiteral("^#\\s*mapping\\s+mode\\s*:\\s*(.*?)\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression mappingModeKeyPattern(
+        QStringLiteral("^#\\s*mapping\\s+mode\\b.*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression iterationDistancePattern(
+        QStringLiteral("^#\\s*iteration(?:_|\\s+)distance\\s*(?:=|:)\\s*(\\d+)\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression iterationDistanceKeyPattern(
+        QStringLiteral("^#\\s*iteration(?:_|\\s+)distance\\b.*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression physicalPhaseSectionPattern(
+        QStringLiteral("^#\\s*physical\\s+phase\\s+map\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression physicalPhaseSectionKeyPattern(
+        QStringLiteral("^#\\s*physical\\s+phase\\s+map\\b.*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression physicalPhaseTracePattern(
+        QStringLiteral("^#\\s*physical\\s+phase\\s+trace\\s*:\\s*layer_aware_xyz\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression physicalPhaseTraceKeyPattern(
+        QStringLiteral("^#\\s*physical\\s+phase\\s+trace\\b.*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression phaseGranularityPattern(
+        QStringLiteral("^#\\s*phase\\s+granularity\\s*:\\s*(.*?)\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression phaseGranularityKeyPattern(
+        QStringLiteral("^#\\s*phase\\s+granularity\\b.*$"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    const auto rejectDanglingDistance = [&]() -> bool {
+        if (!hasPendingIterationDistance) {
+            return false;
+        }
+        parseError = QStringLiteral(
+            "iteration_distance is not followed by a route in the paths section");
+        return true;
+    };
 
     while (!in.atEnd()) {
         QString line = in.readLine().trimmed();
         if (line.isEmpty()) continue;
 
+        if (physicalPhaseSectionKeyPattern.match(line).hasMatch()) {
+            if (!physicalPhaseSectionPattern.match(line).hasMatch()) {
+                parseError = QStringLiteral(
+                    "malformed IFCN physical phase map section marker");
+                break;
+            }
+            if (rejectDanglingDistance()) break;
+            if (physicalPhaseSection) {
+                if (physicalPhaseEntryCount == 0) {
+                    parseError = QStringLiteral(
+                        "IFCN physical phase map section contains no entries");
+                    break;
+                }
+                physicalPhaseSection = false;
+            } else {
+                if (nodeSection || pathSection || phaseSection) {
+                    parseError = QStringLiteral(
+                        "IFCN physical phase map starts before the current section is closed");
+                    break;
+                }
+                if (physicalPhaseSectionSeen) {
+                    parseError = QStringLiteral(
+                        "duplicate IFCN physical phase map section");
+                    break;
+                }
+                physicalPhaseSectionSeen = true;
+                physicalPhaseSection = true;
+                hasPhysicalPhaseMap = true;
+            }
+            continue;
+        }
+
+        if (physicalPhaseSection) {
+            if (line.startsWith('#')) {
+                const QString lowered = line.toLower();
+                if (lowered.startsWith(QStringLiteral("#nodes info")) ||
+                    lowered.startsWith(QStringLiteral("#paths info")) ||
+                    lowered.startsWith(QStringLiteral("#phase map")) ||
+                    lowered.startsWith(QStringLiteral("#encoded phase map")) ||
+                    lowered.startsWith(QStringLiteral("#phase codec")) ||
+                    lowered.startsWith(QStringLiteral("#physical phase trace")) ||
+                    lowered.startsWith(QStringLiteral("#phase granularity")) ||
+                    lowered.startsWith(QStringLiteral("#mapping mode")) ||
+                    lowered.startsWith(QStringLiteral("#iteration_distance")) ||
+                    lowered.startsWith(QStringLiteral("#iteration distance"))) {
+                    parseError = QStringLiteral(
+                        "IFCN physical phase map section is not closed");
+                    break;
+                }
+                continue;
+            }
+            QString physicalPhaseError;
+            if (!parsePhysicalPhaseLine(line, &physicalPhaseError)) {
+                parseError = physicalPhaseError;
+                break;
+            }
+            ++physicalPhaseEntryCount;
+            continue;
+        }
+
+        if (physicalPhaseTraceKeyPattern.match(line).hasMatch()) {
+            if (!physicalPhaseTracePattern.match(line).hasMatch()) {
+                parseError = QStringLiteral(
+                    "malformed or unsupported IFCN physical phase trace declaration");
+                break;
+            }
+            if (physicalPhaseTraceSeen) {
+                parseError = QStringLiteral(
+                    "duplicate IFCN physical phase trace declaration");
+                break;
+            }
+            physicalPhaseTraceSeen = true;
+            exactPhysicalPhaseTrace = true;
+            parseMetadataLine(line);
+            continue;
+        }
+
+        if (phaseGranularityKeyPattern.match(line).hasMatch()) {
+            const QRegularExpressionMatch granularityMatch =
+                phaseGranularityPattern.match(line);
+            if (!granularityMatch.hasMatch() ||
+                granularityMatch.captured(1).trimmed().isEmpty()) {
+                parseError = QStringLiteral(
+                    "malformed IFCN phase granularity declaration");
+                break;
+            }
+            if (phaseGranularitySeen) {
+                parseError = QStringLiteral(
+                    "duplicate IFCN phase granularity declaration");
+                break;
+            }
+            phaseGranularitySeen = true;
+            phaseGranularityValue =
+                granularityMatch.captured(1).trimmed().toLower();
+            parseMetadataLine(line);
+            continue;
+        }
+
         if (line.startsWith("#")) {
             parseMetadataLine(line);
+        }
+
+        if (mappingModeKeyPattern.match(line).hasMatch()) {
+            const QRegularExpressionMatch mappingModeMatch =
+                mappingModePattern.match(line);
+            if (!mappingModeMatch.hasMatch()) {
+                parseError = QStringLiteral("malformed IFCN mapping mode declaration");
+                break;
+            }
+            try {
+                mappingModeResolver.observeModeValue(
+                    mappingModeMatch.captured(1).toStdString());
+            } catch (const std::exception &error) {
+                parseError = QString::fromStdString(error.what());
+                break;
+            }
+            continue;
         }
 
         if (line.startsWith("#circuit name:")) {
             circuitName = line.section(':', 1).trimmed();
         }
         else if (line.startsWith("#nodes info")) {
-            nodeSection = true; pathSection = phaseSection = false;
+            if (rejectDanglingDistance()) break;
+            const bool opening = !nodeSection;
+            nodeSection = opening;
+            pathSection = phaseSection = false;
             continue;
         }
         else if (line.startsWith("#paths info")) {
-            pathSection = true; nodeSection = phaseSection = false;
+            if (rejectDanglingDistance()) break;
+            const bool opening = !pathSection;
+            pathSection = opening;
+            nodeSection = phaseSection = false;
             continue;
         }
         else if (line.startsWith("#phase map")) {
-            phaseSection = true; nodeSection = pathSection = false;
+            if (rejectDanglingDistance()) break;
+            const bool opening = !phaseSection;
+            phaseSection = opening;
+            nodeSection = pathSection = false;
             continue;
         }
         else if (line.startsWith("#phase codec")) {
             parsePhaseCodecLine(line);
+            continue;
+        }
+        else if (iterationDistanceKeyPattern.match(line).hasMatch()) {
+            if (!pathSection) {
+                parseError = QStringLiteral(
+                    "iteration_distance is only valid inside the paths section");
+                break;
+            }
+            const QRegularExpressionMatch iterationMatch =
+                iterationDistancePattern.match(line);
+            if (!iterationMatch.hasMatch()) {
+                parseError = QStringLiteral(
+                    "malformed IFCN iteration_distance declaration");
+                break;
+            }
+            if (hasPendingIterationDistance) {
+                parseError = QStringLiteral(
+                    "duplicate iteration_distance before one route");
+                break;
+            }
+            bool converted = false;
+            const qulonglong parsedDistance =
+                iterationMatch.captured(1).toULongLong(&converted);
+            if (!converted ||
+                parsedDistance > std::numeric_limits<unsigned int>::max()) {
+                parseError = QStringLiteral("IFCN iteration_distance is out of range");
+                break;
+            }
+            pendingIterationDistance = static_cast<unsigned int>(parsedDistance);
+            hasPendingIterationDistance = true;
             continue;
         }
         else if (line.startsWith("#")) {
@@ -303,7 +533,22 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
             parseNodeLine(line);
         } 
         else if (pathSection && line.contains(':')) {
-            parsePathLine(line);
+            QPair<int, int> parsedEdge;
+            QString routeError;
+            if (!parsePathLine(line,
+                               pendingIterationDistance,
+                               &parsedEdge,
+                               &routeError)) {
+                parseError = routeError;
+                break;
+            }
+            mappingModeResolver.observeIterationDistance(
+                pendingIterationDistance);
+            if (hasPendingIterationDistance) {
+                routesWithExplicitDistance.insert(parsedEdge, true);
+            }
+            pendingIterationDistance = 0;
+            hasPendingIterationDistance = false;
         }
         else if (phaseSection && line.contains(':')) {
             parsePhaseLine(line);
@@ -311,6 +556,194 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
     }
 
     file.close();
+
+    if (parseError.isEmpty() && hasPendingIterationDistance) {
+        rejectDanglingDistance();
+    }
+    if (parseError.isEmpty() && physicalPhaseSection) {
+        parseError = QStringLiteral("IFCN physical phase map section is not closed");
+    }
+    if (parseError.isEmpty()) {
+        mappingModeResolver.observeFlowValue(
+            metadataValue({QStringLiteral("flow")}).toStdString());
+        try {
+            const fcngraph::IfcnMappingModeResolution resolution =
+                mappingModeResolver.resolve();
+            mappingMode = resolution.mode;
+            mappingModeExplicit = resolution.explicitMode;
+            if (resolution.explicitMode &&
+                mappingMode == MappingMode::Sequential &&
+                routesWithExplicitDistance.size() != routes.size()) {
+                parseError = QStringLiteral(
+                    "sequential IFCN requires iteration_distance before every route");
+            }
+            if (parseError.isEmpty() &&
+                mappingMode == MappingMode::Sequential) {
+                if (resolution.explicitMode && !phaseGranularitySeen) {
+                    parseError = QStringLiteral(
+                        "canonical sequential IFCN requires '#phase granularity: tile'");
+                } else if (phaseGranularitySeen &&
+                           phaseGranularityValue != QStringLiteral("tile")) {
+                    parseError = QStringLiteral(
+                        "sequential IFCN requires tile phase granularity; stale qca_cell phase data is unsupported");
+                } else if (hasPhysicalPhaseMap || exactPhysicalPhaseTrace) {
+                    parseError = QStringLiteral(
+                        "sequential IFCN rejects stale physical phase trace/map; the coarse tile phase map is authoritative");
+                } else {
+                    for (auto phase = coordPhaseMap.cbegin();
+                         phase != coordPhaseMap.cend(); ++phase) {
+                        if (phase.value() < 0 || phase.value() > 3) {
+                            parseError = QStringLiteral(
+                                "sequential IFCN tile phase is out of range at (%1,%2)")
+                                             .arg(phase.key().x())
+                                             .arg(phase.key().y());
+                            break;
+                        }
+                    }
+                }
+            } else if (parseError.isEmpty() && exactPhysicalPhaseTrace &&
+                       !hasPhysicalPhaseMap) {
+                parseError = QStringLiteral(
+                    "layer_aware_xyz physical phase trace requires a physical phase map");
+            }
+        } catch (const std::exception &error) {
+            parseError = QString::fromStdString(error.what());
+        }
+    }
+    if (!parseError.isEmpty()) {
+        const QString message = QStringLiteral(
+            "Invalid .ifcn metadata: %1").arg(parseError);
+        qWarning().noquote() << "[GateLevelMapping]" << message;
+        mainWindow->printToStatusBar(message);
+        if (showDialogs) {
+            showCenteredMessageBox(mainWindow,
+                                   QMessageBox::Warning,
+                                   QStringLiteral("Invalid Mapping"),
+                                   message);
+        }
+        return false;
+    }
+
+    metadata.insert(QStringLiteral("mapping mode resolved"),
+                    mappingMode == MappingMode::Sequential
+                        ? QStringLiteral("sequential")
+                        : QStringLiteral("combinational"));
+    metadata.insert(QStringLiteral("mapping mode source"),
+                    mappingModeExplicit
+                        ? QStringLiteral("explicit")
+                        : QStringLiteral("legacy/default"));
+
+    const QString routeGeometryError = validateParsedRouteGeometry();
+    if (!routeGeometryError.isEmpty()) {
+        const QString message = QStringLiteral("Invalid .ifcn route geometry: %1")
+                                    .arg(routeGeometryError);
+        qWarning().noquote() << "[GateLevelMapping]" << message;
+        mainWindow->printToStatusBar(message);
+        if (showDialogs) {
+            showCenteredMessageBox(mainWindow,
+                                   QMessageBox::Warning,
+                                   QStringLiteral("Invalid Mapping"),
+                                   message);
+        }
+        return false;
+    }
+
+    if (mappingMode == MappingMode::Sequential) {
+        QSet<QPoint> occupiedTiles;
+        for (auto node = nodes.cbegin(); node != nodes.cend(); ++node) {
+            occupiedTiles.insert(node.value().pos);
+        }
+        for (auto route = routes.cbegin(); route != routes.cend(); ++route) {
+            for (const QPoint &tile : route.value()) {
+                occupiedTiles.insert(tile);
+            }
+        }
+        for (const QPoint &tile : occupiedTiles) {
+            const auto phase = coordPhaseMap.constFind(tile);
+            if (phase == coordPhaseMap.cend()) {
+                const QString message = QStringLiteral(
+                    "Invalid .ifcn metadata: sequential IFCN tile phase map is missing occupied tile (%1,%2)")
+                                            .arg(tile.x()).arg(tile.y());
+                qWarning().noquote() << "[GateLevelMapping]" << message;
+                mainWindow->printToStatusBar(message);
+                if (showDialogs) {
+                    showCenteredMessageBox(mainWindow,
+                                           QMessageBox::Warning,
+                                           QStringLiteral("Invalid Mapping"),
+                                           message);
+                }
+                return false;
+            }
+            if (phase.value() < 0 || phase.value() > 3) {
+                const QString message = QStringLiteral(
+                    "Invalid .ifcn metadata: sequential IFCN tile phase is out of range at (%1,%2)")
+                                            .arg(tile.x()).arg(tile.y());
+                qWarning().noquote() << "[GateLevelMapping]" << message;
+                mainWindow->printToStatusBar(message);
+                if (showDialogs) {
+                    showCenteredMessageBox(mainWindow,
+                                           QMessageBox::Warning,
+                                           QStringLiteral("Invalid Mapping"),
+                                           message);
+                }
+                return false;
+            }
+        }
+
+        QString tilePhaseDrcError;
+        for (auto route = routes.cbegin();
+             route != routes.cend() && tilePhaseDrcError.isEmpty(); ++route) {
+            const QVector<QPoint> &path = route.value();
+            if (path.isEmpty()) {
+                continue;
+            }
+
+            int previousPhase = coordPhaseMap.value(path.front());
+            qsizetype samePhaseRun = 1;
+            for (qsizetype index = 1; index < path.size(); ++index) {
+                const QPoint &previousTile = path[index - 1];
+                const QPoint &tile = path[index];
+                const int phase = coordPhaseMap.value(tile);
+                const int delta = (phase - previousPhase + 4) % 4;
+                if (delta != 0 && delta != 1) {
+                    tilePhaseDrcError = QStringLiteral(
+                        "sequential IFCN tile phase DRC failed on route %1->%2: ordered tiles (%3,%4) phase %5 -> (%6,%7) phase %8 must be hold or +1 (mod 4)")
+                        .arg(route.key().first).arg(route.key().second)
+                        .arg(previousTile.x()).arg(previousTile.y())
+                        .arg(previousPhase)
+                        .arg(tile.x()).arg(tile.y()).arg(phase);
+                    break;
+                }
+
+                if (phase == previousPhase) {
+                    ++samePhaseRun;
+                    if (samePhaseRun > 4) {
+                        tilePhaseDrcError = QStringLiteral(
+                            "sequential IFCN tile phase DRC failed on route %1->%2: more than 4 consecutive same-phase tiles ending at ordered tile %3 (%4,%5), phase %6")
+                            .arg(route.key().first).arg(route.key().second)
+                            .arg(index).arg(tile.x()).arg(tile.y()).arg(phase);
+                        break;
+                    }
+                } else {
+                    samePhaseRun = 1;
+                }
+                previousPhase = phase;
+            }
+        }
+        if (!tilePhaseDrcError.isEmpty()) {
+            const QString message = QStringLiteral(
+                "Invalid .ifcn metadata: %1").arg(tilePhaseDrcError);
+            qWarning().noquote() << "[GateLevelMapping]" << message;
+            mainWindow->printToStatusBar(message);
+            if (showDialogs) {
+                showCenteredMessageBox(mainWindow,
+                                       QMessageBox::Warning,
+                                       QStringLiteral("Invalid Mapping"),
+                                       message);
+            }
+            return false;
+        }
+    }
 
     applyClockSchemePhaseTemplate();
     mainWindow->updateLayoutInfoFromMapping(*this);
@@ -483,6 +916,21 @@ QString GateLevelMapping::buildMappingStatusMessage() const
     QStringList parts;
     parts << QStringLiteral("Circuit: %1").arg(circuitName);
 
+    QString parsedMappingMode = mappingMode == MappingMode::Sequential
+        ? QStringLiteral("sequential") : QStringLiteral("combinational");
+    if (!mappingModeExplicit) {
+        parsedMappingMode += QStringLiteral(" (legacy)");
+    }
+    parts << QStringLiteral("Mapping: %1").arg(parsedMappingMode);
+    int feedbackRoutes = 0;
+    for (auto it = routeIterationDistances.cbegin();
+         it != routeIterationDistances.cend(); ++it) {
+        if (it.value() > 0) {
+            ++feedbackRoutes;
+        }
+    }
+    parts << QStringLiteral("Feedback routes: %1").arg(feedbackRoutes);
+
     const QString gates = metadataValue({QStringLiteral("gates number")});
     if (!gates.isEmpty()) {
         parts << QStringLiteral("Gates: %1").arg(gates);
@@ -591,15 +1039,31 @@ void GateLevelMapping::parseNodeLine(const QString &line)
     nodes.insert(node.index, node);
 }
 
-void GateLevelMapping::parsePathLine(const QString &line)
+bool GateLevelMapping::parsePathLine(const QString &line,
+                                     unsigned int iterationDistance,
+                                     QPair<int, int> *parsedEdge,
+                                     QString *errorMessage)
 {
     // 格式: (1,2): (10,10),(11,10),(12,10);
     QRegularExpression header("\\((\\d+),(\\d+)\\):");
     QRegularExpressionMatch headMatch = header.match(line);
-    if (!headMatch.hasMatch()) return;
+    if (!headMatch.hasMatch()) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral("malformed route declaration");
+        }
+        return false;
+    }
 
     int u = headMatch.captured(1).toInt();
     int v = headMatch.captured(2).toInt();
+    const QPair<int, int> edge{u, v};
+    if (routes.contains(edge)) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral("duplicate IFCN route %1->%2")
+                                .arg(u).arg(v);
+        }
+        return false;
+    }
 
     QVector<QPoint> path;
     QRegularExpression coordPattern("\\((\\d+),(\\d+)\\)");
@@ -612,7 +1076,12 @@ void GateLevelMapping::parsePathLine(const QString &line)
         path.append(QPoint(m.captured(1).toInt(), m.captured(2).toInt()));
     }
 
-    routes.insert({u, v}, path);
+    routes.insert(edge, path);
+    routeIterationDistances.insert(edge, iterationDistance);
+    if (parsedEdge != nullptr) {
+        *parsedEdge = edge;
+    }
+    return true;
 }
 
 
@@ -687,6 +1156,69 @@ void GateLevelMapping::parsePhaseLine(const QString &line)
     }
 }
 
+bool GateLevelMapping::parsePhysicalPhaseLine(const QString &line,
+                                              QString *errorMessage)
+{
+    const QRegularExpression entryPattern(
+        QStringLiteral("^\\s*\\((\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\)"
+                       "\\s*:\\s*(\\d+)\\s*;\\s*$"));
+    const QRegularExpressionMatch match = entryPattern.match(line);
+    if (!match.hasMatch()) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral(
+                "malformed IFCN physical phase map entry: %1").arg(line);
+        }
+        return false;
+    }
+
+    bool xOk = false;
+    bool yOk = false;
+    bool layerOk = false;
+    bool phaseOk = false;
+    const qulonglong x = match.captured(1).toULongLong(&xOk);
+    const qulonglong y = match.captured(2).toULongLong(&yOk);
+    const qulonglong layer = match.captured(3).toULongLong(&layerOk);
+    const qulonglong phase = match.captured(4).toULongLong(&phaseOk);
+    if (!xOk || !yOk ||
+        x > std::numeric_limits<unsigned int>::max() ||
+        y > std::numeric_limits<unsigned int>::max()) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral(
+                "IFCN physical phase map coordinate is out of range");
+        }
+        return false;
+    }
+    if (!layerOk || layer > 2) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral(
+                "IFCN physical phase map layer is out of range (expected 0..2)");
+        }
+        return false;
+    }
+    if (!phaseOk || phase > 3) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral(
+                "IFCN physical phase is out of range (expected 0..3)");
+        }
+        return false;
+    }
+
+    const auto key = std::make_tuple(static_cast<unsigned int>(x),
+                                     static_cast<unsigned int>(y),
+                                     static_cast<int>(layer));
+    const auto [entry, inserted] = physicalPhaseMap.emplace(
+        key, static_cast<int>(phase));
+    if (!inserted && entry->second != static_cast<int>(phase)) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral(
+                "conflicting duplicate IFCN physical phase map entry (%1,%2,%3)")
+                                .arg(x).arg(y).arg(layer);
+        }
+        return false;
+    }
+    return true;
+}
+
 void GateLevelMapping::parsePhaseCodecLine(const QString &line)
 {
     QRegularExpression phaseCountPattern("phase_count\\s*=\\s*(\\d+)");
@@ -712,6 +1244,14 @@ void GateLevelMapping::parsePhaseCodecLine(const QString &line)
 
 void GateLevelMapping::applyClockSchemePhaseTemplate()
 {
+    // A sequential IFCN carries an authoritative phase for every coarse 5x5
+    // clock tile.  Legacy 2DDWave/TDDWave metadata is only a combinational
+    // phase-map shorthand; applying it here would silently overwrite the
+    // globally solved sequential tile phases after they passed DRC.
+    if (mappingMode == MappingMode::Sequential) {
+        return;
+    }
+
     QString scheme = metadataValue({QStringLiteral("clock scheme")}).toLower();
     scheme.remove(QRegularExpression(QStringLiteral("\\s+")));
     if (scheme != QStringLiteral("2ddwave") && scheme != QStringLiteral("tddwave")) {
@@ -758,8 +1298,57 @@ void GateLevelMapping::applyClockSchemePhaseTemplate()
 }
 
 
+QString GateLevelMapping::validateParsedRouteGeometry() const
+{
+    QHash<QPoint, int> nodeAtCoordinate;
+    for (auto nodeIt = nodes.cbegin(); nodeIt != nodes.cend(); ++nodeIt) {
+        nodeAtCoordinate.insert(nodeIt.value().pos, nodeIt.key());
+    }
+
+    for (auto routeIt = routes.cbegin(); routeIt != routes.cend(); ++routeIt) {
+        const QPair<int, int> edge = routeIt.key();
+        const QVector<QPoint> &path = routeIt.value();
+        if (!nodes.contains(edge.first) || !nodes.contains(edge.second)) {
+            return QStringLiteral("route %1->%2 refers to an unknown node")
+                .arg(edge.first).arg(edge.second);
+        }
+        if (path.size() < 2) {
+            return QStringLiteral("route %1->%2 has fewer than two coordinates")
+                .arg(edge.first).arg(edge.second);
+        }
+        if (path.front() != nodes.value(edge.first).pos
+            || path.back() != nodes.value(edge.second).pos) {
+            return QStringLiteral("route %1->%2 endpoints do not match its nodes")
+                .arg(edge.first).arg(edge.second);
+        }
+
+        for (qsizetype index = 1; index < path.size(); ++index) {
+            const QPoint delta = path[index] - path[index - 1];
+            if (qAbs(delta.x()) + qAbs(delta.y()) != 1) {
+                return QStringLiteral(
+                           "route %1->%2 contains a non-adjacent step at (%3,%4)->(%5,%6)")
+                    .arg(edge.first).arg(edge.second)
+                    .arg(path[index - 1].x()).arg(path[index - 1].y())
+                    .arg(path[index].x()).arg(path[index].y());
+            }
+        }
+
+        for (qsizetype index = 1; index + 1 < path.size(); ++index) {
+            const auto nodeIt = nodeAtCoordinate.constFind(path[index]);
+            if (nodeIt == nodeAtCoordinate.cend()) {
+                continue;
+            }
+            return QStringLiteral("route %1->%2 crosses logic node %3 at (%4,%5)")
+                .arg(edge.first).arg(edge.second).arg(nodeIt.value())
+                .arg(path[index].x()).arg(path[index].y());
+        }
+    }
+    return {};
+}
+
 bool GateLevelMapping::mappingCellItem(){
     Mapping mapping;
+    emittedPhysicalSites.clear();
 
     const auto toPosition = [](const QPoint &point) {
         return position{static_cast<unsigned int>(point.x()),
@@ -778,8 +1367,10 @@ bool GateLevelMapping::mappingCellItem(){
     }
 
     std::vector<std::vector<position>> circle_line;
+    std::vector<unsigned int> circleIterationDistances;
     circle_line.clear();
     circle_line.reserve(routes.size());
+    circleIterationDistances.reserve(routes.size());
     for (auto it = routes.begin(); it != routes.end(); ++it) 
     {
         const QVector<QPoint>& qPoints = it.value();
@@ -800,6 +1391,8 @@ bool GateLevelMapping::mappingCellItem(){
             continue;
         }
         circle_line.push_back(std::move(convertedRoute));
+        circleIterationDistances.push_back(
+            routeIterationDistances.value(it.key(), 0));
     }
     std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node,type), (扇入，扇出)>
     Nodelink.clear();
@@ -919,8 +1512,9 @@ bool GateLevelMapping::mappingCellItem(){
         return false;
     }
 
-    mapping.node_mapping(Nodelink);
-    auto routeexample = mapping.mapping_line(circle_line);
+    mapping.node_mapping(Nodelink, mappingMode);
+    auto routeexample = mapping.mapping_line(
+        circle_line, mappingMode, circleIterationDistances);
     std::string crossoverError;
     if (!mapping.validate_crossovers(&crossoverError)) {
         const QString message = QStringLiteral("Cell mapping rejected: invalid crossover: %1")
@@ -929,6 +1523,13 @@ bool GateLevelMapping::mappingCellItem(){
         mainWindow->customStatusBar->addMessage(message);
         return false;
     }
+    std::set<PhysicalCellSite> sequentialPhysicalSites;
+    if (mappingMode == MappingMode::Sequential) {
+        // Build the directed layer-aware device topology for crossover-run
+        // pillars and exact-layer ownership DRC. Clocking is deliberately not
+        // solved on these fine sites: every site inherits its coarse tile.
+        sequentialPhysicalSites = mapping.physicalCellSites(circle_line);
+    }
     auto crossexample = mapping.crossline_list;
     auto nodeexample = mapping.nodecell_list;
     if(nodeexample.empty())
@@ -936,6 +1537,30 @@ bool GateLevelMapping::mappingCellItem(){
         QString message = "nodeexample empty!";
         mainWindow->customStatusBar->addMessage(message);
         return false;
+    }
+    if (mappingMode == MappingMode::Sequential) {
+        // Clock phases belong to coarse 5x5 mapping tiles.  Validate complete
+        // coverage before emitting any scene item so a missing tile cannot
+        // leave a partially rendered, silently phase-0 layout behind.
+        for (const PhysicalCellSite &site : sequentialPhysicalSites) {
+            const position tile{site.xy.first / 5, site.xy.second / 5};
+            const auto phase = positionPhaseMap.find(tile);
+            if (phase == positionPhaseMap.end()) {
+                throw std::runtime_error(
+                    "sequential IFCN tile phase map is missing tile (" +
+                    std::to_string(tile.first) + "," +
+                    std::to_string(tile.second) + ") for mapped cell (" +
+                    std::to_string(site.xy.first) + "," +
+                    std::to_string(site.xy.second) + "," +
+                    std::to_string(site.layer) + ")");
+            }
+            if (phase->second < 0 || phase->second > 3) {
+                throw std::runtime_error(
+                    "sequential IFCN tile phase is out of range at (" +
+                    std::to_string(tile.first) + "," +
+                    std::to_string(tile.second) + ")");
+            }
+        }
     }
     for(auto &cell : nodeexample)
     {
@@ -1066,7 +1691,9 @@ bool GateLevelMapping::mappingCellItem(){
         total_cross += entry.second.size();
     }
 
-    const size_t total_count = allroutecells.size() + allnodecells.size();
+    const size_t total_count = mappingMode == MappingMode::Sequential
+                                   ? sequentialPhysicalSites.size()
+                                   : allroutecells.size() + allnodecells.size();
     updateMappingMetrics(static_cast<qulonglong>(total_count),
                          static_cast<qulonglong>(total_cross));
     mainWindow->updateLayoutInfoFromMapping(*this);
@@ -1076,11 +1703,43 @@ bool GateLevelMapping::mappingCellItem(){
                           .arg(static_cast<qulonglong>(total_cross));
     mainWindow->printToStatusBar(message);
 
-    // Cross线路元胞放置
-    std::unordered_set<position, MappingPositionHash> crosscellSet;
-    std::unordered_set<position, MappingPositionHash> verticalcellSet;
-    if(!crossexample.empty())
-    {
+    if (mappingMode == MappingMode::Sequential) {
+        std::map<position, std::set<int>> layersByXy;
+        for (const PhysicalCellSite &site : sequentialPhysicalSites) {
+            layersByXy[site.xy].insert(site.layer);
+        }
+        for (const auto &entry : layersByXy) {
+            const std::set<int> &layers = entry.second;
+            if (layers.count(1) != 0 && layers != std::set<int>{0, 1, 2}) {
+                throw std::runtime_error(
+                    "invalid sequential vertical stack at (" +
+                    std::to_string(entry.first.first) + "," +
+                    std::to_string(entry.first.second) + ")");
+            }
+        }
+        for (const PhysicalCellSite &site : sequentialPhysicalSites) {
+            const auto exactKey = std::make_tuple(
+                site.xy.first, site.xy.second, site.layer);
+            // Node templates were emitted first so their I/O/fixed function is
+            // retained when a route terminates at the same exact site.
+            if (emittedPhysicalSites.count(exactKey) != 0) {
+                continue;
+            }
+            const bool isPillar = layersByXy.at(site.xy).count(1) != 0;
+            const CellType cellType = isPillar
+                                          ? CellType::VerticalCell
+                                          : (site.layer == 2
+                                                 ? CellType::CrossoverCell
+                                                 : CellType::NormalCell);
+            putCellItem(site.xy, site.layer, cellType, positionPhaseMap);
+        }
+    } else {
+        // Preserve the historical combinational cell materialization.
+        // Cross线路元胞放置
+        std::unordered_set<position, MappingPositionHash> crosscellSet;
+        std::unordered_set<position, MappingPositionHash> verticalcellSet;
+        if(!crossexample.empty())
+        {
         for(auto &crossline : crossexample)
         {
             for(auto &cross : crossline.second)
@@ -1169,11 +1828,11 @@ bool GateLevelMapping::mappingCellItem(){
                 }
             }
         }
-    }
+        }
 
-    // Normal线路元胞放置
-    if(!routeexample.empty())
-    {
+        // Normal线路元胞放置
+        if(!routeexample.empty())
+        {
         for(auto &line : routeexample)
         {
             for(auto &unit : line.second)
@@ -1215,6 +1874,34 @@ bool GateLevelMapping::mappingCellItem(){
                 }
             }
         }
+        }
+    }
+
+    if (exactPhysicalPhaseTrace) {
+        std::set<std::tuple<unsigned int, unsigned int, int>> declaredSites;
+        for (const auto &entry : physicalPhaseMap) {
+            declaredSites.insert(entry.first);
+        }
+        if (emittedPhysicalSites != declaredSites) {
+            for (const auto &site : emittedPhysicalSites) {
+                if (declaredSites.count(site) == 0) {
+                    throw std::runtime_error(
+                        "layer_aware_xyz physical phase trace is missing emitted site (" +
+                        std::to_string(std::get<0>(site)) + "," +
+                        std::to_string(std::get<1>(site)) + "," +
+                        std::to_string(std::get<2>(site)) + ")");
+                }
+            }
+            for (const auto &site : declaredSites) {
+                if (emittedPhysicalSites.count(site) == 0) {
+                    throw std::runtime_error(
+                        "layer_aware_xyz physical phase trace contains extra site (" +
+                        std::to_string(std::get<0>(site)) + "," +
+                        std::to_string(std::get<1>(site)) + "," +
+                        std::to_string(std::get<2>(site)) + ")");
+                }
+            }
+        }
     }
 
     return true;
@@ -1229,15 +1916,50 @@ void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _
         return;
     }
 
-    const position cellpos = std::make_pair(_cellpos.first / 5, _cellpos.second / 5);
-    const auto phaseIt = _pos_phase.find(cellpos);
     int phase = 0;
-    if (phaseIt != _pos_phase.end()) {
+    if (mappingMode == MappingMode::Sequential) {
+        const position tile{_cellpos.first / 5, _cellpos.second / 5};
+        const auto phaseIt = _pos_phase.find(tile);
+        if (phaseIt == _pos_phase.end()) {
+            throw std::runtime_error(
+                "sequential IFCN tile phase map is missing tile (" +
+                std::to_string(tile.first) + "," +
+                std::to_string(tile.second) + ") for mapped cell (" +
+                std::to_string(_cellpos.first) + "," +
+                std::to_string(_cellpos.second) + "," +
+                std::to_string(_celllayer) + ")");
+        }
+        if (phaseIt->second < 0 || phaseIt->second > 3) {
+            throw std::runtime_error(
+                "sequential IFCN tile phase is out of range at (" +
+                std::to_string(tile.first) + "," +
+                std::to_string(tile.second) + ")");
+        }
+        phase = phaseIt->second;
+    } else if (hasPhysicalPhaseMap) {
+        const auto phaseIt = physicalPhaseMap.find(
+            std::make_tuple(_cellpos.first, _cellpos.second, _celllayer));
+        if (phaseIt == physicalPhaseMap.end()) {
+            throw std::runtime_error(
+                "IFCN physical phase map is missing mapped cell (" +
+                std::to_string(_cellpos.first) + "," +
+                std::to_string(_cellpos.second) + "," +
+                std::to_string(_celllayer) + ")");
+        }
         phase = phaseIt->second;
     } else {
-        qWarning() << "[GateLevelMapping] Mapped cell outside phase map; using phase 0:"
-                   << _cellpos.first << _cellpos.second;
+        const position cellpos = std::make_pair(_cellpos.first / 5,
+                                                _cellpos.second / 5);
+        const auto phaseIt = _pos_phase.find(cellpos);
+        if (phaseIt != _pos_phase.end()) {
+            phase = phaseIt->second;
+        } else {
+            qWarning() << "[GateLevelMapping] Mapped cell outside phase map; using phase 0:"
+                       << _cellpos.first << _cellpos.second;
+        }
     }
+
+    emittedPhysicalSites.emplace(_cellpos.first, _cellpos.second, _celllayer);
 
     int cell_layer = _celllayer;
     mainWindow->scene->addFastCell(x_coord, y_coord, cell_layer, phase, _cellType, _name);

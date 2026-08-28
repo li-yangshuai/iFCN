@@ -18,11 +18,11 @@ import json
 import math
 import random
 from statistics import fmean
-from typing import Iterable, Mapping, Protocol, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence, Tuple
 
 
-Coord = tuple[int, int]
-Bounds = tuple[int, int, int, int]
+Coord = Tuple[int, int]
+Bounds = Tuple[int, int, int, int]
 
 CAUSAL_CLOCK_MODES = ("axis", "diagonal", "stochastic-bands")
 STRESS_CLOCK_MODES = ("raw",)

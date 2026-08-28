@@ -1,0 +1,67 @@
+#circuit name: 04_c17.v
+
+#designed by normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, right-down reachable initialization, structural-feature-guided node reposition, failure-directed row/column expansion, legality-verified recursive top-down/bottom-up phase-aware node-to-wire contraction, fixed-point blank-row/column deletion, and post-routing 2DDWave template consistency verification.
+
+#gate level placement and routing infomation
+#gates number: 12
+#input/output: 5 / 2
+#edges number: 13
+#total layers: 5
+#layout area: width: 6, height: 6, area: 36
+#cell count: 145
+#cross count: 4
+#critical path: 10
+#clocks: 2.5
+#run time: 1.404837 s
+#phase encoding: enabled
+#phase count: 4
+#clock scheme: 2DDWave
+#block size: 4x4
+#coordinate origin: normalized top-left (0,0)
+#unassigned phase in raw map: none
+#encoded padding/unassigned compatibility fill: 0
+#encoding: row-major blocks; each block stores one byte per row; each cell uses 2 bits; column 0 is LSB
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, 2, input, (0,4);
+1, 3, input, (1,0);
+2, 6, input, (0,2);
+3, 7, input, (3,2);
+4, \1, input, (2,0);
+5, 22, or, (3,5);
+6, 23, or, (5,5);
+7, n8, and, (2,1);
+8, n9, and, (1,2);
+9, ~n9, not, (1,3);
+10, n10, and, (1,4);
+11, n12, and, (3,3);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(3,11): (3,2),(3,3);
+(10,6): (1,4),(2,4),(3,4),(4,4),(5,4),(5,5);
+(0,10): (0,4),(1,4);
+(11,6): (3,3),(3,4),(4,4),(4,5),(5,5);
+(9,10): (1,3),(1,4);
+(1,7): (1,0),(1,1),(2,1);
+(1,8): (1,0),(1,1),(1,2);
+(9,11): (1,3),(2,3),(3,3);
+(2,8): (0,2),(1,2);
+(4,7): (2,0),(2,1);
+(10,5): (1,4),(2,4),(3,4),(3,5);
+(8,9): (1,2),(1,3);
+(7,5): (2,1),(2,2),(2,3),(2,4),(2,5),(3,5);
+#paths info
+
+#absolute bbox: (0,0) -> (5,5)
+#raw size: width: 6, height: 6
+#padded size: width: 8, height: 8
+#blocks: columns: 2, rows: 2
+
+#encoded phase map
+### (block_x,block_y): hex ###
+(0,0):0xe4394e93; (1,0):0x04090e03;
+(0,1):0xe4390000; (1,1):0x04090000;
+#encoded phase map

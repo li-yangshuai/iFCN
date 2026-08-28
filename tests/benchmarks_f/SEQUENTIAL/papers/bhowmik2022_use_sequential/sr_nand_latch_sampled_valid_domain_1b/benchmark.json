@@ -1,0 +1,61 @@
+{
+  "schema": "ifcn.sequential.paper_benchmark.v1",
+  "benchmark_id": "bhowmik2022/sr_nand_latch_sampled_valid_domain_1b",
+  "module": "sr_nand_latch_sampled_valid_domain_1b",
+  "classification": {"domain": "sequential", "state_element": "sr_flip_flop", "trigger_model": "edge", "bit_width": 1},
+  "source": {
+    "provenance_status": "primary_source_verified",
+    "citation": {
+      "key": "bhowmik2022",
+      "title": "Regular clocking-based Automated Cell Placement technique in QCA targeting sequential circuit",
+      "authors": ["Dhrubajyoti Bhowmik", "Amit Kumar Pramanik", "Jayanta Pal", "Pinaki Sen", "Ayush Ranjan Singh", "Apu Kumar Saha", "Bibhash Sen"],
+      "venue": "Computers & Electrical Engineering 98, 107668",
+      "year": 2022,
+      "doi": "10.1016/j.compeleceng.2021.107668",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0045790621005905",
+      "accessed": "2026-08-24"
+    },
+    "locator": {"figure": "Fig. 12"},
+    "artifact_url": "https://ars.els-cdn.com/content/image/1-s2.0-S0045790621005905-gr12_lrg.jpg",
+    "redistribution": "reconstruction_only"
+  },
+  "reconstruction": {
+    "kind": "behavioral_equivalent",
+    "source_state_element": "sr_latch",
+    "temporal_relation": "sampled_state_only",
+    "faithfulness_scope": ["truth_table", "io_polarity", "gate_topology"],
+    "not_claimed": ["transparent_window_timing_equivalence", "paper cell coordinates", "paper route coordinates", "physical state characterization"],
+    "transformations": ["Inserted an abstract positive-edge tick and reduced the complementary stable rails to q"],
+    "ambiguities": ["The published S/R labels are active low in the NAND topology"],
+    "assumptions": ["Only valid-domain values at state-iteration boundaries are compared"]
+  },
+  "semantics": {
+    "state_element": "sr_flip_flop",
+    "clock": {"kind": "edge", "clock_domains": 1, "edge": "posedge", "logical_clock_abstraction": "tick denotes one sampled state iteration and is not a QCA physical clock input"},
+    "initial_state": "unknown",
+    "next_state_equation": "q_next = ~s_n | (r_n & q)",
+    "simultaneous_set_reset": "forbidden",
+    "legal_input_contract": "s_n and r_n are not simultaneously zero",
+    "physical_abstraction": "abstract_state_boundary"
+  },
+  "files": [
+    {"role": "rtl", "path": "sr_nand_latch_sampled_valid_domain_1b.v", "sha256": "60352401e8ccaede2f47c82c46e68852e7642c69465f1c2c8dc1800514b72d27"},
+    {"role": "truth_table", "path": "expected_transitions.csv", "sha256": "8c94456fb917ba839e03ad3587078b9e41c0af077b37cf41953eee9ded229142"}
+  ],
+  "reported_metrics": [],
+  "expected_pipeline": {
+    "yosys": {"outcome": "pass", "reason": "The sampled equation lowers to one positive-edge register and AOI logic"},
+    "seqir": {"outcome": "pass", "reason": "SeqIR v0 supports the sampled state boundary"},
+    "legacy_cut": {"outcome": "pass", "reason": "The valid-domain next-state cone becomes an AOI DAG"},
+    "sequential_pnr": {"outcome": "pass", "reason": "The current geometry closes at II=4"},
+    "mapping": {"outcome": "pass", "reason": "The cut cone maps with crossover DRC"},
+    "physical_state_signoff": "not_characterized"
+  },
+  "validation": {
+    "status": "partially_validated",
+    "checks": [
+      {"name": "valid_domain_truth_table", "status": "pass", "evidence": "expected_transitions.csv covers all valid sampled transitions"},
+      {"name": "automatic_pipeline", "status": "pass", "evidence": "build/artifacts/sequential_papers/bhowmik2022_use_sequential/sr_nand_latch_sampled_valid_domain_1b/layout.ifcn.json: 7 nodes, 6 routes, II=4, 143 mapped cells"}
+    ]
+  }
+}

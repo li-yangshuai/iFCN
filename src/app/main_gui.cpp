@@ -443,6 +443,8 @@ int main(int argc,char *argv[])
     // paper assets.  The handler itself saves and maps the generated IFCN,
     // LaTeX, and cell-level SVG artifacts.
     if (automaticGraphRenderRequested) {
+        qputenv("IFCN_COMPACT_GRAPH_BATCH", QByteArrayLiteral("1"));
+        qputenv("IFCN_NONINTERACTIVE", QByteArrayLiteral("1"));
         QTimer::singleShot(0, &mainWindow,
             [&app, &mainWindow, automaticGraphRenderPath]() {
                 const QFileInfo sourceInfo(automaticGraphRenderPath);

@@ -45,6 +45,7 @@ public:
     
     void reset() {
         finishedRoutes.clear();
+        activeReservedPorts.clear();
     }
 private:
     MapChessboard& board;
@@ -66,11 +67,24 @@ private:
                                const std::pair<int,int>& target,
                                bool allowOccupiedTarget) const;
 
+    void prepareActivePortReservations(const std::pair<int,int>& start,
+                                       const std::pair<int,int>& goal,
+                                       const std::pair<int,int>& firstStep,
+                                       const std::pair<int,int>& preGoal);
+
+    bool canUseActiveRouteCell(const std::pair<int,int>& coord) const;
+
     bool tryDirectMonotoneRoute(const std::pair<int,int>& start,
                                 const std::pair<int,int>& goal,
                                 const std::pair<int,int>& firstStep,
                                 const std::pair<int,int>& preGoal,
                                 std::vector<std::pair<int,int>>& path) const;
+
+    bool trySampledMonotoneRoute(const std::pair<int,int>& start,
+                                 const std::pair<int,int>& goal,
+                                 const std::pair<int,int>& firstStep,
+                                 const std::pair<int,int>& preGoal,
+                                 std::vector<std::pair<int,int>>& path) const;
 
     bool tryDynamicProgrammingRoute(const std::pair<int,int>& start,
                                     const std::pair<int,int>& goal,
@@ -102,6 +116,11 @@ private:
         std::vector<std::vector<std::pair<int,int>>>,
         pair_hash
     > finishedRoutes;
+
+    // Protect gate launch/sink access cells from unrelated transit wires.
+    // The current edge's selected launch and sink port are removed from this
+    // set in prepareActivePortReservations().
+    std::unordered_set<std::pair<int,int>, pair_hash> activeReservedPorts;
 
 };
 

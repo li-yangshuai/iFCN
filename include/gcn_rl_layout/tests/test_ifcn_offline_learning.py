@@ -50,6 +50,21 @@ def fixture():
 """
 
 
+def sequential_fixture():
+    text = fixture().replace(
+        "#gates number: 3",
+        "#mapping mode: sequential\n#gates number: 3",
+    )
+    text = text.replace(
+        "(0,1): (0,1),(1,1),(2,1);",
+        "#iteration_distance=0\n(0,1): (0,1),(1,1),(2,1);",
+    )
+    return text.replace(
+        "(1,2): (2,1),(3,1),(4,1);",
+        "#iteration_distance=1\n(1,2): (2,1),(3,1),(4,1);",
+    )
+
+
 def vertical_fixture():
     phase_rows = "\n".join(
         " ".join(f"({x},{y}):{(x + y) % 4};" for x in range(3))
@@ -102,6 +117,25 @@ class IFCNOfflineLearningTest(unittest.TestCase):
         )
         self.assertTrue(torch.any(sample.positive_action_mask))
         self.assertTrue(torch.all(sample.policy_input.action_mask[sample.positive_action_mask]))
+
+    def test_sequential_recurrence_is_explicitly_rejected(self):
+        fixtures = {
+            "explicit": sequential_fixture(),
+            "legacy-inferred": sequential_fixture().replace(
+                "#mapping mode: sequential\n", ""
+            ),
+        }
+        for name, text in fixtures.items():
+            with self.subTest(name=name):
+                path = Path(self.temporary.name) / f"{name}.ifcn"
+                path.write_text(text, encoding="utf-8")
+                record = parse_ifcn(path)
+
+                self.assertEqual(record.mapping_mode, "sequential")
+                self.assertTrue(record.quality.complete)
+                self.assertFalse(record.quality.valid_for_training)
+                with self.assertRaisesRegex(ValueError, "sequential IFCN recurrence"):
+                    build_offline_ifcn_sample(record, seed=3)
 
     def test_listwise_loss_rewards_any_positive_candidate(self):
         logits = torch.tensor([0.0, 1.0, -1.0, 2.0], requires_grad=True)

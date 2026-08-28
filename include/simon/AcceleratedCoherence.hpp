@@ -76,7 +76,14 @@ struct AcceleratedCoherenceEngine : public CoherenceEngine<Host> {
         statistics_ = {};
         initialize_sparse_design(design);
         compile_kernel(design);
+    }
+
+    void before_iterations(QCADesign &design, const Result &result) {
+        // QCAEnginePolicy initializes the clock and input generators after
+        // the physical graph.  Build generator-backed caches only once those
+        // callables and the reordered I/O vectors are ready.
         build_generator_caches();
+        Base::before_iterations(design, result);
     }
 
     void make_iterations(QCADesign &design, Result &result) {

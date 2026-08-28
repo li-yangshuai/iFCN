@@ -53,7 +53,9 @@ namespace x3 = boost::spirit::x3;
     //0. Utility Parsers and Symbols
     struct IdentifierParser_class;
     const x3::rule<IdentifierParser_class, std::string> IdentifierParser = "IdentifierParser";
-    auto const IdentifierParser_def = x3::raw[x3::lexeme[(x3::alpha | '_') >> *(x3::alnum | '_')]];
+    // QCADesigner permits labels such as the ISCAS c17 primary inputs "1"
+    // and "2".  Vector tables must be able to replay those labels verbatim.
+    auto const IdentifierParser_def = x3::raw[x3::lexeme[+(x3::alnum | '_')]];
     BOOST_SPIRIT_DEFINE(IdentifierParser);
 
     struct BooleanSymbol : x3::symbols<bool> {

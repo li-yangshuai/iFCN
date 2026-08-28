@@ -72,6 +72,27 @@ def raw_fixture(ids=(0, 1, 2), order=None, circuit="chain.v"):
 """
 
 
+def sequential_fixture(*, mode="sequential", distances=(0, 1)):
+    text = raw_fixture()
+    mapping_mode_line = "" if mode is None else f"#mapping mode: {mode}\n"
+    text = text.replace(
+        "#designed by unit test.",
+        f"{mapping_mode_line}#designed by unit test.",
+    )
+    text = text.replace(
+        "(0,1): (0,0),(1,0),(1,1);",
+        "#iteration_distance={}\n"
+        "### route annotation remains bound across comments ###\n"
+        "(0,1): (0,0),(1,0),(1,1);".format(distances[0]),
+    )
+    text = text.replace(
+        "(1,2): (1,1),(2,1),(2,2);",
+        "#iteration_distance={}\n"
+        "(1,2): (1,1),(2,1),(2,2);".format(distances[1]),
+    )
+    return text
+
+
 def packed_fixture(*, legacy=False):
     marker = "#phase map" if legacy else "#encoded phase map"
     tile = "tile(0,0):0xe4e4e4e4;" if legacy else "(0,0):0xe4e4e4e4;"
@@ -155,6 +176,176 @@ class IFCNLayoutParserTest(unittest.TestCase):
             self.assertTrue(layout.quality.valid_for_training)
 
         self.assertEqual(encoded.layout_hash, legacy.layout_hash)
+
+    def test_explicit_mapping_modes_are_authoritative_and_validated(self):
+        legacy = parse_ifcn(self.write("legacy-mode.ifcn", raw_fixture()))
+        combinational = parse_ifcn(
+            self.write(
+                "combinational.ifcn",
+                sequential_fixture(mode="combinational", distances=(0, 0)),
+            )
+        )
+        unknown = parse_ifcn(
+            self.write(
+                "unknown-mode.ifcn",
+                raw_fixture().replace(
+                    "#designed by unit test.",
+                    "#mapping mode: sequential-v2\n#designed by unit test.",
+                ),
+            )
+        )
+        sequential = parse_ifcn(
+            self.write("sequential.ifcn", sequential_fixture(mode=" SeQuEnTiAl "))
+        )
+
+        self.assertEqual(legacy.mapping_mode, "combinational")
+        self.assertEqual(combinational.mapping_mode, "combinational")
+        self.assertEqual(unknown.mapping_mode, "combinational")
+        self.assertTrue(legacy.quality.valid_for_training)
+        self.assertTrue(combinational.quality.valid_for_training)
+        self.assertFalse(unknown.quality.complete)
+        self.assertFalse(unknown.quality.valid_for_training)
+        self.assertTrue(
+            any("unsupported IFCN mapping mode" in error for error in unknown.quality.errors)
+        )
+        self.assertEqual(sequential.mapping_mode, "sequential")
+        self.assertTrue(sequential.quality.complete)
+        self.assertFalse(sequential.quality.valid_for_training)
+        self.assertTrue(
+            any("offline DAG training" in warning for warning in sequential.quality.warnings)
+        )
+
+    def test_missing_mode_infers_sequential_from_distance_or_known_flow(self):
+        feedback = parse_ifcn(
+            self.write(
+                "legacy-feedback.ifcn",
+                sequential_fixture(mode=None, distances=(0, 1)).replace(
+                    "#iteration_distance=0\n", "", 1
+                ),
+            )
+        )
+        self.assertEqual(feedback.mapping_mode, "sequential")
+        self.assertTrue(feedback.quality.complete)
+        self.assertFalse(feedback.quality.valid_for_training)
+
+        for index, flow in enumerate(
+            (
+                "sequential register-cut P&R v0",
+                "sampled-state physical-feedback P&R experiment v0",
+            )
+        ):
+            inferred = parse_ifcn(
+                self.write(
+                    f"legacy-flow-{index}.ifcn",
+                    raw_fixture().replace(
+                        "#designed by unit test.",
+                        f"#flow: {flow}\n#designed by unit test.",
+                    ),
+                )
+            )
+            self.assertEqual(inferred.mapping_mode, "sequential")
+            self.assertTrue(inferred.quality.complete)
+            self.assertFalse(inferred.quality.valid_for_training)
+
+        explicit_combinational = parse_ifcn(
+            self.write(
+                "explicit-over-flow.ifcn",
+                raw_fixture().replace(
+                    "#designed by unit test.",
+                    "#mapping mode: combinational\n"
+                    "#flow: sequential register-cut P&R v0\n"
+                    "#designed by unit test.",
+                ),
+            )
+        )
+        self.assertEqual(explicit_combinational.mapping_mode, "combinational")
+        self.assertTrue(explicit_combinational.quality.valid_for_training)
+
+    def test_invalid_explicit_mode_contracts_are_quality_errors(self):
+        fixtures = {
+            "conflict": (
+                sequential_fixture(mode="sequential", distances=(0, 0)).replace(
+                    "#mapping mode: sequential",
+                    "#mapping mode: sequential\n#mapping mode: combinational",
+                ),
+                "conflicting IFCN mapping mode",
+            ),
+            "malformed": (
+                raw_fixture().replace(
+                    "#designed by unit test.",
+                    "#mapping mode sequential\n#designed by unit test.",
+                ),
+                "malformed IFCN mapping mode",
+            ),
+            "combinational-feedback": (
+                sequential_fixture(mode="combinational", distances=(0, 1)),
+                "combinational IFCN declares a positive iteration distance",
+            ),
+        }
+        for name, (text, expected_error) in fixtures.items():
+            with self.subTest(name=name):
+                layout = parse_ifcn(self.write(f"{name}.ifcn", text))
+                self.assertFalse(layout.quality.complete)
+                self.assertFalse(layout.quality.valid_for_training)
+                self.assertTrue(
+                    any(expected_error in error for error in layout.quality.errors),
+                    layout.quality.errors,
+                )
+
+    def test_iteration_distance_binding_and_semantic_hashes(self):
+        sequential = parse_ifcn(
+            self.write("sequential.ifcn", sequential_fixture(distances=(0, 0)))
+        )
+        combinational = parse_ifcn(
+            self.write(
+                "combinational.ifcn",
+                sequential_fixture(mode="combinational", distances=(0, 0)),
+            )
+        )
+        different_distance = parse_ifcn(
+            self.write("distance-one.ifcn", sequential_fixture(distances=(0, 1)))
+        )
+
+        self.assertEqual(
+            [path.iteration_distance for path in different_distance.paths],
+            [0, 1],
+        )
+        self.assertNotEqual(sequential.topology_hash, combinational.topology_hash)
+        self.assertNotEqual(sequential.layout_hash, combinational.layout_hash)
+        self.assertNotEqual(sequential.topology_hash, different_distance.topology_hash)
+        self.assertNotEqual(sequential.layout_hash, different_distance.layout_hash)
+
+    def test_iteration_distance_does_not_leak_across_path_sections(self):
+        text = raw_fixture().replace(
+            "### {node1, node2} : path ###\n"
+            "(0,1): (0,0),(1,0),(1,1);",
+            "### {node1, node2} : path ###\n"
+            "#iteration_distance=7\n"
+            "#paths info\n"
+            "#paths info\n"
+            "(0,1): (0,0),(1,0),(1,1);",
+        )
+        layout = parse_ifcn(self.write("section-boundary.ifcn", text))
+
+        self.assertEqual(layout.paths[0].iteration_distance, 0)
+        self.assertFalse(layout.quality.complete)
+        self.assertTrue(
+            any("dangling iteration_distance" in error for error in layout.quality.errors)
+        )
+
+    def test_sequential_path_requires_an_iteration_distance(self):
+        text = sequential_fixture().replace("#iteration_distance=0\n", "", 1)
+        layout = parse_ifcn(self.write("missing-distance.ifcn", text))
+
+        self.assertFalse(layout.quality.complete)
+        self.assertFalse(layout.quality.valid_for_training)
+        self.assertEqual(layout.paths[0].iteration_distance, 0)
+        self.assertTrue(
+            any(
+                "requires iteration_distance before every route" in error
+                for error in layout.quality.errors
+            )
+        )
 
     def test_topology_hash_ignores_node_ids_order_and_coordinates(self):
         original = parse_ifcn(self.write("first.ifcn", raw_fixture()))
@@ -240,7 +431,9 @@ class IFCNDatasetOperationsTest(unittest.TestCase):
     def test_jsonl_round_trip_preserves_hashes_geometry_and_phase(self):
         packed_path = self.root / "packed.ifcn"
         packed_path.write_text(packed_fixture(), encoding="utf-8")
-        records = [self.base, parse_ifcn(packed_path)]
+        sequential_path = self.root / "sequential.ifcn"
+        sequential_path.write_text(sequential_fixture(mode=None), encoding="utf-8")
+        records = [self.base, parse_ifcn(packed_path), parse_ifcn(sequential_path)]
         index_path = save_jsonl_index(records, self.root / "index" / "layouts.jsonl")
         loaded = load_jsonl_index(index_path)
 
@@ -248,6 +441,11 @@ class IFCNDatasetOperationsTest(unittest.TestCase):
         self.assertEqual([record.layout_hash for record in loaded], [record.layout_hash for record in records])
         self.assertEqual(loaded[0].paths[0].directions, records[0].paths[0].directions)
         self.assertEqual(loaded[1].effective_phase_map(), records[1].effective_phase_map())
+        self.assertEqual(loaded[2].mapping_mode, "sequential")
+        self.assertEqual(
+            [path.iteration_distance for path in loaded[2].paths],
+            [0, 1],
+        )
 
     def test_scan_and_dataset_builder_filter_invalid_and_duplicates(self):
         nested = self.root / "nested"

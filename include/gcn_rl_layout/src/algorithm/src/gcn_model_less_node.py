@@ -1,41 +1,24 @@
 import torch
 import torch.nn.functional as F
-try:
-    from torch_geometric.nn import TransformerConv
-    from torch_geometric.utils import negative_sampling, to_undirected
-except ModuleNotFoundError:
-    # OGDF Normal Graph does not use these symbols.  Keep them optional so the
-    # fast fixed-clock path is independent from the legacy GCN environment.
-    TransformerConv = None
-    negative_sampling = None
-    to_undirected = None
-try:
-    from sklearn.decomposition import PCA
-except ModuleNotFoundError:
-    PCA = None
+from torch_geometric.nn import TransformerConv
+from torch_geometric.utils import negative_sampling, to_undirected
+from sklearn.decomposition import PCA
 import numpy as np
+import matplotlib.pyplot as plt
 import networkx as nx
 import copy
 import os
 import os.path as osp
-import subprocess
-import time
 from lib import iFCN_Lab
+import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 from collections import defaultdict
-try:
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-    from matplotlib.lines import Line2D
-    import matplotlib.cm as cm
-    import matplotlib.colors as mcolors
-except ModuleNotFoundError:
-    # Headless OGDF placement/routing does not render figures. Visualization
-    # remains available when the optional desktop plotting stack is installed.
-    plt = None
-    mpatches = None
-    Line2D = None
-    cm = None
-    mcolors = None
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
+from src.graphviz_sifting import (
+    deterministic_layout_embeddings,
+    graphviz_sifting_order,
+)
 
 def safe_torch_device(preferred="auto"):
     if preferred == "cpu":
@@ -157,11 +140,6 @@ class GCN(torch.nn.Module):
         dropout=0.10,
     ):
         super(GCN, self).__init__()
-        if TransformerConv is None:
-            raise RuntimeError(
-                "torch-geometric is required only when the legacy GCN "
-                "crossing orderer is selected"
-            )
         edge_dim = int(edge_channels) if int(edge_channels) > 0 else None
         self.edge_channels = int(edge_channels)
         self.conv1 = TransformerConv(
@@ -212,6 +190,7 @@ def _forward_graph_encoder(model, data):
     return model(data.x, data.edge_index)
 
 # ----------- GCN 训练 -----------
+import matplotlib.pyplot as plt
 
 def train_gcn(
     model,
@@ -350,31 +329,13 @@ def sort_nodes_by_embedding(embeddings, node_indices, node_to_index, method='pca
 
 
 # ----------- Barycenter排序与多轮优化 -----------
-def _build_edge_neighbors(edges):
-    """Build reusable predecessor/successor lists for repeated layer sweeps."""
-    predecessors = defaultdict(list)
-    successors = defaultdict(list)
-    for u, v in edges:
-        u = int(u)
-        v = int(v)
-        predecessors[v].append(u)
-        successors[u].append(v)
-    return predecessors, successors
-
-
-def barycenter_sort(prev_layer, curr_layer, edges, predecessors=None):
+def barycenter_sort(prev_layer, curr_layer, edges):
     idx_prev = {n: i for i, n in enumerate(prev_layer)}
+    curr_set = set(curr_layer)
     incoming_idx = defaultdict(list)
-    if predecessors is None:
-        curr_set = set(curr_layer)
-        for u, v in edges:
-            if u in idx_prev and v in curr_set:
-                incoming_idx[v].append(idx_prev[u])
-    else:
-        for v in curr_layer:
-            incoming_idx[v] = [
-                idx_prev[u] for u in predecessors.get(int(v), ()) if u in idx_prev
-            ]
+    for u, v in edges:
+        if u in idx_prev and v in curr_set:
+            incoming_idx[v].append(idx_prev[u])
 
     barycenters = []
     for v in curr_layer:
@@ -388,20 +349,14 @@ def barycenter_sort(prev_layer, curr_layer, edges, predecessors=None):
     sorted_nodes = [v for c, v in barycenters]
     return sorted_nodes
 
-def barycenter_sort_down(next_layer, curr_layer, edges, successors=None):
+def barycenter_sort_down(next_layer, curr_layer, edges):
     # 用下游next_layer节点“牵引”当前层curr_layer节点的排序
     idx_next = {n: i for i, n in enumerate(next_layer)}
+    curr_set = set(curr_layer)
     outgoing_idx = defaultdict(list)
-    if successors is None:
-        curr_set = set(curr_layer)
-        for u, v in edges:
-            if u in curr_set and v in idx_next:
-                outgoing_idx[u].append(idx_next[v])
-    else:
-        for u in curr_layer:
-            outgoing_idx[u] = [
-                idx_next[v] for v in successors.get(int(u), ()) if v in idx_next
-            ]
+    for u, v in edges:
+        if u in curr_set and v in idx_next:
+            outgoing_idx[u].append(idx_next[v])
 
     barycenters = []
     for u in curr_layer:
@@ -417,29 +372,13 @@ def barycenter_sort_down(next_layer, curr_layer, edges, successors=None):
 
 def minimize_crossing_barycenter_fully(layer_nodes, edges, iters=5):
     sorted_layers = [list(nodes) for nodes in layer_nodes]
-    predecessors, successors = _build_edge_neighbors(edges)
     for _ in range(iters):
-        previous_orders = tuple(tuple(nodes) for nodes in sorted_layers)
         # 正向
         for i in range(1, len(sorted_layers)):
-            sorted_layers[i] = barycenter_sort(
-                sorted_layers[i - 1],
-                sorted_layers[i],
-                edges,
-                predecessors=predecessors,
-            )
+            sorted_layers[i] = barycenter_sort(sorted_layers[i-1], sorted_layers[i], edges)
         # 反向
         for i in range(len(sorted_layers)-2, -1, -1):   # 注意-1
-            sorted_layers[i] = barycenter_sort_down(
-                sorted_layers[i + 1],
-                sorted_layers[i],
-                edges,
-                successors=successors,
-            )
-        # A deterministic full sweep is already at a fixed point. Repeating the
-        # remaining requested iterations would only rescan every graph edge.
-        if tuple(tuple(nodes) for nodes in sorted_layers) == previous_orders:
-            break
+            sorted_layers[i] = barycenter_sort_down(sorted_layers[i+1], sorted_layers[i], edges)
     return {i: sorted_layers[i] for i in range(len(sorted_layers))}
 
 
@@ -492,43 +431,20 @@ def _embedding_scores_by_layer(embeddings, layer_nodes, node_to_index, sign=1.0)
     return scores_by_layer, scores_by_node
 
 
-def _barycenter_sort_with_embedding(
-    anchor_layer,
-    curr_layer,
-    edges,
-    embedding_scores,
-    reverse=False,
-    bias=0.0,
-    predecessors=None,
-    successors=None,
-):
+def _barycenter_sort_with_embedding(anchor_layer, curr_layer, edges, embedding_scores, reverse=False, bias=0.0):
     idx_anchor = {int(n): i for i, n in enumerate(anchor_layer)}
     curr_nodes = [int(n) for n in curr_layer]
+    curr_set = set(curr_nodes)
     neighbor_idx = defaultdict(list)
 
-    if not reverse and predecessors is not None:
-        for node in curr_nodes:
-            neighbor_idx[node] = [
-                idx_anchor[u]
-                for u in predecessors.get(node, ())
-                if u in idx_anchor
-            ]
-    elif reverse and successors is not None:
-        for node in curr_nodes:
-            neighbor_idx[node] = [
-                idx_anchor[v]
-                for v in successors.get(node, ())
-                if v in idx_anchor
-            ]
-    else:
-        curr_set = set(curr_nodes)
-        for u, v in edges:
-            u = int(u)
-            v = int(v)
-            if not reverse:
-                if u in idx_anchor and v in curr_set:
-                    neighbor_idx[v].append(idx_anchor[u])
-            elif u in curr_set and v in idx_anchor:
+    for u, v in edges:
+        u = int(u)
+        v = int(v)
+        if not reverse:
+            if u in idx_anchor and v in curr_set:
+                neighbor_idx[v].append(idx_anchor[u])
+        else:
+            if u in curr_set and v in idx_anchor:
                 neighbor_idx[u].append(idx_anchor[v])
 
     previous_rank = {node: rank for rank, node in enumerate(curr_nodes)}
@@ -594,113 +510,6 @@ def total_adjacent_crossings(layer_nodes, edges):
             boundary_edges.get(layer_idx, ()),
         )
     return int(total)
-
-
-def find_ogdf_layer_orderer():
-    """Locate the compiled OGDF fixed-layer adapter."""
-    configured = os.environ.get("IFCN_OGDF_ORDERER", "").strip()
-    repo_root = osp.abspath(osp.join(osp.dirname(__file__), "../../../../.."))
-    candidates = [
-        configured,
-        osp.join(repo_root, "build", "ifcn_ogdf_layer_order"),
-        osp.join(repo_root, "build-release", "ifcn_ogdf_layer_order"),
-        osp.join(repo_root, "build-ogdf", "ifcn_ogdf_layer_order"),
-        osp.join(repo_root, "build-ogdf", "Release", "ifcn_ogdf_layer_order"),
-        osp.join(repo_root, "include", "gcn_rl_layout", "ogdf", "build", "ifcn_ogdf_layer_order"),
-    ]
-    for candidate in candidates:
-        if candidate and osp.isfile(candidate) and os.access(candidate, os.X_OK):
-            return osp.abspath(candidate)
-    return ""
-
-
-def minimize_crossing_ogdf_fixed_layer(layer_nodes, edges, timeout_seconds=None):
-    """Order nodes inside parser-provided layers with OGDF Sugiyama.
-
-    OGDF receives the original layer of every node as a fixed rank. The small
-    C++ adapter returns only the within-layer order; every downstream iFCN
-    placement/routing stage therefore consumes the same data shape as before.
-    """
-    layers = _normalize_layer_list(layer_nodes)
-    executable = find_ogdf_layer_orderer()
-    if not executable:
-        raise RuntimeError(
-            "OGDF layer orderer was not found. Build it with: "
-            "cmake -S include/gcn_rl_layout/ogdf -B build-ogdf && "
-            "cmake --build build-ogdf --target ifcn_ogdf_layer_order"
-        )
-
-    node_records = [
-        (int(node), int(layer_idx), int(order))
-        for layer_idx, nodes in enumerate(layers)
-        for order, node in enumerate(nodes)
-    ]
-    known_nodes = {node for node, _, _ in node_records}
-    node_layers = {node: layer for node, layer, _ in node_records}
-    edge_records = [
-        (int(source), int(target))
-        for source, target in edges
-        if int(source) in known_nodes and int(target) in known_nodes
-        and node_layers[int(target)] == node_layers[int(source)] + 1
-    ]
-    lines = [f"{len(node_records)} {len(edge_records)} {len(layers)}"]
-    lines.extend(f"{node} {layer} {order}" for node, layer, order in node_records)
-    lines.extend(f"{source} {target}" for source, target in edge_records)
-    payload = "\n".join(lines) + "\n"
-
-    if timeout_seconds is None:
-        timeout_seconds = float(os.environ.get("IFCN_OGDF_TIMEOUT_SEC", "60"))
-    wall_started = time.perf_counter()
-    result = subprocess.run(
-        [executable],
-        input=payload,
-        text=True,
-        capture_output=True,
-        timeout=max(1.0, float(timeout_seconds)),
-        check=False,
-    )
-    wall_seconds = time.perf_counter() - wall_started
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(
-            f"OGDF fixed-layer crossing minimization failed ({result.returncode}): {detail}"
-        )
-
-    output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    if not output_lines or not output_lines[0].startswith("OGDF "):
-        raise RuntimeError("OGDF layer orderer returned an invalid response header.")
-    header = output_lines[0].split()
-    if len(header) != 3:
-        raise RuntimeError("OGDF layer orderer returned an incomplete response header.")
-    ogdf_kernel_ms = float(header[1])
-    ogdf_internal_crossings = int(header[2])
-
-    ordered = {layer_idx: [] for layer_idx in range(len(layers))}
-    for line in output_lines[1:]:
-        fields = line.split()
-        if len(fields) != 3:
-            raise RuntimeError(f"Invalid OGDF order record: {line}")
-        layer_idx, order, node = map(int, fields)
-        if layer_idx not in ordered or order != len(ordered[layer_idx]):
-            raise RuntimeError(f"Non-contiguous OGDF order record: {line}")
-        ordered[layer_idx].append(node)
-
-    expected = {int(node) for nodes in layers for node in nodes}
-    received = {int(node) for nodes in ordered.values() for node in nodes}
-    if received != expected or sum(map(len, ordered.values())) != len(expected):
-        raise RuntimeError("OGDF output did not preserve the complete circuit node set.")
-    for layer_idx, original_nodes in enumerate(layers):
-        if set(ordered[layer_idx]) != {int(node) for node in original_nodes}:
-            raise RuntimeError(f"OGDF moved nodes across fixed layer {layer_idx}.")
-
-    metadata = {
-        "orderer": "ogdf",
-        "executable": executable,
-        "kernel_ms": float(ogdf_kernel_ms),
-        "wall_seconds": float(wall_seconds),
-        "ogdf_internal_crossings": int(ogdf_internal_crossings),
-    }
-    return ordered, metadata
 
 
 def _gcn_guided_local_sifting(
@@ -831,7 +640,6 @@ def minimize_crossing_gcn_guided(
 
     candidates = []
     plain = minimize_crossing_barycenter_fully(base_layers, edges, iters=iters)
-    predecessors, successors = _build_edge_neighbors(edges)
     _, default_scores = _embedding_scores_by_layer(
         embeddings,
         base_layers,
@@ -850,7 +658,6 @@ def minimize_crossing_gcn_guided(
         for bias in (0.02, 0.05, 0.10, 0.20):
             layers = [list(nodes) for nodes in base_layers]
             for _ in range(iters):
-                previous_orders = tuple(tuple(nodes) for nodes in layers)
                 for layer_idx in range(1, len(layers)):
                     layers[layer_idx] = _barycenter_sort_with_embedding(
                         layers[layer_idx - 1],
@@ -859,8 +666,6 @@ def minimize_crossing_gcn_guided(
                         scores_by_layer.get(layer_idx, {}),
                         reverse=False,
                         bias=bias,
-                        predecessors=predecessors,
-                        successors=successors,
                     )
                 for layer_idx in range(len(layers) - 2, -1, -1):
                     layers[layer_idx] = _barycenter_sort_with_embedding(
@@ -870,11 +675,7 @@ def minimize_crossing_gcn_guided(
                         scores_by_layer.get(layer_idx, {}),
                         reverse=True,
                         bias=bias,
-                        predecessors=predecessors,
-                        successors=successors,
                     )
-                if tuple(tuple(nodes) for nodes in layers) == previous_orders:
-                    break
 
             candidates.append(({i: list(layers[i]) for i in range(len(layers))}, scores_by_node))
 
@@ -1864,6 +1665,40 @@ def visualize_scatter_layout(layer_nodes, sorted_nodes_per_layer):
     plt.show()
 
 
+# ================= Graphviz + exact-gain sifting production flow ===================
+def _graphviz_sifting_generate(layer_nodes, edges, node_to_index):
+    print("-------------------Graphviz + exact-gain sifting-------------------")
+    ordered_layers, diagnostics = graphviz_sifting_order(
+        layer_nodes,
+        edges,
+        count_crossings_fast,
+    )
+    ordered_list = [ordered_layers[index] for index in range(len(ordered_layers))]
+    embeddings = deterministic_layout_embeddings(ordered_list, edges, node_to_index)
+    crossings_per_layer = {}
+    total_crossings = 0
+    for layer_index in range(len(ordered_list) - 1):
+        value = count_crossings_fast(
+            ordered_list[layer_index],
+            ordered_list[layer_index + 1],
+            edges,
+        )
+        crossings_per_layer[layer_index] = value
+        total_crossings += value
+    print(
+        "[Graphviz+sifting] crossings={} (removed {} after dot), "
+        "dot={:.3f}s, sift={:.3f}s, evaluations={}, fallback={}".format(
+            total_crossings,
+            diagnostics["crossings_removed"],
+            diagnostics["graphviz_seconds"],
+            diagnostics["seconds"],
+            diagnostics["evaluations"],
+            diagnostics["graphviz_fallback_to_raw"],
+        )
+    )
+    return embeddings, ordered_layers, crossings_per_layer, edges
+
+
 # ================= 2DDWave normal graph flow ===================
 def normal_graph_generate_2ddwave(
     data,
@@ -1872,120 +1707,18 @@ def normal_graph_generate_2ddwave(
     node_to_index,
     v_file_path,
     save_training_curve=True,
-    crossing_orderer="ogdf",
 ):
-    crossing_orderer = str(crossing_orderer).strip().lower()
-    order_started = time.perf_counter()
-    order_metadata = {"orderer": crossing_orderer}
-
-    if crossing_orderer == "ogdf":
-        print("-------------------OGDF fixed-layer ordering-------------------")
-        barycenter_opt_layers, ogdf_metadata = minimize_crossing_ogdf_fixed_layer(
-            layer_nodes,
-            edges,
-        )
-        # The non-neural flow keeps embeddings absent throughout placement and
-        # routing repair; structural/congestion scores are used downstream.
-        embeddings = None
-        order_metadata.update(ogdf_metadata)
-    elif crossing_orderer == "gcn":
-        device = safe_torch_device()
-        print(f"-------------------GCN Trainning-------------------")
-        print("Using device:", device)
-        model = GCN(
-            in_channels=data.num_features,
-            edge_channels=_data_edge_channels(data),
-        )
-        trained_model = train_gcn(
-            model,
-            data,
-            v_file_path,
-            device=device,
-            save_curve=save_training_curve,
-        )
-        embeddings = get_embeddings(trained_model, data, device=device)
-
-        sorted_nodes_per_layer = {}
-        for layer, nodes in enumerate(layer_nodes):
-            sorted_nodes = sort_nodes_by_embedding(embeddings, nodes, node_to_index)
-            sorted_nodes_per_layer[layer] = sorted_nodes
-
-        barycenter_opt_layers = minimize_crossing_gcn_guided(
-            [sorted_nodes_per_layer[i] for i in range(len(layer_nodes))],
-            edges,
-            embeddings,
-            node_to_index,
-            iters=10,
-            refine_passes=1,
-        )
-    else:
-        raise ValueError(f"Unsupported crossing orderer: {crossing_orderer}")
-
-    order_metadata["total_seconds"] = float(time.perf_counter() - order_started)
-
-    print(f"-------------------Crossover optimize-------------------")
-    # 4. 输出&统计交叉
-    crossings_per_layer = {}
-    total_crossings = 0
-    for i in range(len(layer_nodes) - 1):
-        layer1 = barycenter_opt_layers[i]
-        layer2 = barycenter_opt_layers[i+1]
-        cross = count_crossings_fast(layer1, layer2, edges)
-        crossings_per_layer[i] = cross
-        # print(f"Layer {i}-{i+1} crossings: {cross} , Layer {i} nodes: {layer1}, Layer {i+1} nodes: {layer2}")
-        total_crossings += cross
-    print(f"Total crossings (all adjacent layers): {total_crossings}")
-    order_metadata["adjacent_crossings"] = int(total_crossings)
-    print(
-        f"Crossing orderer: {crossing_orderer}, "
-        f"time={order_metadata['total_seconds']:.6f}s"
-    )
-    return embeddings, barycenter_opt_layers, crossings_per_layer, edges, order_metadata
+    # ``data``, ``v_file_path`` and ``save_training_curve`` remain in the
+    # signature so GUI/RL callers do not need a migration.  No neural training
+    # is performed in the production ordering path anymore.
+    _ = (data, v_file_path, save_training_curve)
+    return _graphviz_sifting_generate(layer_nodes, edges, node_to_index)
 
 
-# ================= GCN+RL 常规排序 ===================
+# ================= Backward-compatible RL warm-order entry ===================
 def normal_generate(data, layer_nodes, edges, node_to_index, v_file_path, device="auto"):
-    device = safe_torch_device(device)
-    print(f"-------------------GCN Trainning-------------------")
-    print("Using device:", device)
-    model = GCN(
-        in_channels=data.num_features,
-        edge_channels=_data_edge_channels(data),
-    )
-    trained_model = train_gcn(model, data, v_file_path, device=device)
-    embeddings = get_embeddings(trained_model, data, device=device)
-
-    sorted_nodes_per_layer = {}
-    for layer, nodes in enumerate(layer_nodes):
-        sorted_nodes_per_layer[layer] = sort_nodes_by_embedding(
-            embeddings,
-            nodes,
-            node_to_index,
-        )
-
-    # Keep the GCN signal during crossing optimization.  The plain barycenter
-    # sweep used here before could completely overwrite the PCA warm order even
-    # though a monotone exact-crossing GCN-guided implementation already exists.
-    barycenter_opt_layers = minimize_crossing_gcn_guided(
-        [sorted_nodes_per_layer[i] for i in range(len(layer_nodes))],
-        edges,
-        embeddings,
-        node_to_index,
-        iters=10,
-        refine_passes=1,
-    )
-
-    print(f"-------------------Crossover optimize-------------------")
-    crossings_per_layer = {}
-    total_crossings = 0
-    for i in range(len(layer_nodes) - 1):
-        layer1 = barycenter_opt_layers[i]
-        layer2 = barycenter_opt_layers[i + 1]
-        cross = count_crossings_fast(layer1, layer2, edges)
-        crossings_per_layer[i] = cross
-        total_crossings += cross
-    print(f"Total crossings (all adjacent layers): {total_crossings}")
-    return embeddings, barycenter_opt_layers, crossings_per_layer, edges
+    _ = (data, v_file_path, device)
+    return _graphviz_sifting_generate(layer_nodes, edges, node_to_index)
 
 
 def normal_generate_optimize(data, layer_nodes,node_to_index, edges):

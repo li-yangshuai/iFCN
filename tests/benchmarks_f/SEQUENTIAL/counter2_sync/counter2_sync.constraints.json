@@ -1,0 +1,38 @@
+{
+  "schema": "ifcn.sequential.constraints.v0",
+  "top": "counter2_sync",
+  "clock_domains": [
+    {
+      "id": "clk0",
+      "port": "clk",
+      "edge": "posedge"
+    }
+  ],
+  "resets": [
+    {
+      "id": "rst0",
+      "port": "rst",
+      "kind": "synchronous",
+      "polarity": "active_high",
+      "value": "00",
+      "clock_domain": "clk0"
+    }
+  ],
+  "control_ports": [
+    {
+      "id": "en0",
+      "port": "en",
+      "role": "clock_enable",
+      "polarity": "active_high",
+      "clock_domain": "clk0"
+    }
+  ],
+  "initial_state": "unknown_until_reset",
+  "physical": {
+    "clocking_scheme": "post_route_irregular_4phase",
+    "phase_count": 4,
+    "phase_origin": 0,
+    "epoch_unit": "one_qca_zone_handoff",
+    "required_initiation_interval_epochs": null
+  }
+}

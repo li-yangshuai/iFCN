@@ -67,9 +67,11 @@ void MappingExecutor::executeMapping()
 
     //get circle_line from routes(containing all paths)
     std::vector<std::vector<position>> circle_line;
+    std::vector<unsigned int> circleIterationDistances;
     circle_line.clear();
-    for (const QVector<QPoint>& qPoints : routes)  // 直接拿 value
+    for (auto routeIt = routes.cbegin(); routeIt != routes.cend(); ++routeIt)
     {
+        const QVector<QPoint>& qPoints = routeIt.value();
         std::vector<position> convertedRoute;
         convertedRoute.reserve(qPoints.size());
 
@@ -77,6 +79,8 @@ void MappingExecutor::executeMapping()
             convertedRoute.emplace_back(point.x(), point.y());
 
         circle_line.push_back(std::move(convertedRoute));
+        circleIterationDistances.push_back(
+            gatelevelmapping->routeIterationDistances.value(routeIt.key(), 0));
     }
 
 
@@ -184,8 +188,11 @@ void MappingExecutor::executeMapping()
         return;
     }
 
-    mapping.node_mapping(Nodelink);
-    auto routeexample = mapping.mapping_line(circle_line);
+    mapping.node_mapping(Nodelink, gatelevelmapping->resolvedMappingMode());
+    auto routeexample = mapping.mapping_line(
+        circle_line,
+        gatelevelmapping->resolvedMappingMode(),
+        circleIterationDistances);
     std::string crossoverError;
     if (!mapping.validate_crossovers(&crossoverError)) {
         const QString message = QStringLiteral("Cell mapping rejected: invalid crossover: %1")

@@ -65,7 +65,10 @@ namespace simon
                     const VectorTable &vector_table, const std::vector<std::string> &inames) {
                 auto &self = static_cast<Host&>(*this);
 
-                assert ( mode == SimulationMode::Exhaustive );
+                // The energy clock is periodic with ``clock_period`` and is independent
+                // of whether the input source enumerates all combinations or replays a
+                // supplied vector table.  Selective mode is required for fair, common
+                // workload comparisons between layouts.
                 (void) mode;
                 (void) sample_n;
                 (void) vector_table;

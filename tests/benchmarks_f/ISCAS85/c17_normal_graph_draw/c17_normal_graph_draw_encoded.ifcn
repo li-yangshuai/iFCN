@@ -1,18 +1,18 @@
 #circuit name: c17.v
 
-#designed by normal graph draw algorithm with OGDF Sugiyama fixed-layer crossing ordering, right-down reachable initialization, exclusive fanin and shared-fanout endpoint-port constraints, local straight orthogonal crossover legality, adaptive negotiated L/Z Manhattan or direct/DP monotone routing, structural/congestion-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification.
+#designed by normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, right-down reachable initialization, structural-feature-guided node reposition, failure-directed row/column expansion, legality-verified recursive top-down/bottom-up phase-aware node-to-wire contraction, fixed-point blank-row/column deletion, and post-routing 2DDWave template consistency verification.
 
 #gate level placement and routing infomation
 #gates number: 12
 #input/output: 5 / 2
 #edges number: 13
 #total layers: 5
-#layout area: width: 7, height: 8, area: 56
-#cell count: 174
-#cross count: 2
-#critical path: 14
-#clocks: 3.5
-#run time: 0.048969 s
+#layout area: width: 6, height: 6, area: 36
+#cell count: 145
+#cross count: 4
+#critical path: 10
+#clocks: 2.5
+#run time: 0.547969 s
 #phase encoding: enabled
 #phase count: 4
 #clock scheme: 2DDWave
@@ -24,44 +24,44 @@
 
 #nodes info 
 ### nodeIndex, nodeName, nodeType, nodePosition ###
-0, 2, input, (0,0);
-1, 3, input, (2,0);
-2, 6, input, (1,0);
-3, 7, input, (6,0);
-4, \1, input, (4,0);
-5, 22, or, (4,7);
-6, 23, or, (6,7);
-7, n8, and, (4,2);
-8, n9, and, (2,2);
-9, ~n9, not, (2,3);
-10, n10, and, (2,5);
-11, n12, and, (6,5);
+0, 2, input, (0,4);
+1, 3, input, (1,0);
+2, 6, input, (0,2);
+3, 7, input, (3,2);
+4, \1, input, (2,0);
+5, 22, or, (3,5);
+6, 23, or, (5,5);
+7, n8, and, (2,1);
+8, n9, and, (1,2);
+9, ~n9, not, (1,3);
+10, n10, and, (1,4);
+11, n12, and, (3,3);
 #nodes info 
 
 #paths info
 ### {node1, node2} : path ###
-(4,7): (4,0),(4,1),(4,2);
-(0,10): (0,0),(0,1),(0,2),(0,3),(0,4),(0,5),(1,5),(2,5);
-(11,6): (6,5),(6,6),(6,7);
-(1,8): (2,0),(2,1),(2,2);
-(1,7): (2,0),(2,1),(3,1),(3,2),(4,2);
-(3,11): (6,0),(6,1),(6,2),(6,3),(6,4),(6,5);
-(2,8): (1,0),(1,1),(1,2),(2,2);
-(9,11): (2,3),(2,4),(3,4),(3,5),(4,5),(5,5),(6,5);
-(9,10): (2,3),(2,4),(2,5);
-(8,9): (2,2),(2,3);
-(7,5): (4,2),(4,3),(4,4),(4,5),(4,6),(4,7);
-(10,5): (2,5),(2,6),(2,7),(3,7),(4,7);
-(10,6): (2,5),(2,6),(3,6),(4,6),(5,6),(5,7),(6,7);
+(3,11): (3,2),(3,3);
+(10,6): (1,4),(2,4),(3,4),(4,4),(5,4),(5,5);
+(0,10): (0,4),(1,4);
+(11,6): (3,3),(3,4),(4,4),(4,5),(5,5);
+(9,10): (1,3),(1,4);
+(1,7): (1,0),(1,1),(2,1);
+(1,8): (1,0),(1,1),(1,2);
+(9,11): (1,3),(2,3),(3,3);
+(2,8): (0,2),(1,2);
+(4,7): (2,0),(2,1);
+(10,5): (1,4),(2,4),(3,4),(3,5);
+(8,9): (1,2),(1,3);
+(7,5): (2,1),(2,2),(2,3),(2,4),(2,5),(3,5);
 #paths info
 
-#absolute bbox: (0,0) -> (6,7)
-#raw size: width: 7, height: 8
+#absolute bbox: (0,0) -> (5,5)
+#raw size: width: 6, height: 6
 #padded size: width: 8, height: 8
 #blocks: columns: 2, rows: 2
 
 #encoded phase map
 ### (block_x,block_y): hex ###
-(0,0):0xe4394e93; (1,0):0x24390e13;
-(0,1):0xe4394e93; (1,1):0x24390e13;
+(0,0):0xe4394e93; (1,0):0x04090e03;
+(0,1):0xe4390000; (1,1):0x04090000;
 #encoded phase map

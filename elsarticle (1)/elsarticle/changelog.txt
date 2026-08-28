@@ -1,0 +1,34 @@
+Change Log
+-----------
+
+* elsarticle.dtx
+
+1. Frontmatter: Overfull \hbox has occurred while \output is active
+
+https://tex.stackexchange.com/questions/514218/elsarticle-frontmatter-overfull-hbox-has-occurred-while-output-is-active/515199
+
+2. Footnotes: Updated to use non Arabic footnote numbers. 
+
+https://tex.stackexchange.com/questions/669879/elsarticle-changing-symbol-used-in-fnref
+
+3. Author-affiliation:  Updated for author-wise affiliation coding.
+Last author affiliation repeating for all authors problem is fixed.
+
+4. Accent characters in address:  A bug fix. Accented characters in
+organisation field showed error. Hence loaded fontenc package.
+
+5. Updated for accent problems in TeXLive 2022. Font encoding T1 used
+by default
+
+6. Removed extra space appearing after 'Appendix' label
+
+7. updated for listing author affiliation below author names if
+\affiliation command is used immediately after \author (To match
+behaviour of \address command)
+
+*  elsarticle-template-harv.tex, \
+   elsarticle-template-num-names.tex, \
+   elsarticle-template-num.tex
+
+1. Added examples for figures, tables and equations
+------------------------------------------------------------------------

@@ -2,63 +2,22 @@
   "benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/ISCAS85/c17.v",
   "resolved_benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/ISCAS85/c17.v",
   "parser_safe_generated": false,
+  "node_count": 12,
+  "edge_count": 13,
+  "input_count": 5,
+  "output_count": 2,
+  "io_count": 7,
+  "layer_count": 5,
   "seed": 1,
-  "crossing_orderer_requested": "ogdf",
-  "crossing_orderer": "ogdf",
-  "crossing_order_metrics": {
-    "orderer": "ogdf",
-    "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
-    "kernel_ms": 0.054925,
-    "wall_seconds": 0.00296124199667247,
-    "ogdf_internal_crossings": 0,
-    "total_seconds": 0.0030838410020805895,
-    "adjacent_crossings": 0
-  },
-  "router_mode": "negotiated",
-  "router_mode_requested": "auto",
-  "routing_metrics": {
-    "iterations": 1,
-    "conflict_count": 0,
-    "history_cell_count": 0,
-    "failed_edge_count": 0,
-    "routed_edge_count": 13,
-    "crossovers_enabled": true,
-    "large_circuit_policy": false,
-    "candidate_tracks": 10,
-    "iteration_limit": 24
-  },
   "seed_attempts": [
     {
       "seed": 1,
       "failed_edge_count": 0,
       "clock_template_ok": true,
       "clock_template_conflicts": 0,
-      "port_directions_ok": true,
-      "port_direction_violations": 0,
-      "crossing_orderer": "ogdf",
-      "crossing_order_metrics": {
-        "orderer": "ogdf",
-        "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
-        "kernel_ms": 0.054925,
-        "wall_seconds": 0.00296124199667247,
-        "ogdf_internal_crossings": 0,
-        "total_seconds": 0.0030838410020805895,
-        "adjacent_crossings": 0
-      },
-      "router_mode": "negotiated",
-      "router_mode_requested": "auto",
-      "routing_metrics": {
-        "iterations": 1,
-        "conflict_count": 0,
-        "history_cell_count": 0,
-        "failed_edge_count": 0,
-        "routed_edge_count": 13,
-        "crossovers_enabled": true,
-        "large_circuit_policy": false,
-        "candidate_tracks": 10,
-        "iteration_limit": 24
-      },
-      "area": 56
+      "area": 30,
+      "route_expansion_rounds": 1,
+      "route_expansion_exhausted": false
     }
   ],
   "output_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/ISCAS85/c17_normal_graph_draw",
@@ -67,13 +26,583 @@
   "raw_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/ISCAS85/c17_normal_graph_draw/c17_raw.svg",
   "ordered_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/ISCAS85/c17_normal_graph_draw/c17.svg",
   "physical_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/ISCAS85/c17_normal_graph_draw/c17_physical.svg",
-  "stage_tex_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/ISCAS85/c17_normal_graph_draw/stage_tex/seed_1",
+  "stage_tex_dir": "",
   "failed_edge_count": 0,
-  "port_directions_ok": true,
-  "port_direction_violations": 0,
-  "width": 7,
-  "height": 8,
-  "area": 56,
-  "run_time_sec": 0.04896886400092626,
-  "algorithm_description": "normal graph draw algorithm with OGDF Sugiyama fixed-layer crossing ordering, right-down reachable initialization, exclusive fanin and shared-fanout endpoint-port constraints, local straight orthogonal crossover legality, adaptive negotiated L/Z Manhattan or direct/DP monotone routing, structural/congestion-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
+  "failed_edges": [],
+  "layout_legal": true,
+  "route_expansion_round_count": 1,
+  "route_expansion_exhausted": false,
+  "route_incompatibility_reason": "",
+  "right_down_port_capacity_nodes": [],
+  "route_expansion_history": [
+    {
+      "round": 1,
+      "previous_failed": 1,
+      "failed": 0,
+      "inserted_rows": [
+        2,
+        4
+      ],
+      "inserted_cols": [
+        5
+      ],
+      "shifted_target_rows": 1,
+      "propagated_right_down_moves": 0,
+      "route_variant": "failed-first",
+      "width": 10,
+      "height": 7,
+      "elapsed_sec": 0.06375491499784403
+    }
+  ],
+  "contraction_step_count": 18,
+  "contraction_evaluations": 99,
+  "contraction_global_evaluations": 54,
+  "contraction_recursive_evaluations": 8,
+  "contraction_empty_line_evaluations": 16,
+  "contraction_layer_merge_evaluations": 21,
+  "contraction_exhausted": false,
+  "contraction_history": [
+    {
+      "step": 1,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 0,
+      "from_coord": [
+        0,
+        0
+      ],
+      "to_coord": [
+        0,
+        1
+      ],
+      "route_edge": [
+        0,
+        10
+      ],
+      "phase_from": 0,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 43,
+      "used_cell_count": 42,
+      "old_routed_wire_cells": 41,
+      "routed_wire_cells": 40,
+      "pass": 1
+    },
+    {
+      "step": 2,
+      "mode": "phase_node_global_bottom_up",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 11,
+      "from_coord": [
+        7,
+        4
+      ],
+      "to_coord": [
+        7,
+        3
+      ],
+      "route_edge": [
+        3,
+        11
+      ],
+      "phase_from": 3,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 42,
+      "used_cell_count": 42,
+      "old_routed_wire_cells": 40,
+      "routed_wire_cells": 39,
+      "pass": 1
+    },
+    {
+      "step": 3,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 2,
+      "from_coord": [
+        1,
+        0
+      ],
+      "to_coord": [
+        1,
+        1
+      ],
+      "route_edge": [
+        2,
+        8
+      ],
+      "phase_from": 1,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 42,
+      "used_cell_count": 41,
+      "old_routed_wire_cells": 39,
+      "routed_wire_cells": 38,
+      "pass": 1
+    },
+    {
+      "step": 4,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 3,
+      "from_coord": [
+        7,
+        0
+      ],
+      "to_coord": [
+        7,
+        1
+      ],
+      "route_edge": [
+        3,
+        11
+      ],
+      "phase_from": 3,
+      "phase_target_before": 0,
+      "phase_after": 0,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 41,
+      "used_cell_count": 40,
+      "old_routed_wire_cells": 38,
+      "routed_wire_cells": 37,
+      "pass": 1
+    },
+    {
+      "step": 5,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 0,
+      "from_coord": [
+        0,
+        1
+      ],
+      "to_coord": [
+        0,
+        2
+      ],
+      "route_edge": [
+        0,
+        10
+      ],
+      "phase_from": 1,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 40,
+      "used_cell_count": 39,
+      "old_routed_wire_cells": 37,
+      "routed_wire_cells": 36,
+      "pass": 1
+    },
+    {
+      "step": 6,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 8,
+      "from_coord": [
+        2,
+        1
+      ],
+      "to_coord": [
+        2,
+        2
+      ],
+      "route_edge": [
+        8,
+        9
+      ],
+      "phase_from": 3,
+      "phase_target_before": 0,
+      "phase_after": 0,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 39,
+      "used_cell_count": 39,
+      "old_routed_wire_cells": 36,
+      "routed_wire_cells": 37,
+      "pass": 1
+    },
+    {
+      "step": 7,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 2,
+      "from_coord": [
+        1,
+        1
+      ],
+      "to_coord": [
+        1,
+        2
+      ],
+      "route_edge": [
+        2,
+        8
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 39,
+      "used_cell_count": 38,
+      "old_routed_wire_cells": 37,
+      "routed_wire_cells": 36,
+      "pass": 1
+    },
+    {
+      "step": 8,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 3,
+      "from_coord": [
+        7,
+        1
+      ],
+      "to_coord": [
+        7,
+        2
+      ],
+      "route_edge": [
+        3,
+        11
+      ],
+      "phase_from": 0,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 38,
+      "used_cell_count": 37,
+      "old_routed_wire_cells": 36,
+      "routed_wire_cells": 35,
+      "pass": 1
+    },
+    {
+      "step": 9,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        6
+      ],
+      "node": 0,
+      "from_coord": [
+        0,
+        2
+      ],
+      "to_coord": [
+        0,
+        3
+      ],
+      "route_edge": [
+        0,
+        10
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 7,
+      "area": 70,
+      "old_used_cell_count": 37,
+      "used_cell_count": 36,
+      "old_routed_wire_cells": 35,
+      "routed_wire_cells": 34,
+      "pass": 1
+    },
+    {
+      "step": 10,
+      "mode": "empty_row_delete",
+      "axis": "y",
+      "line": 5,
+      "old_width": 10,
+      "old_height": 7,
+      "width": 10,
+      "height": 6,
+      "area": 60,
+      "old_used_cell_count": 36,
+      "used_cell_count": 32,
+      "old_routed_wire_cells": 34,
+      "routed_wire_cells": 30,
+      "pass": 1
+    },
+    {
+      "step": 11,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 3,
+      "old_width": 10,
+      "old_height": 6,
+      "width": 9,
+      "height": 6,
+      "area": 54,
+      "old_used_cell_count": 32,
+      "used_cell_count": 29,
+      "old_routed_wire_cells": 30,
+      "routed_wire_cells": 26,
+      "pass": 1
+    },
+    {
+      "step": 12,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 4,
+      "old_width": 9,
+      "old_height": 6,
+      "width": 8,
+      "height": 6,
+      "area": 48,
+      "old_used_cell_count": 29,
+      "used_cell_count": 26,
+      "old_routed_wire_cells": 26,
+      "routed_wire_cells": 22,
+      "pass": 1
+    },
+    {
+      "step": 13,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 4,
+      "old_width": 8,
+      "old_height": 6,
+      "width": 7,
+      "height": 6,
+      "area": 42,
+      "old_used_cell_count": 26,
+      "used_cell_count": 23,
+      "old_routed_wire_cells": 22,
+      "routed_wire_cells": 18,
+      "pass": 1
+    },
+    {
+      "step": 14,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 5,
+      "old_width": 7,
+      "old_height": 6,
+      "width": 6,
+      "height": 6,
+      "area": 36,
+      "old_used_cell_count": 23,
+      "used_cell_count": 21,
+      "old_routed_wire_cells": 18,
+      "routed_wire_cells": 16,
+      "pass": 1
+    },
+    {
+      "step": 15,
+      "mode": "adjacent_col_merge",
+      "axis": "x",
+      "line": 0,
+      "merged_layers": [
+        0,
+        1
+      ],
+      "first_layer_node_count": 1,
+      "second_layer_node_count": 1,
+      "moved_node_count": 11,
+      "old_width": 6,
+      "old_height": 6,
+      "width": 5,
+      "height": 6,
+      "area": 30,
+      "old_used_cell_count": 21,
+      "used_cell_count": 20,
+      "old_routed_wire_cells": 16,
+      "routed_wire_cells": 15,
+      "pass": 1
+    },
+    {
+      "step": 16,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        5
+      ],
+      "node": 7,
+      "from_coord": [
+        2,
+        1
+      ],
+      "to_coord": [
+        2,
+        2
+      ],
+      "route_edge": [
+        7,
+        5
+      ],
+      "phase_from": 3,
+      "phase_target_before": 0,
+      "phase_after": 0,
+      "old_width": 5,
+      "old_height": 6,
+      "width": 5,
+      "height": 6,
+      "area": 30,
+      "old_used_cell_count": 20,
+      "used_cell_count": 20,
+      "old_routed_wire_cells": 15,
+      "routed_wire_cells": 16,
+      "pass": 2
+    },
+    {
+      "step": 17,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "y_window": [
+        0,
+        5
+      ],
+      "node": 4,
+      "from_coord": [
+        2,
+        0
+      ],
+      "to_coord": [
+        2,
+        1
+      ],
+      "route_edge": [
+        4,
+        7
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 5,
+      "old_height": 6,
+      "width": 5,
+      "height": 6,
+      "area": 30,
+      "old_used_cell_count": 20,
+      "used_cell_count": 19,
+      "old_routed_wire_cells": 16,
+      "routed_wire_cells": 15,
+      "pass": 2
+    },
+    {
+      "step": 18,
+      "mode": "phase_node_recursive_top_down",
+      "recursive_depth": 1,
+      "y_window": [
+        3,
+        5
+      ],
+      "node": 0,
+      "from_coord": [
+        0,
+        3
+      ],
+      "to_coord": [
+        0,
+        4
+      ],
+      "route_edge": [
+        0,
+        10
+      ],
+      "phase_from": 3,
+      "phase_target_before": 0,
+      "phase_after": 0,
+      "old_width": 5,
+      "old_height": 6,
+      "width": 5,
+      "height": 6,
+      "area": 30,
+      "old_used_cell_count": 19,
+      "used_cell_count": 18,
+      "old_routed_wire_cells": 15,
+      "routed_wire_cells": 14,
+      "pass": 2
+    }
+  ],
+  "pre_contraction_width": 10,
+  "pre_contraction_height": 7,
+  "pre_contraction_area": 70,
+  "contraction_area_reduction": 40,
+  "contraction_area_reduction_percent": 57.142857142857146,
+  "pre_contraction_used_cell_count": 43,
+  "used_cell_count": 18,
+  "contraction_used_cell_reduction": 25,
+  "contraction_used_cell_reduction_percent": 58.13953488372093,
+  "pre_contraction_routed_wire_cells": 41,
+  "routed_wire_cells": 14,
+  "contraction_routed_wire_cell_reduction": 27,
+  "width": 5,
+  "height": 6,
+  "area": 30,
+  "layout_routing_runtime_sec": 0.8026324530073907,
+  "contraction_runtime_sec": 0.19739335399935953,
+  "run_time_sec": 1.0000258070067503,
+  "algorithm_description": "normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, right-down reachable initialization, structural-feature-guided node reposition, failure-directed row/column expansion, legality-verified recursive top-down/bottom-up phase-aware node-to-wire contraction, fixed-point blank-row/column deletion, and post-routing 2DDWave template consistency verification"
 }

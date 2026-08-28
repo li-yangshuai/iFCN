@@ -100,6 +100,9 @@ def _insert_or_update_mapping_metrics(filename, verbose=False):
 
 
 def _phase_at(graphDraw, coord):
+    phase_cycle = int(getattr(graphDraw, "phase_cycle", 4) or 4)
+    if _is_2ddwave_scheme(getattr(graphDraw, "clock_scheme_name", "")):
+        return (int(coord[0]) + int(coord[1])) % phase_cycle
     if not hasattr(graphDraw, "mapChessboard"):
         return -1
     try:
@@ -216,7 +219,7 @@ def _topological_nodes(graphDraw):
     return ordered
 
 
-def _estimate_critical_path_metrics(graphDraw, phase_cycle):
+def _compute_critical_path_metrics(graphDraw, phase_cycle):
     parse = getattr(graphDraw, "parse", None)
     edges = [(int(u), int(v)) for u, v in (getattr(parse, "effective_edges", []) or [])]
     if not edges:
@@ -271,6 +274,20 @@ def _estimate_critical_path_metrics(graphDraw, phase_cycle):
         default=[],
     )
     return len(best_path), _clock_cycles_for_sequence(graphDraw, best_path, phase_cycle)
+
+
+def _estimate_critical_path_metrics(graphDraw, phase_cycle):
+    """Cache the route-derived metric shared by raw and encoded IFCN output."""
+    cache = getattr(graphDraw, "_ifcn_critical_path_metrics_cache", None)
+    cache_key = int(phase_cycle)
+    if isinstance(cache, dict) and cache_key in cache:
+        return cache[cache_key]
+    value = _compute_critical_path_metrics(graphDraw, phase_cycle)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(graphDraw, "_ifcn_critical_path_metrics_cache", cache)
+    cache[cache_key] = value
+    return value
 
 
 def _estimate_layout_clocks(graphDraw, phase_cycle):
@@ -449,13 +466,22 @@ def _write_encoded_phase_mapping_file(
                                 else:
                                     abs_x = min_x + norm_x
                                     abs_y = min_y + norm_y
-                                    phase_val = int(graphDraw.mapChessboard.getPhase((abs_x, abs_y)))
-                                    if phase_val < 0:
+                                    if _is_2ddwave_scheme(clock_scheme_name):
                                         phase_val = _template_phase_for_coord(
                                             graphDraw,
                                             (abs_x, abs_y),
                                             phase_cycle,
                                         )
+                                    else:
+                                        phase_val = int(
+                                            graphDraw.mapChessboard.getPhase((abs_x, abs_y))
+                                        )
+                                        if phase_val < 0:
+                                            phase_val = _template_phase_for_coord(
+                                                graphDraw,
+                                                (abs_x, abs_y),
+                                                phase_cycle,
+                                            )
                                 if phase_val < 0 or phase_val >= phase_cycle:
                                     raise ValueError(
                                         "phase value out of range for encoded IFCN: "
@@ -494,6 +520,17 @@ def generate_gate_level_mapping_file(
     ==========================================================
     """
     import os
+
+    if hasattr(graphDraw, "validate_gate_port_directions"):
+        ports_ok, violations, _ = graphDraw.validate_gate_port_directions()
+        if not ports_ok:
+            details = "; ".join(
+                "{}: {}".format(edge, message)
+                for edge, message in violations[:8]
+            )
+            raise RuntimeError(
+                "refusing to export IFCN with invalid gate fanin ports: " + details
+            )
 
     # ----------------------------------------
     # 1️⃣ 构造输出文件名
@@ -616,13 +653,20 @@ def generate_gate_level_mapping_file(
                 for y in range(minY, maxY + 1):
                     line_items = []
                     for x in range(minX, maxX + 1):
-                        phase_val = graphDraw.mapChessboard.getPhase((x, y))
-                        if phase_val < 0:
+                        if _is_2ddwave_scheme(clock_scheme_name):
                             phase_val = _template_phase_for_coord(
                                 graphDraw,
                                 (x, y),
                                 phase_cycle,
                             )
+                        else:
+                            phase_val = graphDraw.mapChessboard.getPhase((x, y))
+                            if phase_val < 0:
+                                phase_val = _template_phase_for_coord(
+                                    graphDraw,
+                                    (x, y),
+                                    phase_cycle,
+                                )
                         line_items.append(f"({x},{y}):{phase_val};")
                     f.write(" ".join(line_items) + "\n")
                 f.write("#phase map\n")

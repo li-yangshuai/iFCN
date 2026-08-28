@@ -1,406 +1,669 @@
-# iFCN 开发交接
+# iFCN 时序 QCA 自动布局布线交接
 
-更新时间：2026-07-23  
-分支：`version1.1`  
-基准提交：`44fd211`  
-状态：工作区有大量尚未提交的代码、实验产物和论文文件，接手前不要执行 `git reset`、`git clean` 或覆盖生成目录。
+更新时间：2026-08-27
 
-## 1. 当前目标
+工作分支：`feat/sequential-circuit-automation`
 
-工程现在需要维护两套严格隔离的布局布线模型：
+基准提交：`700cf95179ef91bf08bb069bb4998e152151e237`
 
-1. **固定时钟 2DDWave：Normal Graph Draw**
-   - 不使用 GCN；OGDF 只负责固定逻辑层内的交叉排序。
-   - 当前只支持 TOY/AOIG 一类非择多门网表，**不支持原生 MAJ（majority/择多门）网表**；不要把 `tests/benchmarks_f/MAJ/` 下的文件直接送入 2DDWave，也不要把这种输入不受支持导致的失败归因于布线器。
-   - 连线只允许向右或向下。
-   - 同一逻辑门的多个扇入必须使用不同输入方向（上/左）。
-   - 同一源的扇出树必须从同一输出方向（右/下）离开。
-   - 最终 LaTeX 相位图必须覆盖版图矩形中的全部 2DDWave 网格。
+> 当前工作树包含大量尚未提交的时序代码，也包含其他组合电路、GCN-RL
+> 和 UI 工作。接手时不要执行 `git reset --hard`、`git clean` 或覆盖整个
+> 工作树。上述基准提交不包含本文描述的全部实现。
 
-2. **随机时钟：Stochastic Compact Graph P&R**
-   - 同样不依赖 GCN，但不能复用固定 2DDWave 的单向曼哈顿路由器。
-   - 该流程用于 MAJ/择多门版本网表，并原生处理 majority gate。
-   - 使用四方向迷宫搜索，并在搜索状态中同步分配相位。
-   - 压缩时必须重新布线并重新验证相位和端口方向。
-   - 该模型不得改变或干扰固定 2DDWave 流程。
-   - 主 UI 只展示 `Heuristic P&R`、`2DDWave Fixed-Clock P&R` 和 `Compact Graph Draw P&R` 三个布局布线入口；June restore、Legacy Graphviz preview 与 GCN+RL 后端代码仍保留用于历史回归，但不再出现在 UI。
+> **2026-08-27 P0 语义纠正：相位单位是 5x5 coarse clock tile。** 同一
+> tile 内所有 QCA 元胞和所有 layer 必须同相；元胞/层不产生额外 epoch
+> occurrence。此前短暂生成的 `qca_cell/layer_aware_xyz` 相位批次无效，已由
+> 本文件第 8.3 节所列 corrected tile-phase artifact 覆盖，consumer 也会明确
+> 拒绝该旧格式。
 
-此外，主界面提供一套独立的、面向任意已加载 cell-level 版图的 **IO Contract** 可逆预览算法。
+## 1. 项目定位
 
-## 2. 不可破坏的物理约束
+本项目当前聚焦：
 
-- 一个门的两个扇入不能从同一方向进入。
-- 一个多扇出源的分支应共享同一扇出端口/主干，不能分别占用相反方向。
-- 交叉线边缘的第 1 层（layer 0）元胞可以作为 IO 收缩终点。
-- 只允许显式支持的两网 L1/L3 交叉；门端点重叠、三网共点和非法平行重叠均不能被接受。
-- 随机时钟路径的相位必须保持“相同或向前一个相位”的传播关系，并满足最大连续同相位长度。
-- 失败或只完成部分布线的结果不得导出成合法 `.ifcn`、`.qca` 或相位 LaTeX。
-- UI 中的 Occupied Area 使用 **5×5 clock grid 的跨度**计算：`W × H`；W/H 不是 cell 数量。
-- IO 收缩只是勾选预览：取消勾选恢复原版图；优化结果必须另存为新的 `.qca`，不能覆盖源文件。
+> **面向 QCA 时序电路的反馈感知自动布局布线，以及布线后的全局时钟闭合。**
 
-## 3. 已完成内容
+建议论文题目：
 
-### 3.1 固定 2DDWave / Normal Graph Draw
+> *Feedback-Aware Placement and Routing for Sequential QCA Circuits with
+> Post-Route Clock Closure*
 
-- 默认层内排序改为 OGDF Sugiyama/Barycenter 外部适配器；找不到 OGDF 可执行文件时自动退回确定性 barycenter 排序。
-- 引入 bounded L/Z candidate + negotiated congestion 的单向曼哈顿路由器。
-- 小中型图自动使用 negotiated router；超过 128 条有效边时仍使用原有 direct/DP 后端，避免大图候选爆炸。
-- 补充扇入/扇出端口方向约束和最终端口验证。
-- 支持两网交叉层映射，禁止三网交叉和端点交叉。
-- 同源 fanout 分支可以共享连续的树状元胞主干，但分叉后不能再次汇合；异源重叠只允许一个局部 H/V 正交直穿点。异源平行重叠、任一方在交点转弯、同一 source pair 多次交叉均为硬冲突。
-- 导出前同时检查布线完整性、端口方向和完整 2DDWave 模板；检查失败时拒绝保存非法结果。
-- Normal Graph UI 已明确标为“2DDWave Fixed-Clock P&R”，并显示固定时钟、排序器、路由后端和导出选项。
+核心输入是带寄存器状态边界的 Verilog，核心输出是保留真实有向反馈线路的
+门级 IFCN 版图、经 solver 和独立 validator 检查的相位/绝对 epoch/启动间隔
+可行性见证，以及沿用 iFCN 原生样式的 LaTeX 版图。
 
-关键文件：
+当前成果应准确称为：
 
-- `include/gcn_rl_layout/src/algorithm/src/normalGraphDraw.py`
-- `include/gcn_rl_layout/src/algorithm/src/negotiated_router.py`
-- `include/gcn_rl_layout/src/chessboard/RightDownAStar.cpp`
-- `include/gcn_rl_layout/src/chessboard/RightDownAStar.h`
-- `include/gcn_rl_layout/src/chessboard/MapChessboard.hpp`
-- `include/gcn_rl_layout/src/algorithm/main/test_normal_graph_draw.py`
-- `include/gcn_rl_layout/docs/negotiated_2ddwave_router.md`
-- `src/controllers/GateLevelMapping.cpp`
+- sampled-state 的时序门级 P&R 研究原型；
+- 反馈线路、结构 Mapping/DRC，以及以 coarse clock tile 为 occurrence 的
+  `phase + absolute epoch + II` 已打通；
+- QCA 状态器件尚未完成物理表征，多周期物理功能尚未签核。
 
-#### 2026-07-21 `par_gen` 交叉线严重映射错误
+它不是已经通过器件级验证的通用 QCA DFF/latch 自动设计系统。功耗和模拟器
+加速不属于论文主贡献，只保留为探索性诊断。
 
-- 已复现旧输出：`b→w4` 与 `a→w6` 在 gate-grid `(1,1)~(1,3)` 连续异源共线重叠；这不是同源扇出共享。
-- Python negotiated router 原先对“恰好两个 source tree”无条件判合法，虽然已经计算 H/V/B orientation 却没有使用。C++ `crossline_mapping()` 随后把桥接后的整个 unit segment 抬到 L3，生成了 12-cell、跨两个 5×5 tile、带两次转向的错误交叉层。
-- producer 已收紧为：同源连续公共前缀共享继续合法，但 fanout 分叉后重汇会作为 `fanout-reconvergence` 冲突整树 rip-up；两源必须分别是纯 H 与纯 V，并且同一 source pair 最多相交一次。平行段、bend、混合方向和三源重叠进入 negotiated conflict/rip-up，不再导出“假合法” IFCN。
-- `NormalGraphDraw.validate_route_overlap_legality()` 在每次完整布线后独立复核 route ownership，因此 legacy/direct-DP 后端也不能绕过相同契约。
-- C++ mapper 新增 `Mapping::validate_crossovers()` 最终防线。每段交叉层必须限制在单个 5×5 tile 内、元胞唯一且 4-connected，最多一次转向并在 tile 边界结束；旧坏 IFCN 会被明确拒绝，不能再静默显示错误版图。单 tile 内旧版 7-cell L 结构仍兼容。
-- 修复后 `TOY/par_gen.v`、seed 1：16/16 routes、port/template 全通过；5 段 crossover 全是单 tile 内的 5-cell 直线；mapping 为 339 cells（未收缩）/330 cells（IO contraction），面积从旧假合法的 `7×10=70` 变为严格合法的 `8×10=80`，线长仍为 66。
-- 修复输出仍实际共享 4 个同源 fanout 主干元胞：gate-grid `(0,1)`、`(2,1)`、`(4,1)`、`(6,6)`；这些共享不会进入 crossover layer。剩余 5 个局部交叉点均来自不同 source tree，不能通过共用元胞替代，否则会把两个逻辑信号物理短接。
-- 代表性验证 `xor2`、`mux41`、`1bitAdderAOIG` 继续严格通过。`RCA2` 在新规则下会拒绝旧流程依赖的非法 overlap，当前 seed 1/2 尚找不到完整严格合法结果；应改进 placement/track capacity，不能重新放宽 crossover 规则。
-- 旧生成目录中的 `par_gen_normal_graph_draw.ifcn` 不会自动改写，必须重新运行 Normal Graph Draw 才能得到修复后的版图。
-- rejected compaction cut 现在同时回滚 `last_negotiated_metrics/conflicts/failed_pairs`；summary 不再把一次失败的试探性 reroute（例如 15/16）误报成最终已恢复的 16/16 布线状态。
+## 2. 已实现的数据流
 
-新增回归：
+```text
+RTL .v
+  -> Yosys synthesis/write_json
+  -> scripts/yosys_json_to_seqir.py
+       -> ifcn.seqir.v0：seqir.json
+       -> register-cut AOI DAG：cut.v
+       -> D/Q 状态边界：state.json
+  -> 独立的一步状态转移穷举检查
+  -> 对 d=0 调度图进行分层和门放置
+  -> 恢复 iteration_distance=1 的真实反馈物理网
+  -> phase-blind 四方向 A* 布线全部普通网和反馈网
+  -> sequential-aware Mapping + crossover DRC
+       -> 保留有序迂回 waypoint
+       -> 生成端口边界到端口边界的有序、layer-aware QCA cell trace
+       -> 该 trace 只负责器件拓扑/连通性，不参与时钟 occurrence 计数
+  -> 固定 coarse route tile 几何上的全局 phase/epoch/II 闭合
+       -> 内置 bounded reference solver，或
+       -> JSON 导出 + Z3 求解 + C++ 独立复核
+  -> .ifcn（含唯一权威 tile phase map）+ <output.ifcn>.json + 原生样式 layout.tex
+  -> UI SVG/PDF 或 QCADesigner 2.0 .qca 元胞级输出
+```
 
-- `include/gcn_rl_layout/tests/test_negotiated_router.py`
+`include/autopr/sequential/sequentialIr.*` 已实现独立的双图验证和分层模型，
+但当前 RTL 主运行链仍经过：
+
+```text
+Python SeqIR -> legacy cut Verilog -> Parse/CircuitGraph
+```
+
+尚未让 C++ P&R 直接消费 `SequentialIR`。
+
+## 3. 时序模型与算法合同
+
+### 3.1 双图语义
+
+- `physical graph` 保留所有普通网和反馈网；P&R、导出和 DRC 不能删除反馈边。
+- `schedule graph` 只保留 `iterationDistance == 0` 的依赖，用于 DAG 分层。
+- 删除所有正距离边后仍有环，表示组合环，当前版本明确拒绝。
+- 正距离边只解除当前拍的调度依赖，不代表物理线路被删除。
+
+### 3.2 当前循环 P&R
+
+真正恢复循环反馈的主程序是 `ifcn_paper_cyclic_pnr`。
+`ifcn_sequential_pnr` 只是 register-cut 抽象基线，不是完整时序物理版图。
+
+当前主程序的做法：
+
+1. 从 `d=0` cut DAG 建立物理放置层；先过滤只用于 schedule cut 的 Q
+   pseudo-node，避免幽灵槽位，同时保留旧 Q-inclusive 居中作为不回退兜底。
+2. 同时枚举 unit/各向异性间距、原 spacing ladder、反馈加权 barycenter
+   sweep 和有界 adjacent-swap 层内顺序。
+3. 将每个 Q pseudo-input 的扇出 `Q -> v` 改为
+   `D -> v, iterationDistance=1`，再删除 Q pseudo-node。
+4. 对完整物理边集使用 phase-blind 四方向 A*；先在按四边独立扩张的紧致
+   routing window 中搜索，再完整保留原无界 4-policy + 48-seed 路由兜底。
+5. 对 DRC-valid 候选按 `bbox area -> route steps -> max dimension -> perimeter`
+   排序，并原子保存/恢复 node、route 和 chessboard；随后对前 16 个候选做
+   最多 256 state/candidate 的单调 seam contraction。
+6. 所有粗网格线路完成后，以每条 `graph.routes` 的有序 coarse tile 序列
+   建立全局时钟问题；一个 5x5 tile 是一个 clock resource，每次路径经过是
+   一个 occurrence。随后仍执行 Sequential Mapping，生成 source terminal
+   boundary 到 sink terminal boundary 的有序、三维相邻 QCA cell trace，
+   但该 trace 只用于器件拓扑、连通性和 crossover DRC，绝不产生额外时钟
+   occurrence。外部 Z3 runner 按面积 rank 逐个求解，选择第一个
+   phase/epoch/II SAT 几何；默认 rank 上限 64、ladder 总预算 120 秒，截断
+   时保守报告 `LIMIT`。
+
+当前失败后仍是整轮 reset/retry，不是 negotiated congestion 或 selective
+rip-up/reroute。这是下一阶段最重要的算法缺口。
+
+### 3.3 布线后时钟闭合
+
+内部统一使用 0-based phase。每个 route occurrence 有绝对整数 epoch `tau`，
+每个逻辑事件有 epoch `theta`：
+
+```text
+phase(resource(o)) = tau(o) mod P
+tau(i+1) - tau(i) in {0, 1}
+固定物理路径：tau(first) = theta(source)
+固定物理路径：tau(last) = theta(sink) + distance * II
+精确宏/时序弧：theta(sink) + distance * II - theta(source) = latency
+II = P * k, k >= 1
+```
+
+上述 route occurrence 是有序 coarse route tile，而不是 Mapping 后的 QCA
+元胞。其中：
+
+- 同源 fanout trunk 通过相同 epoch variable 绑定到同一个绝对 epoch；
+- 同一 coarse tile 内所有细粒度 XY、所有 L0/L1/L2 元胞都继承该 tile 的
+  唯一相位；层和细元胞都不产生新的 phase advance；
+- 不同源 crossing 使用同一个 tile clock resource，因此可有不同绝对 epoch，
+  但必须具有同一个 modulo phase；
+- 反馈路径必须获得正的跨拍推进，不能只验证局部模 4 连续；
+- 最多允许 4 个连续同相 route tile；这是 clock-zone abstraction 的约束，
+  不是“4 个 QCA 元胞”的约束。一个 tile 内可以有多个线路/门/交叉元胞，
+  它们仍全部同相且只计一个 clock zone；
+- layer-aware trace 不改变相位，只证明器件导出保持有序 waypoint、端口连通
+  和合法 crossover 柱；
+- 输出到 legacy GridCell/LaTeX 时统一转换为 1..4，避免 off-by-one。
+
+内置 solver 先对 II candidate 排序去重，再按升序枚举，严格区分 `SAT`、
+`UNSAT`、`LIMIT` 和
+`INVALID_INPUT`。当前 bounded 合同为：
+
+- phase：2..8；
+- event：最多 256；
+- resource/occurrence：各最多 4096；
+- route：最多 128；
+- 总 route edge：最多 8192；
+- exact timing arc：最多 512；
+- II candidate：最多 16；
+- iteration distance：当前只支持 0/1。
+
+可选 Z3 后端只负责固定几何的可行性。Z3 产出的 TSV 必须重新交给
+`GlobalPhaseSolver::validateSolution` 检查，不能直接作为最终签核。
+四相等 2 的幂相位数在安全数值范围内使用 signed 32-bit BitVec 编码，
+resource phase 用 epoch 低位同余；非 2 的幂或超出安全范围时回退到原始
+整数编码。BitVec 只是求解加速，最终仍以 C++ 精确整数 replay 为准。
+
+### 3.4 IFCN 时序标识与元胞映射合同
+
+新生成的时序 IFCN 必须恰好包含一次全局标识：
+
+```text
+#mapping mode: sequential
+```
+
+并在 paths section 中为每条 route 紧前写出：
+
+```text
+#iteration_distance=N
+(source,sink): (x0,y0),...,(xn,yn);
+```
+
+canonical value 只有 `combinational|sequential`；显式未知/冲突 mode、负数或
+溢出的 distance、重复/悬空 route directive，以及显式 combinational 配正
+distance 都 fail closed。为了读取旧 artifact，缺失 mode 时可由正 distance，
+或两个已知 v0 sequential flow 名推断 Sequential；其他 legacy 文件保持
+Combinational。显式 Sequential 的每条 route 都必须有 distance，当前 writer
+即使为 0 也不能省略。
+
+时钟闭合后的新文件还必须写出：
+
+```text
+#phase granularity: tile
+#tile phase drc scope: ordered_route_tiles
+#max same phase tiles: 4
+#observed max same phase tile run: N
+#phase map
+(tile_x,tile_y): zero_based_phase;
+#phase map
+```
+
+`#phase map` 是唯一权威相位表。Sequential energy/GUI consumer 对每个实际
+mapped cell 严格使用 `phase[(physical_x/5, physical_y/5)]`；同一 tile 的普通
+线、门模板、L0/L1/L2 crossover/vertical stack 必须全部同相。缺少任一占用
+tile、相位越界、route 相邻 tile 不是 hold/+1，或连续同相 tile 超过 4 均
+fail closed。旧错误格式 `#phase granularity: qca_cell`、
+`#physical phase trace` 和 `#physical phase map` 在 Sequential 模式下明确拒绝，
+不会再静默导出错误器件图；组合电路的 legacy physical-map 兼容路径保留。
+
+`Mapping::mapping_line` 现在显式接收 `MappingMode` 和与 route 同序的
+`iterationDistances`。Sequential 分支不是组合 mapper 的无条件复用：
+
+- 保留非单调/轴向反转的合法迂回路径，并验证每个有序 intermediate tile；
+- `node_mapping` 在 Sequential 模式为 `input/output` 终端同时生成实际存在的
+  fanin 与 fanout 端口；状态 cut 的 `d` 虽以 output 表示，也能作为反馈源；
+- 按 route 指定方向检查 source port、每个 waypoint 的入口/出口和 sink port，
+  并验证 waypoint tile 内部的 4-neighbor 连通，禁止接错支路或抄近路；
+- 允许同源连续 shared prefix 后单向分叉；
+- 拒绝重复 tile/回头、strict-prefix sink tap、分叉后重汇合、重复端点，及
+  不同源信号共用 coarse edge；
+- Mapping 失败前先清空旧 node/route/crossover state，避免复用对象残留旧结果；
+- 暴露 `orderedLayerAwarePhysicalRoutes`，按每条 route 自己拥有的 maximal
+  crossover run 生成入口/出口 L0-L1-L2 pillar，并以确定的 source-to-sink
+  顺序返回 terminal boundary 之间的 exact-layer 物理元胞路径；该 API 仅
+  描述器件拓扑，不参与相位/epoch/最大同相 run；
+- 拒绝 L0..L2 之外的层、非 L0 端点、L1 横向传播、同一路径重复 exact site，
+  以及不同 source 复用同一 `(x,y,layer)` site；
+- 仍执行 crossover DRC。GUI 和 QCA exporter 用 mapped cell 所属 coarse tile
+  查询唯一相位；layer-aware site 只用于选择 Normal/Crossover/Vertical 模式。
+
+GUI `GateLevelMapping`、`MappingExecutor`、`ifcn_mapping_metrics`、
+`ifcn_energy_analysis`、两个 sequential PNR 和 physical state macro 均已接入
+该分支。GCN IFCN dataset 会保存 normalized mode 与逐边 distance，并将其
+加入 JSON/fingerprint；现有 offline learner 只支持 DAG，因此明确拒绝
+Sequential sample，不能静默当组合图训练。
+
+cyclic PNR report 的 canonical 几何计数是 `mapped_unique_xy_sites`；迁移期
+继续写旧 `mapped_qca_cells` alias，但它仍是 layer-collapsed XY 数。
+`tile_clock_resources` 是参与 solver 的 unique coarse tile 数；
+`mapped_layer_cell_records` 是 mapper 实际发射的 layer-aware site 数，且与
+`.qca` 的 `QCADCell` record 数相等。这些口径不能与 layer-collapsed
+`mapped_unique_xy_sites` 混用，更不能把器件元胞数解释为时钟 occurrence 数。
+
+### 3.5 LaTeX 输出合同
+
+时序流程复用现有 `CircuitGraph::printLaTex` 的 node、`c1..c4` 和 route 样式。
+新代码只负责提供节点坐标、线路坐标和求得的相位；不要在时序导出器中重写
+节点大小、形状或 TikZ style。
+
+## 4. 关键代码路径
+
+| 模块 | 路径 |
+|---|---|
+| Yosys JSON -> SeqIR/cut DAG | `scripts/yosys_json_to_seqir.py` |
+| RTL 批量实验 | `scripts/run_sequential_rtl_experiments.py` |
+| 循环反馈 P&R 主程序 | `src/app/ifcn_paper_cyclic_pnr.cpp` |
+| register-cut 基线 | `src/app/ifcn_sequential_pnr.cpp` |
+| C++ SeqIR 双图模型 | `include/autopr/sequential/sequentialIr.{h,cpp}` |
+| 全局时钟问题和 reference solver | `include/autopr/sequential/globalPhaseSolver.{h,cpp}` |
+| 可选 Z3 后端 | `scripts/solve_global_clock_z3.py` |
+| 手工结构宏原型 | `include/autopr/sequential/physicalStateMacro.{h,cpp}` |
+| 手工结构宏 CLI | `src/app/ifcn_physical_state_layout.cpp` |
+| 时钟消融实验 | `src/app/ifcn_sequential_clock_experiment.cpp`、`scripts/run_sequential_clock_experiments.py` |
+| 论文电路重建实验 | `scripts/run_sequential_paper_benchmarks.py` |
+| 物理/Simon 诊断 | `scripts/benchmark_sequential_cyclic_physical.py` |
+| 最终结果聚合 | `scripts/aggregate_sequential_experiments.py` |
+| IFCN mode/distance resolver | `include/autopr/io/ifcnMappingMetadata.h` |
+| 元胞级 Mapping | `include/autopr/algorithms/mapping.{h,cpp}` |
+| GUI IFCN parser/mapper | `src/controllers/GateLevelMapping.{h,cpp}` |
+| 纯 CLI QCA exporter | `src/app/ifcn_energy_analysis.cpp` |
+| RTL 样例 | `tests/benchmarks_f/SEQUENTIAL/rtl_v/` |
+| 论文电路重建 | `tests/benchmarks_f/SEQUENTIAL/papers/` |
+
+主要回归：
+
+- `tests/SequentialGlobalPhaseSolverUnitTest.cpp`
+- `tests/SequentialIrUnitTest.cpp`
+- `tests/PhysicalStateMacroUnitTest.cpp`
+- `tests/test_yosys_json_to_seqir.py`
+- `tests/test_solve_global_clock_z3.py`
+- `tests/test_validate_sequential_paper_benchmark.py`
+- `tests/test_aggregate_sequential_experiments.py`
+- `tests/test_cyclic_compaction_report.py`
+- `tests/test_cyclic_compact_area_report.py`
+- `tests/test_run_sequential_rtl_experiments.py`
 - `tests/MappingCrossoverUnitTest.cpp`
+- `tests/test_ifcn_sequential_mapping_metadata.py`
+- `include/gcn_rl_layout/tests/test_ifcn_layout_dataset.py`
+- `include/gcn_rl_layout/tests/test_ifcn_offline_learning.py`
 
-### 3.2 OGDF 适配器
+## 5. 支持范围
 
-- OGDF 仅作为独立进程返回固定层内的节点顺序，不链接到主 GUI 或 Python 扩展。
-- 固定种子、8 次 barycenter run、transpose 开启，结果可复现。
-- 环境变量 `IFCN_OGDF_ORDERER` 可以显式指定可执行文件。
-- 当前主 `build` 中 `IFCN_BUILD_OGDF_ORDERER=OFF`；现有适配器位于 `build-ogdf/ifcn_ogdf_layer_order`。
-- OGDF 是 GPL-2.0-or-later/GPL-3.0-or-later，分发适配器二进制时必须遵守其许可证；不要把它误写成 MIT 依赖。
+当前 v0 已测试的目标范围：
 
-关键文件：
+- 单逻辑时钟域；注意 importer 目前尚未强制检查这一点；
+- positive-edge DFF；
+- 同步 reset 和 enable，并在 D 端下沉为组合 MUX；
+- NOT/AND/OR/XOR/MUX 等受支持的规范化组合单元；
+- `iterationDistance=1` 的 sampled-state 反馈；
+- 4 相 QCA 时钟、可枚举 II；
+- phase-blind 几何 P&R 后统一求时钟；
+- 基于每条有序 coarse route tile 序列的 phase/epoch/II 闭合，最多连续
+  4 个同相 tile；所有 mapped QCA cells 从所属 tile 继承相位；
+- 结构 Mapping 和 crossover DRC；
+- 原生门级 LaTeX 输出。
 
-- `include/gcn_rl_layout/ogdf/ogdf_layer_order.cpp`
-- `include/gcn_rl_layout/ogdf/CMakeLists.txt`
-- `include/gcn_rl_layout/ogdf/README.md`
-- `include/gcn_rl_layout/scripts/compare_crossing_orderers.py`
+当前明确不支持：
 
-### 3.3 随机时钟 Compact Graph
+- level-sensitive latch；
+- asynchronous reset；
+- negedge register；
+- 多时钟/CDC、gated/generated clock；
+- memory、tristate 和未识别单元；
+- setup/hold window、可变宏延迟和 PVT；
+- 已表征的物理 QCA DFF/latch 状态宏；
+- 一般组合 SCC 或未注解的原生 stateful SCC。
 
-- 新建与固定 2DDWave `Astar` 相互独立的 `PhaseAwareAstar`。
-- 路由状态包含坐标、相位和连续同相位计数；支持四方向绕行。
-- 已加入扇入方向冲突检查、扇出主干复用、节点避让和路径相位提交。
-- `CircuitGraph::sortNodesByFixedLayerOrder()` 接收 OGDF/barycenter 的固定层顺序。
-- `CircuitGraph::placeAndRoutePhaseAware()` 同时完成布线和相位分配：先做端口可达性预检，搜索范围与状态数有界，失败边在下一轮提升优先级，前两轮使用确定性边序，之后只做固定种子的有限边序扰动，不再在每个格点产生指数级 phase 分支。
-- 确定性相位布线每轮只从该策略指定的起始相位展开；不同路由轮次会旋转起始相位，小图 flexible compaction 仍保留全相位种子。`PhaseSolver` 按变量约束度选择分支，每次赋值只检查该变量相关约束，不再每层 DFS 节点全量扫描。
-- source ownership 已进入 A* 搜索状态，而不是等全部线路完成后才发现错误：同源 fanout 可以复用连续树干；异源共点必须是直 H/直 V crossover，平行重叠、bend 和三源共点在搜索时即被拒绝。相同两棵 source tree 可以在不同坐标形成多个独立合法 crossover，但同一路径不能形成连续 overlap。
-- 四方向 legacy A* 不再“节点首次到达即永久锁定”：open set 中的坐标允许被更低 `gScore` 松弛并更新父节点；同源复用主干的下一格由 hash 表直接查询，不再在 A* 热路径中反复线性扫描。六种确定性路由与后续固定种子扰动都会把上轮失败边提到前面。
-- `CircuitGraph::compactPhaseAware()` 对候选横/纵切线移动门坐标，完整重布线后才接受面积更优的结果；后压缩现在有 `2.5 s / 8 cuts` 独立预算，普通图只跑确定性重布线，小图才启用有界 flexible-phase 补充，因此不会在不可压缩电路上停顿几十秒。
-- 候选调度现在先跑 Graphviz 紧凑种子，再仅在固定层候选的理论下界可能更小时跑固定层候选。Graphviz 坐标会除以量化值，旧的小图调度 `/64 → … → /40` 实际是在逐步放大布局；有效边 `<=24` 的小图现改为 compact-first 调度。浅层小图从 `/96` 向下寻找端口可布的最紧尺度；深层 MAJ 小图保留 X 通道，并按 4 相位周期的倍数单独压缩 Y；窄而深的链式小图使用独立候选，避免先运行一串必失败的超紧 X 布局。所有候选都事务式重布线、重新分配四相并通过 source/crossover/IO 检查后才可替换当前最优解。
-- `CircuitGraph::placeAndRouteJuneRandomClockAnisotropic()` 支持 Graphviz X/Y 独立量化。测量表明大部分版图面积来自初始门节点包围盒，A* 通常只在其外侧增加 1–2 列；因此 X/Y 独立压缩比继续提高全局 A* 预算更有效。一般稀疏图仍细扫合法量化，高拥塞图直接尝试已验证的 `X/44,Y/36` 等候选。
-- 四相周期压缩有两层保护：候选 Y 量化只按一个完整周期的倍数收紧；`compactClockPhaseCycles()` 可事务式尝试删除无节点的整周期带，失败时恢复节点、线路和网格。当前代表性结果主要来自前者，后者在已紧凑样例上没有发现可继续删除的完整空带。
-- Graphviz 候选循环现在无论是否已经找到合法种子都会检查总时间预算，避免一批非法紧凑尺度让 UI 长时间停顿。
-- DOT 坐标网格化现在先按原始 Graphviz X 顺序处理同行节点，再用 occupancy set 解决量化碰撞；修复了旧的“按 node id 向右推”会颠倒层内次序并制造额外交叉的问题，同时将碰撞检查从 `O(V²)` 降到 `O(V log V)`。
-- 紧凑候选的合法 crossover 不再因 `maxSearchCost>100` 被隐式加 6 的绕路罚分；交叉合法性仍由 source ownership 硬约束保证，但 A* 会优先保留短路径和紧凑外边界。高拥塞拓扑当前可在 `X/44,Y/36` 下完成，代表性面积为 `RCA2=1462`、`MAJ/xor5R=1682`；所有紧凑拓扑失败且图又深又宽时，才恢复七月版层间 buffer topology。
-- 固定层与 Graphviz 两类布局都统一 IO 约定：primary input 在保存后的上边界，primary output 在下边界；冲突位置保持原水平顺序并确定性错开，与另外两个公开算法使用相同的 IFCN/cell-mapping 输出链。
-- 远程遗留的 `TOY/xor2_graph_pr_layout` 虽记录 `5x5=25`，但两棵异源树在 `(2,0)`、`(2,1)` 连续重叠并转弯，不是合法 crossover。当前流程不会为复现该面积而重新接受短接结构；严格回归路径为 `250 -> 150`（测试包含可行性锚点的占用边界，UI 还会继续搜索紧凑候选）。
-- 主界面默认 P&R 入口为 `Compact Graph Draw P&R (recommended)`；下拉菜单和 Verilog Source → Generate 均只展示 Heuristic、2DDWave、Compact Graph Draw 三项。
+除下面注明的缺口外，不支持结构应 fail closed，不能通过语义转换静默接受。
+当前 importer 可能为多个时钟输入建立多个 domain，而后端仍按单一全局 II
+求解；因此在补上前端检查前，调用端必须显式拒绝多时钟输入。
 
-关键文件：
+## 6. 构建和测试
 
-- `include/autopr/algorithms/astarwithphase.cpp`
-- `include/autopr/algorithms/astarwithphase.h`
-- `include/autopr/graph/circuitGraph.cpp`
-- `include/autopr/graph/circuitGraph.h`
-- `src/controllers/VerilogHandler.cpp`，重点关注 `fixedLayerCrossingOrder()`、`runGraphRenderForFile()`
-- `tests/PhaseAwareRoutingUnitTest.cpp`
-- `tests/StochasticCompactGraphUnitTest.cpp`
-
-### 3.4 2025-06 Legacy Graphviz Graph Draw 预览
-
-- 已确认用户记忆中的快速旧版是 `e727765`（2025-06-16）；7 月前的 merge `e068770` 与它的相关布局绘图源码相同。
-- Legacy Graphviz 预览的实现和测试仍保留，但按当前 UI 精简要求不再提供菜单或 Verilog Source → Generate 入口。
-- 预览复现旧版 `dot` 绘图条件：parser 逻辑层使用 `rank=same`、`rankdir=TB`、`nodesep=.6`、`ranksep=1`、正交逻辑边，并保留旧流程的 buffer 优化和跨层 redundancy node 拆分。
-- Graphviz 在后台线程执行，该预览渲染器的进程内调用由全局 mutex 串行化；渲染器使用 RAII 清理 `GVC_t`、graph 和 layout，空图、非法端点、布局/渲染失败均返回错误，不再沿用旧版空图崩溃和固定写 `<input>.v.svg` 的行为。
-- SVG 只在内存中生成，默认不落盘；预览窗支持 Fit、缩放、拖拽和用户显式 `Save SVG…`。
-- 该窗口展示的是 **Graphviz 逻辑拓扑边**，不是旧 Morton/A* 的物理线路，也不会清空/修改当前 cell-level scene、写 `.ifcn` 或宣称 IO/相位/cell mapping 合法。
-
-关键文件：
-
-- `include/autopr/graph/legacyGraphvizRenderer.h`
-- `include/autopr/graph/legacyGraphvizRenderer.cpp`
-- `src/controllers/VerilogHandler.cpp`，重点关注 `runLegacyGraphvizGraphDrawForFile()`
-- `src/ui/mainwindow/MainWindow.MenuToolbar.cpp`
-- `src/ui/mainwindow/MainWindow.ViewScene.cpp`
-- `tests/LegacyGraphvizRendererUnitTest.cpp`
-
-### 3.5 2025-06 Random-Clock Graph P&R（物理布局布线）
-
-- 历史实现定位到 `e727765`（2025-06-16；最终六月 merge 快照为 `e068770`）。旧 README 将其描述为 `Random Clocking / Irregular / Larger Area / Faster Routing / Graph-drawing-based placement`。
-- 进一步核对后，用户记忆中的“七月版 Graph Draw”对应 `0c6cc1e`（2025-07-14，提交标题 `fix graphdraw alogorithm bugs`）。它沿用六月 Graphviz + Morton/A* 主链，但在 UI 的 Graph Draw 入口明确注释掉 `optimizeBufferNode()`；恢复入口现在也保持这个七月行为，以免改变节点层次和面积/布线特性。
-- 独立算法链为：`Graphviz dot` 分层布局 → 六月式坐标网格化（首选 `/40`）→ irregular-clock 四方向 A* → 路由后 4 相位分配 → IFCN 保存与元胞映射。它不是只画逻辑边的 Legacy Graphviz 预览。
-- 当前实现明确标为 **hardened restore / June-derived**，不是逐行复刻：节点网格化会处理坐标碰撞，先试 6 种确定性边顺序并进行有界的固定种子顺序重试，也禁止线路穿过中间门节点。这些改动用于避免六月原版静默生成短接结果。
-- A* 的严格模式只允许显式同源 fanout 主干复用。异源占用只有在单个元胞内分别为直 H 与直 V 时才允许形成 crossover；连续共线、任一方转弯和三源共点都会在搜索阶段被拒绝。相同 source pair 的多个空间独立正交 crossover 合法，但同一路径上的重复/连续占用仍被拒绝。
-- `CircuitGraph::placeAndRouteJuneRandomClock()` 在映射前再次按逻辑 source 身份验证：路径唯一且 4-connected；同源扇出分叉后不能重汇；异源共享点只能是 H/V 正交。不能再只依赖丢失 source 身份后的 `Mapping::validate_crossovers()`。
-- 相位继续使用当前确定性、有界的 `PhaseSolver`，没有恢复六月原版最多 1,000,000 次的随机抽样循环。因此这里的“随机时钟”指 irregular/random clock field，而不是不稳定的无界随机求解。
-- UI 候选为两档：原始尺度 `/40, cost=40, shuffled retries=4`；严格检查失败时使用 `/20, cost=320, retries=24` 的扩距 fallback。首档保留旧算法速度，第二档为严格合法性提供绕线空间；两档失败就明确报错，不导出部分结果。
-- Graphviz、A* 与相位求解现在线程外执行；GUI 保持响应，运行期间 Place & Route 菜单和 Verilog Source 的 Generate 按钮会禁用，避免重入。
-- Verilog Source 选择当前标签替换时采用事务式语义：June 设置取消、后台搜索失败或保存前验证失败不会预先清空旧版图；只有生成 IFCN 并成功进入映射流程后才替换。
-- `GateLevelMapping::mappingCellItem()`、`parseGateLevelMappingFile()` 和 `MainWindow::mapIfcnFile()` 现在逐层返回成功状态；June 只有在真实 cell mapping 成功后才导出最终 SVG并弹出“完成”。
-- `saveGateLevelIfcn()` 在 hidden-NOT 恢复后重复执行 crossover guard，任何未恢复 NOT route 都拒绝保存；文件通过 `QSaveFile` 原子提交，写入或 phase codec 失败不会破坏已有合法结果。
-- June hardened restore 的控制器、输出链和测试仍保留，但按当前 UI 精简要求不再公开入口。若以后恢复入口，其输出目录仍为 `<stem>_june_random_clock_graph_pr/`。
-- 自动回归覆盖 `TOY/xor2.v` 主路径和 `MAJ/clpl.v` fallback，并独立检查逻辑 source crossing contract、4 相位传播、route 数、节点数和 mapper crossover。大规模 IWLS 图与少数高拥塞 MAJ 图仍可能在有界候选内失败；失败时应改善 placement/track capacity，不能重新放宽交叉规则。
-
-关键文件：
-
-- `include/autopr/algorithms/astar.cpp`
-- `include/autopr/algorithms/astar.h`
-- `include/autopr/graph/circuitGraph.cpp`
-- `include/autopr/graph/circuitGraph.h`
-- `src/controllers/GateLevelMapping.cpp`
-- `src/controllers/GateLevelMapping.h`
-- `src/controllers/VerilogHandler.cpp`
-- `src/controllers/VerilogHandler.h`
-- `src/ui/mainwindow/MainWindow.MenuToolbar.cpp`
-- `src/ui/mainwindow/MainWindow.ViewScene.cpp`
-- `tests/JuneRandomClockGraphUnitTest.cpp`
-- `tests/JuneRandomClockFallbackTest.cmake`
-### 3.6 Cell-level IO 收缩与后压缩
-
-- 主工具栏加入 `IO Contract` 勾选框，Tools 菜单中有同步 action；不再放在布局布线参数页中。
-- 支持普通 scene 和 fast-render scene，勾选后保存完整快照，取消勾选原样恢复。
-- IO 沿私有、无分支 wire stem 收缩到 5×5 网格边缘中点。
-- layer-0 crossover 边缘可作为合法 IO；不再需要的 crossover 会删除，必要时把仍有效的上层线路安全降到 layer 0。
-- IO 收缩后继续执行：U 形/矩形冗余线压缩、支路滑动、横纵 5×5 strip 压缩、单格偏移扇出结点居中。
-- 算法多轮执行到稳定状态，因此删除交叉后新暴露的 IO stem 仍可继续收缩。
-- 右下角信息面板会更新 cell 数、IO、交叉元胞、压缩行列、W/H grid span 和 `W×H` area。
-- 保存逻辑强制 Save As，目标应为新的 `.qca` 文件。
-- 支持无界面导出版图，供 CI 和论文图复现。
-
-关键文件：
-
-- `src/controllers/CellLevelIoContraction.cpp`
-- `src/controllers/CellLevelIoContraction.h`
-- `src/ui/mainwindow/MainWindow.IoContraction.cpp`
-- `src/ui/mainwindow/MainWindow.Logic.cpp`
-- `src/ui/mainwindow/MainWindow.Status.cpp`
-- `src/ui/mainwindow/MainWindow.MenuToolbar.cpp`
-- `src/ui/view/QCADScene.cpp`
-- `tests/CellLevelIoContractionUnitTest.cpp`
-- `tests/MappingIoContractionUnitTest.cpp`
-
-### 3.7 其他 UI 与输入修复
-
-- 左下角运行状态从无限循环改为单调前进式进度，未知进度最多自动前进到 92%。
-- 状态栏识别真实存在的文件路径；按住 Ctrl 并左键点击路径会打开其所在目录。
-- `.v` 解析、parser-safe AOIG 重写、非法/悬空节点处理和部分 TOY benchmark 已修正。
-- 新增 cell-level PDF/SVG 精确裁剪导出以及以下无界面环境变量：
-
-  - `IFCN_AUTO_MAP_FILE`
-  - `IFCN_AUTO_EXPORT_CELL_LAYOUT`
-  - `IFCN_AUTO_CONTRACT_IO=1`
-  - `IFCN_AUTO_RESTORE_IO=1`
-  - `IFCN_UI_SCREENSHOT`
-
-## 4. 当前验证结果
-
-2026-07-23 在当前工作区执行：
+### 6.1 构建
 
 ```bash
-ctest --test-dir build --output-on-failure
+cmake -S . -B build-release \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DIFCN_BUILD_TESTS=ON
+
+cmake --build build-release -j4 --target \
+  ifcn_sequential_pnr \
+  ifcn_paper_cyclic_pnr \
+  ifcn_sequential_clock_experiment \
+  ifcn_mapping_metrics \
+  ifcn_energy_analysis \
+  ifcn_physical_benchmark \
+  mapping_crossover_tests \
+  sequential_global_phase_solver_tests \
+  sequential_ir_tests \
+  physical_state_macro_tests
 ```
 
-结果：**22/22 通过**，总时间约 51.4 秒，包括 negotiated crossover legality、mapping crossover structure、simulation metrics、两套 IO contraction、phase-aware routing、Compact Graph 主路径/Graphviz fallback/buffered fallback/小图面积阈值、Legacy Graphviz renderer、June random-clock Graph P&R 主路径与 fallback、physical smoke 和两种加速仿真等价性测试。
-
-另外对当前 `tests/benchmarks_f/MAJ/` 与 `tests/benchmarks_f/TOY/` 顶层的 **27/27** 个 Verilog 文件做了完整 Graph Draw 集成回归，全部通过路由、source ownership/crossover、IO 边界和相位检查。代表性单进程时间：`TOY/xor2 0.035 s`、`MAJ/1bitAdderMaj 0.72 s`、`TOY/mux41 1.09 s`、`MAJ/clpl 2.69 s`、`MAJ/RCA2 6.54 s`、`MAJ/xor5R 7.65 s`；buffered xor5R 保底回归约 16.1 秒。
-
-额外直接调用了 Python 测试文件中的全部 `test_*` 函数：
-
-- `include/gcn_rl_layout/tests/test_negotiated_router.py`
-- `include/gcn_rl_layout/tests/test_right_down_port_directions.py`
-
-结果：**15/15 通过**。系统当前没有安装 `pytest`，所以 `python3 -m pytest ...` 会报 `No module named pytest`；`test_negotiated_router.py` 现在也可直接由 Python 或 CTest 执行。
-
-`git diff --check` 当前无 whitespace error。
-
-新 UI 多尺度调度中的代表性严格合法候选如下（每个尺度都通过完整路由、相位、IO 和 crossover 验证）：
-
-| 输入 | Graphviz 量化 | occupied-grid 面积 |
-|---|---:|---:|
-| `MAJ/1bitAdderMaj.v` | `X/88,Y/88` | 42 |
-| `MAJ/xor2.v` | `X/52,Y/72` | 72 |
-| `MAJ/xnor2.v` | `X/56,Y/72` | 84 |
-| `TOY/mux21.v` | `X/96,Y/96` | 20 |
-| `TOY/xnor2.v` | `X/40,Y/68` | 50 |
-| `TOY/1bitAdderAOIG.v` | `X/64,Y/64` | 66 |
-| `MAJ/clpl.v` | `X/64,Y/54` | 672 |
-| `MAJ/par_gen.v` | `X/46,Y/50` | 325 |
-| `MAJ/newtag.v` | `X/64,Y/62` | 315 |
-| `TOY/mux41.v` | `X/48,Y/46` | 169 |
-| `MAJ/RCA2.v` | `X/44,Y/36` | 1462 |
-| `MAJ/xor5R.v` | `X/44,Y/36` | 1682 |
-
-多尺度调度会在时间预算内比较合法候选，因此 UI 最终值只会保留同次搜索中更好的结果。这些数字仍不代表已全面优于旧算法，尤其 `RCA2/xor5` 仍需要更强的拥塞协商与局部压缩。
-
-## 5. 仍需继续优化：困难 fallback 的面积
-
-### 与 2DDWave 的比较口径
-
-- 由于固定 2DDWave 当前不支持原生择多门，不能对同一份 MAJ 网表直接运行两种流程。
-- 正确的系统级对照是：**MAJ 版本运行随机时钟 P&R，功能等价的 TOY/AOIG 版本运行固定 2DDWave P&R**。
-- 这属于“功能等价、门库与网表不等价”的跨流程比较，不能表述成同网表算法对照。每次报告必须同时列出输入文件、门类型/逻辑基、优化后的节点数与边数，以及两边的完整布线、端口、相位/时钟模板 legality。
-- 2DDWave 的严格合法性测试应使用 `tests/benchmarks_f/TOY/` 中对应电路；不要用 `tests/benchmarks_f/MAJ/` 的输入测试 2DDWave。
-
-用户指出“以前的算法没有这么大”是正确的。工程中已有结果与当前结果的对照显示回退具有明显的电路相关性：
-
-| 电路 | 旧产物面积 | 当前严格合法候选 | 结论 |
-|---|---:|---:|---|
-| xor2 | 65 | 72 | 已从 150、96 继续降到 72，接近旧面积 |
-| mux41 | 814 | 169 | 当前更优 |
-| 1bitAdderAOIG | 168 | 66 | 当前更优 |
-| RCA2 | 750 | 1462 | 已从 5382、2112 继续下降，仍有回退 |
-| 1bitAdderMaj | 36 | 42 | 已从 462、48 继续下降，接近旧面积 |
-| xnor2（旧 Graph P&R） | 35 | 84 | 已从 161、102 继续下降，仍有差距 |
-
-旧产物是否全部满足现在新增的严格端口检查尚未逐个复核，因此比较时必须同时报告 legality；但 `1bitAdderMaj` 和 `xnor2` 的差距过大，不能只归因于约束变严格。
-
-### 已定位的原因
-
-1. 多尺度 Graphviz 已取代固定层刚性大矩形作为首选，但 DOT 量化仍是全局尺度，没有逐层/逐通道的局部坐标优化。
-2. `PhaseAwareAstar::isPassable()` 为每个无关门的四周设置一整圈硬 halo；这保证端口可达，但浪费了大量本可利用的布线资源。
-3. `placeAndRoutePhaseAware()` 先取全图最长边生成一个全局 `effectiveSearchCost`，导致短边也能大范围绕路并撑出版图边界。
-4. 早期布线提交的相位成为后续路径的硬约束，目前没有 source-tree 级 rip-up/re-route；后续网络倾向绕行而不是协商相位与拥塞。
-5. `compactPhaseAware()` 已加短预算和事务回滚，解决了长停顿，但 Graphviz/buffered 结果当前不做 strip deletion，因此高拥塞成功结果仍会留下较大面积。
-6. OGDF 只优化层内顺序，不会自动产生紧凑坐标；不能把“交叉数减少”等同于“面积减少”。
-
-### 推荐修复顺序
-
-1. **预先分配实际端口。** 对每个两扇入门做上/左二分匹配，对每个 fanout tree 选择一个共享右/下端口；只保护被分配的端口单元，不再保护门四周全部四个邻居。
-2. **把相位感知搜索预算改成逐网局部预算。** 使用 `Manhattan distance + local congestion/phase slack`，不让最长边决定所有短网的搜索范围。
-3. **实现 source-tree negotiated routing。** 冲突时 rip-up 同一源的整棵扇出树，更新历史拥塞，再重布线；不能逐分支独立破坏共享扇出方向。
-4. **实现 Graphviz 结果的 phase-aware strip deletion。** 优先删除纯布线空行/空列，只重布受影响 source trees；候选必须事务化，完整 legality 通过后才能提交。
-5. **加入面积回退保护。** 对每个 benchmark 保存“最小严格合法基线”；新候选面积更差时保留旧候选并在 summary 中报告 regression。
-
-完成上述步骤时，不能删除现有 `PhaseAwareAstar` 的相位验证，也不能把固定 2DDWave router 接到随机时钟流程中。
-
-## 6. 大规模电路现状
-
-- `c432` 在当前有界随机时钟搜索下仍不能稳定完成合法布局布线；失败结果不会保存，这是正确行为。
-- 大图仅尝试少量 spacing，路由内部尝试 6 种相位/边序偏移，且关闭后压缩。该策略控制了时间，但没有解决拥塞死锁。
-- 固定 2DDWave 侧已有 negotiated router 设计文档，但 >128 edges 仍回退 direct/DP；大规模 sparse track assignment 尚未完成。
-- 下一阶段应优先实现 congestion hot region、source-tree rip-up 和局部行列插入，而不是提高 A* 全局预算或恢复 GCN。
-
-## 7. 论文状态
-
-`paper/` 目录目前整体未被 Git 跟踪，包含 `main.tex`、`rebuttal.tex`、表格、数据、Figure 10 和编译产物，约 32 MB。
-
-当前 `paper/main.tex` 仍把 GCN 描述为 inherited initializer/ranker，并引用旧的 corrected 17-circuit campaign；这与最新“固定和随机两套流程均去 GCN”的工程方向尚未完全同步。继续投稿前至少需要：
-
-- 把新随机时钟 non-GCN Compact Graph 与固定 2DDWave Normal Graph 明确区分；
-- 重新生成严格端口合法、相位合法的实验数据；
-- 不把 archived large data 当作 port-certified 证据；
-- 更新 Figure 10、算法伪码和实验曲线中的算法名称；
-- 继续满足正文不含参考文献最多 6 页的限制。
-
-不要直接提交 LaTeX 的 `.aux/.log/.fls/.fdb_latexmk/.synctex.gz` 等编译中间文件。
-
-## 8. 构建与复现命令
-
-### 主工程
+### 6.2 回归
 
 ```bash
-cmake -S . -B build \
-  -DIFCN_BUILD_TESTS=ON \
-  -DIFCN_BUILD_GCN_RL_BINDINGS=OFF
-cmake --build build -j2
-ctest --test-dir build --output-on-failure
+ctest --test-dir build-release --output-on-failure \
+  -R '^(mapping_crossover_regression|sequential_.*|physical_state_macro_regression|cell_level_io_contraction_regression)$'
+
+python3 tests/test_yosys_json_to_seqir.py
+python3 tests/test_validate_sequential_paper_benchmark.py
+python3 tests/test_solve_global_clock_z3.py
 ```
 
-GUI：
+2026-08-24 的结果：
+
+- CTest：11/11；
+- 上述三个 Python 测试：27/27；
+- 最终聚合器：5/5；
+- 本次最终验证批次中的 LaTeX 表及版图均通过 `pdflatex`。
+
+2026-08-27 修正相位粒度、加入 Sequential Mapping 和端口连通 DRC 后的
+最终回归：
+
+- CTest（Mapping、metadata、global tile solver、Z3、RTL/IR、toggle
+  P&R/Mapping/Simon/waveform、cyclic compaction、rank-0 external-Z3 紧致
+  面积链和 cell-level I/O）：19/19；
+- GCN dataset/offline/retrieval/protocol/bridge：37/37；
+- 5 个最终 RTL artifact：`semantic_failures=0`，全部 Mapping DRC 和
+  tile max-run DRC 通过；
+- 5 组门级 IFCN/TeX、UI SVG/PDF 和 QCADesigner `.qca` 均重新生成，并完成
+  IFCN tile phase 与 QCA clock 的逐元胞继承一致性检查。
+
+## 7. 运行实验
+
+### 7.1 完整 RTL 批次
 
 ```bash
-./build/fcnx_gui
+python3 scripts/run_sequential_rtl_experiments.py \
+  --output-dir build/artifacts/sequential_layout_compact_final_20260825 \
+  --timeout-seconds 180 \
+  --z3-timeout-ms 60000 \
+  --ii 4,8,12,16,20,24,28,32 \
+  --max-same-phase 4 \
+  --max-dfs-nodes 5000000 \
+  --spacing 2 \
+  --route-search-cost 80 \
+  --compaction-max-states 256 \
+  --compaction-seeds 16 \
+  --max-geometry-ranks 64 \
+  --geometry-ladder-seconds 180 \
+  --design toggle_ff \
+  --design enable_hold_ff \
+  --design johnson2_sync \
+  --design johnson4_free_running \
+  --design reconvergent_feedback_ff
 ```
 
-### OGDF 外部排序器
-
-使用已有 OGDF 源码：
+器件级 QCA/SVG/PDF 需在上述 IFCN 成功后重新导出；不能复用旧
+`qca_cell` 批次：
 
 ```bash
-cmake -S include/gcn_rl_layout/ogdf -B build-ogdf \
-  -DOGDF_SOURCE_DIR=/path/to/ogdf \
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build build-ogdf -j2 --target ifcn_ogdf_layer_order
+for design in toggle_ff enable_hold_ff johnson2_sync \
+              johnson4_free_running reconvergent_feedback_ff; do
+  dir="build/artifacts/sequential_layout_compact_final_20260825/${design}/cyclic_z3_adaptive"
+  build-release/ifcn_energy_analysis \
+    "$dir/layout.ifcn" "$dir/layout_cell_level" --qca-only
+  QT_QPA_PLATFORM=offscreen IFCN_NONINTERACTIVE=1 \
+    IFCN_AUTO_MAP_FILE="$dir/layout.ifcn" \
+    IFCN_AUTO_EXPORT_CELL_LAYOUT="$dir/layout_cell_level.svg" \
+    build-release/fcnx_gui
+  QT_QPA_PLATFORM=offscreen IFCN_NONINTERACTIVE=1 \
+    IFCN_AUTO_MAP_FILE="$dir/layout.ifcn" \
+    IFCN_AUTO_EXPORT_CELL_LAYOUT="$dir/layout_cell_level.pdf" \
+    build-release/fcnx_gui
+done
 ```
 
-或设置：
+默认依赖：
+
+- `build/tools/yosys-local/usr/bin/yosys`
+- `build/tools/z3-local`
+- `build-release/ifcn_sequential_pnr`
+- `build-release/ifcn_paper_cyclic_pnr`
+
+当前正式实验实际使用 Yosys 0.33 和 Z3 4.8.12。可通过 `--yosys` 和
+`--z3-root` 指定其他本地安装。没有使用 Docker 镜像；外部工具均按源码或
+本地软件包方式加载。
+
+这些工具目录和全部 artifact 都被 Git 忽略，干净 clone 不会自动包含它们，
+目前也没有统一 provisioning 脚本。接手者需要自行安装 Yosys/Z3，或单独归档
+`build/tools/yosys-local`、`build/tools/z3-local`。runner 会为当前本地 Yosys
+设置所需的 `LD_LIBRARY_PATH` 和 `YOSYS_DATDIR`。
+
+### 7.2 时钟正确性和 II 消融
 
 ```bash
-export IFCN_OGDF_ORDERER=/absolute/path/to/ifcn_ogdf_layer_order
+taskset -c 23 python3 scripts/run_sequential_clock_experiments.py \
+  --build-dir build-release \
+  --output-dir build/artifacts/sequential_clock_comparison_v4 \
+  --repetitions 50 \
+  --jobs 4
 ```
 
-### 随机时钟快速回归
+CPU 空闲时再引用绝对运行时间；SAT/UNSAT/LIMIT 分类、oracle 结果和 DFS
+节点数不受宿主机并发负载影响。
+
+### 7.3 论文电路重建
 
 ```bash
-./build/stochastic_compact_graph_tests tests/benchmarks_f/TOY/xor2.v
-./build/stochastic_compact_graph_tests tests/benchmarks_f/TOY/RCA2.v
-./build/phase_aware_routing_tests
-
-# 2025-06 Graphviz + A* 快速 P&R 主路径与 clpl fallback
-./build/june_random_clock_graph_tests tests/benchmarks_f/TOY/xor2.v 40 40
-ctest --test-dir build --output-on-failure \
-  -R 'june_random_clock_graph_(regression|fallback_regression)'
+python3 scripts/run_sequential_paper_benchmarks.py \
+  --physical-feedback \
+  --cyclic-pnr build-release/ifcn_paper_cyclic_pnr \
+  --output-dir \
+    build/artifacts/sequential_paper_cyclic_benchmarks_release_v2 \
+  --timeout-seconds 60
 ```
 
-### 固定 2DDWave 快速回归
+### 7.4 汇总
 
 ```bash
-python3 include/gcn_rl_layout/src/algorithm/main/test_normal_graph_draw.py \
-  --benchmark tests/benchmarks_f/TOY/xor2.v \
-  --crossing-orderer ogdf \
-  --router auto \
-  --skip-figures \
-  --skip-latex \
-  --skip-stage-snapshots
+python3 scripts/aggregate_sequential_experiments.py \
+  --output-dir build/artifacts/sequential_master_results_v2
 ```
 
-### 无界面 cell-level 导出
+## 8. 当前实验结果
 
-```bash
-QT_QPA_PLATFORM=offscreen \
-IFCN_AUTO_MAP_FILE=/absolute/input.ifcn \
-IFCN_AUTO_EXPORT_CELL_LAYOUT=/absolute/output.pdf \
-IFCN_AUTO_CONTRACT_IO=1 \
-./build/fcnx_gui
-```
+### 8.1 时钟模型正确性
 
-## 9. 工作区清理与提交注意事项
+- 1040 个 recurrence case；
+- exact 模型：258 SAT、782 UNSAT；
+- modulo-only 在 exact-UNSAT 中假接受 490 个，即 62.66%；
+- modulo-only 假拒绝 0；
+- 独立 DP oracle mismatch 0；
+- strict-next-phase 子集仍假接受 52/244，即 21.31%。
 
-- 当前修改跨越 C++、Python、UI、测试、benchmark 产物和论文；建议按功能拆分提交，不要一次性提交全部工作区。
-- `include/gcn_rl_layout/src/algorithm/src/__pycache__/` 中已有被修改的 `.pyc`，应从功能提交中排除。
-- `seed_1/`、大部分 `*_normal_graph_draw/`、`stage_tex/`、PDF/SVG/LaTeX 编译产物属于运行输出，提交前逐项确认。
-- 一些 benchmark `.ifcn` 和 summary JSON 已被测试重写；除非明确要更新 golden data，否则不要顺手提交。
-- `paper/` 当前未跟踪，添加前先建立适当 `.gitignore` 并确认版权/数据来源。
-- 不要删除 legacy GCN+RL 的底层代码和复现实验文件；当前要求是移除 UI 入口，只保留三种公开布局布线算法。
+这说明只给版图分配 0..3 相位，不能证明反馈属于正确的下一次状态迭代。
 
-## 10. 下一位开发者的验收标准
+### 8.2 II 消融
 
-随机时钟面积修复完成至少应满足：
+- 260 个固定几何；
+- 固定 `II=4`：98 个 SAT；
+- 自适应 `{4,8,12,16}`：177 个 SAT；
+- 额外恢复 79 个，较固定 II 相对增加 80.61%；
+- oracle mismatch 和 LIMIT 均为 0。
 
-1. 现有 22 个 CTest、Python 路由测试和当前 MAJ/TOY 顶层 27 文件集成回归继续通过；
-2. xor2、mux41、RCA2、1bitAdderMaj、1bitAdderAOIG、xnor2、xor5R 全部通过完整布线、IO 边界和相位检查；
-3. RCA2、1bitAdderMaj、xnor2 的面积明显下降，并与逐个复核为合法的旧基线比较；
-4. 任一压缩候选失败时完整回滚，不能污染最后一个合法布局；
-5. c432 在规定时间预算内输出合法结果或明确的失败诊断，不能无限运行；
-6. 固定 2DDWave Normal Graph 的输出和测试结果不发生回退；
-7. GUI 仍能勾选/取消 IO Contract，右下角显示 grid `W×H`，且保存时强制新 `.qca`。
+### 8.3 RTL 自动流程
+
+9 个 RTL、276 个一步状态向量全部通过，0 mismatch。
+
+adaptive Z3 循环 P&R 在 8 个适用设计中成功 5 个。2026-08-27 纠正为
+coarse clock-tile 相位闭合后，紧致布局结果如下（artifact：
+`build/artifacts/sequential_layout_compact_final_20260825/`；目录名保留旧日期，
+内容已于 2026-08-27 重跑覆盖）：
+
+| 电路 | rank | II | bbox | area | route steps | coarse route sites | mapped unique XY | max same-phase tile run |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `toggle_ff` | 0 | 4 | 2x4 | 8 | 7 | 7 | 40 | 2 |
+| `enable_hold_ff` | 0 | 4 | 5x7 | 35 | 32 | 29 | 167 | 3 |
+| `johnson2_sync` | 0 | 4 | 3x6 | 18 | 20 | 17 | 99 | 2 |
+| `johnson4_free_running` | 27 | 4 | 5x3 | 15 | 16 | 15 | 78 | 1 |
+| `reconvergent_feedback_ff` | 0 | 8 | 10x13 | 130 | 112 | 93 | 525 | 4 |
+
+相对此前 seam-only SAT 结果，bbox area 分别为 `8->8`、`45->35`、
+`24->18`、`16->15`、`140->130`；总和由 233 降至 206（-11.59%）。全部保持
+一步状态检查、循环 DRC、Mapping/crossover DRC、外部 Z3、C++ 独立 epoch
+replay，以及 ordered-route-tile max-run DRC 通过。`johnson4_free_running`
+的 rank 0--26 在正确 tile 时钟约束下均 UNSAT，首个 SAT 是 rank 27；它需要
+真实 coarse-tile detour 来容纳四条 distance=1 recurrence，不能再依靠一个
+tile 内给不同 QCA 元胞分配不同相位伪造延迟。`reconvergent_feedback_ff`
+的可行 II 恢复为 8。
+runner 的 IFCN fallback bbox parser 也已修正，不会再把路径头
+`(sourceId,sinkId)` 当成版图坐标。
+
+上述 5 个最终 `cyclic_z3_adaptive/layout.ifcn` 也已复用 UI 的
+`Save cell-level layout` 映射/导出路径，分别生成同目录下的
+`layout_cell_level.svg` 和单页裁剪 `layout_cell_level.pdf`；另通过正式
+QCADesigner 2.0 writer 生成 `layout_cell_level_energy_input.qca`。5 个 QCA
+文件逐元胞核对了
+`cell_options.clock == tile_phase[(physical_x/5,physical_y/5)]`，并确认每个
+tile（含所有 layer）只有一个相位；SVG/PDF 也均为有效非空导出。这是标准门、
+线路和 crossover 的结构性 QCA cell-level 映射；它不替代状态器件的动态
+功能表征。当前 UI `Save cell-level layout` 导出的是可见 L0 投影：高层元胞
+在 `.qca` 中完整存在，但没有各自独立的 SVG/PDF 图元；
+因此多层器件 signoff 应查看 `.qca`，不能把单张 SVG 当成完整三层清单。
+当前 5 个 IFCN 均显式写出 `#mapping mode: sequential`，49 条 route 均有
+逐路由 distance directive，其中 10 条为正距离反馈；它们已通过新的有序
+waypoint/transition Mapping 检查后重新导出。对应 layer-aware QCA record 数
+依次为 40、177、99、83、566。器件元胞不再作为时钟 occurrence：同一 tile
+中的 L0/L1/L2 及所有 XY 均继承同一 tile phase。`johnson2_sync` 曾因 `d0`
+同时是状态更新
+sink 和反馈 source，而旧 output 模板只生成 fanin 端口，导致右下反馈线缺少
+两个元胞。当前 Sequential 双向终端模板已补齐 `(32,43)`、`(32,44)`；正式
+QCA 的 center-to-center 结构连通检查中，`d0 -> d1` 为连续 20-edge 物理
+路径；Mapping 的 ordered interconnect trace 是 `(32,44) -> (22,44)`，共
+17 cells/16 edges，且全程四邻接，但相位签核仍按它覆盖的 coarse tiles 计算。
+
+其余状态：
+
+- `counter2_sync`：Z3 `UNKNOWN`；
+- `shift_register4`、`lfsr4`：`routing_failed`；
+- `dff_sync`：Q 只用于观察、没有反馈 fanout，当前模型报
+  `unsupported_observation_only_state`。
+
+旧 raw report 的 `mapped_qca_cells` 实际是 layer-collapsed unique XY site。
+最终 master 表已经改名为 `mapped_unique_xy_sites`；不能将它与导出的
+layer-aware QCA cell 数直接比较。
+
+### 8.4 论文电路与物理诊断
+
+- 7/7 个论文重建符合预期；
+- 4 个 sampled-state adapter 完成循环 P&R；
+- 3 个忠实 level-sensitive latch 被安全拒绝；
+- 4 个循环版图均完成结构 Mapping/export；
+- 多周期 recurrence 物理诊断为 0/4 通过；
+- 所有物理状态仍标记 `physical_state_signoff=false/not_characterized`。
+
+五电路 `tile_phase_drc=5/5` 只证明 ordered coarse-route clock-zone 合同；
+不改变上述状态器件动态诊断仍为 0/4，也不意味着 QCA 状态宏已经完成物理
+capture/hold 表征。
+
+能耗时间步尚未收敛，因此只能作为探索性附录，不能用于声称功耗优于近期
+论文或其他 P&R 方法。
+
+## 9. 最终 artifact
+
+以下是清理后保留的最终结果目录：
+
+- `build/artifacts/sequential_layout_compact_final_20260825/`（目录名保留旧日期，
+  内容为 2026-08-27 的 corrected tile-phase 重跑结果）
+- `build/artifacts/sequential_master_results_v2/`
+- `build/artifacts/sequential_clock_comparison_v4/`
+- `build/artifacts/sequential_rtl_experiments_z3_v3/`
+- `build/artifacts/z3_audit_final/`
+- `build/artifacts/sequential_paper_cyclic_benchmarks_release_v2/`
+- `build/artifacts/sequential_cyclic_physical_analysis_v2/`
+- `build/artifacts/sequential_cyclic_energy_convergence_v2/`
+- `build/artifacts/sequential_cyclic_simon_models_v2/`
+- `build/artifacts/external_baselines/`
+
+主要入口：
+
+- 总结果：`build/artifacts/sequential_master_results_v2/summary.json`
+- 全指标：`build/artifacts/sequential_master_results_v2/summary.csv`
+- LaTeX 总表：
+  `build/artifacts/sequential_master_results_v2/tables/all_tables.tex`
+- 编译检查：
+  `build/artifacts/sequential_master_results_v2/latex_check/all_tables_check.pdf`
+- RTL 总结：
+  `build/artifacts/sequential_rtl_experiments_z3_v3/summary.json`
+- 复杂示例：
+  `build/artifacts/sequential_layout_compact_final_20260825/reconvergent_feedback_ff/cyclic_z3_adaptive/layout.tex`
+- 对应器件图：
+  `build/artifacts/sequential_layout_compact_final_20260825/reconvergent_feedback_ff/cyclic_z3_adaptive/layout_cell_level.svg`
+
+整个 `build/` 被 Git 忽略。若需要跨机器交接，必须归档这些结果或按照本文件
+命令重跑，不能假定新的 Git clone 会包含 artifact。
+
+## 10. 外部对比的正确口径
+
+- Walter/fiction `determine_clocking` 是固定组合布局上的 modulo clock-number
+  assignment，不含寄存器边界、absolute epoch、iteration distance 或 II。
+- fiction GOLD 是组合 2DDWave P&R。
+- 它们只能作为组合几何/时钟分配背景，不能作为时序 head-to-head。
+- Bhowmik、Deng 的电路可按公开拓扑重建，但没有同输入可执行 artifact；只做
+  功能/结构重建，不计算跨平台面积、运行时间或功耗倍率。
+
+本机已复现：
+
+- Walter/fiction：390/390 equivalent，论文 Table-I 几何 39/39；
+- GOLD 小集合：40/40 PASS、STRONG equivalence。
+
+## 11. 已知问题与下一步
+
+### P0：使算法成为真正完整的时序 P&R
+
+1. **实现 phase failure 驱动的几何修复。**
+   当前全局时钟 UNSAT/LIMIT 后不会自动插入 dogleg、局部拆共享或移动门。
+2. **把整轮重试替换成 selective rip-up/reroute。**
+   需要 present/history congestion、victim net 和局部窗口事务回滚。
+3. **继续升级反馈感知放置。**
+   当前已有 Q 过滤、反馈 barycenter 和 adjacent-swap；下一步需加入反馈
+   corridor、重汇合长度和可实现 II 下界，并做 gate move + 局部重布线。
+4. **接入经过物理表征的状态宏。**
+   必须定义 footprint、D/Q pin、internal phase latency、capture/hold 合同；否则
+   无法把结构反馈升级为物理时序签核。
+5. **表征 gate/state macro 的 tile-level 时序合同。**
+   当前每个 macro 所属 tile 是一个 clock zone，tile 内全部元胞同相。若目标
+   PDK 需要更细的内部传播模型，应先改变物理 tile/macro 抽象并完成表征，不能
+   在现有 5x5 tile 内私自给元胞切分相位。
+6. **解决当前失败样例。**
+   优先让 `shift_register4`、`lfsr4` 和 `counter2_sync` 稳定闭合。
+
+### P1：收紧软件架构和复现
+
+1. 让 C++ P&R 直接消费 SeqIR 和稳定 EdgeId，移除 legacy Parse 接缝。
+2. 支持无反馈但 Q 可观察的普通寄存器。
+3. 为 LIMIT/UNKNOWN 定义继续尝试更大 II 的可配置策略。
+4. 固定并升级 Yosys 版本；当前正式数据仍是 0.33。
+5. 在 importer/driver 中强制单时钟合同，未实现多时钟域求解前拒绝多 clock。
+6. 增加 ISCAS'89 小型时序实例和更大参数化 counter/shift/LFSR。
+7. 随机算法使用预注册 seeds；确定性 solver 重复运行只能统计时间，不能冒充
+   多 seed 成功率实验。
+8. **保持论文资产和正式 artifact 同步。** `paper-sequential-mej/main.tex`、
+   Fig. 7、Fig. 14 及其嵌入的器件图已于 2026-08-27 同步到 corrected
+   tile-phase 结果；以后重跑布局时必须一起更新，不能重新引入 Johnson4
+   rank0/area8、reconvergent II32 或 tile 内分裂元胞相位的旧批次。
+
+## 12. 清理记录与保护边界
+
+2026-08-24 已清理：
+
+- 根目录 `seed_1`..`seed_13`；
+- `include/gcn_rl_layout/seed_1`..`seed_5`；
+- benchmark 输出中的 `train_seed_*` 临时目录；
+- 共 45 个经清理前审计确认已被最终版本替代的 smoke、probe、旧实验和诊断 artifact；
+- 误生成的 `--help/`、空目录和源码缓存；
+- 时序实验中重复的 Yosys/Z3 下载缓存及其临时虚拟环境；
+- 两份被本文件取代的旧 V0 时序说明。
+
+删除通过系统回收站完成。未跟踪生成物可从回收站恢复；原来已被 Git 跟踪的
+LaTeX 缓存也可从版本历史恢复。
+
+以下内容特意没有清理：
+
+- `include/gcn_rl_layout/results/` 下的历史 RL 训练/评估数据；
+- benchmark 中有来源意义的 seed fixture；
+- 已 staged 的组合电路、GCN-RL、UI 和其他并行工作；
+- 9 个最终时序实验目录；
+- `build/tools/yosys-local`、`build/tools/z3-local` 和外部 fiction 源码。
+
+不要使用无范围的 `git clean`，也不要为了“整理”本项目而回滚其他工作树修改。

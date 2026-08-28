@@ -1,0 +1,9 @@
+q,s_n,r_n,q_next,comparison_domain
+0,1,1,0,valid
+1,1,1,1,valid
+0,0,1,1,valid
+1,0,1,1,valid
+0,1,0,0,valid
+1,1,0,0,valid
+0,0,0,1,excluded_forbidden_input
+1,0,0,1,excluded_forbidden_input

@@ -1,10 +1,13 @@
 #include"mapping.h"
 
+#include <algorithm>
 #include <limits>
 #include <numeric>
 #include <queue>
 #include <set>
 #include <sstream>
+#include <stdexcept>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -855,6 +858,108 @@ std::size_t sharedPrefixLength(const std::vector<position>& first,
     return length;
 }
 
+void validateSequentialRouteInputs(
+    const std::vector<std::vector<position>>& routes,
+    const std::vector<unsigned int>& iterationDistances)
+{
+    if (!iterationDistances.empty() &&
+        iterationDistances.size() != routes.size()) {
+        throw std::runtime_error(
+            "sequential mapping route/distance metadata size mismatch");
+    }
+    for (std::size_t routeIndex = 0; routeIndex < routes.size(); ++routeIndex) {
+        const auto& route = routes[routeIndex];
+        if (route.size() < 2) {
+            throw std::runtime_error(
+                "sequential mapping requires every route to contain at least two tiles");
+        }
+
+        std::unordered_map<position, std::size_t, MappingPositionHash> firstVisit;
+        for (std::size_t index = 0; index < route.size(); ++index) {
+            const auto [visitIt, inserted] = firstVisit.emplace(route[index], index);
+            if (!inserted) {
+                std::ostringstream message;
+                message << "sequential route " << routeIndex
+                        << " repeats coarse tile (" << route[index].first << ','
+                        << route[index].second << ") at positions "
+                        << visitIt->second << " and " << index;
+                throw std::runtime_error(message.str());
+            }
+            if (index == 0) {
+                continue;
+            }
+            if (manhattanDistance(route[index - 1], route[index]) != 1) {
+                std::ostringstream message;
+                message << "sequential route " << routeIndex
+                        << " contains a non-unit step at positions "
+                        << index - 1 << " and " << index;
+                throw std::runtime_error(message.str());
+            }
+        }
+    }
+
+    // A source tree may share one continuous prefix and then split.  A later
+    // rejoin would create two physical histories for the same signal/epoch and
+    // is not a legal directed sequential route topology.
+    for (std::size_t left = 0; left < routes.size(); ++left) {
+        for (std::size_t right = left + 1; right < routes.size(); ++right) {
+            if (routes[left].front() != routes[right].front()) {
+                for (std::size_t leftStep = 1;
+                     leftStep < routes[left].size(); ++leftStep) {
+                    for (std::size_t rightStep = 1;
+                         rightStep < routes[right].size(); ++rightStep) {
+                        const bool sameDirection =
+                            routes[left][leftStep - 1] ==
+                                routes[right][rightStep - 1] &&
+                            routes[left][leftStep] == routes[right][rightStep];
+                        const bool oppositeDirection =
+                            routes[left][leftStep - 1] == routes[right][rightStep] &&
+                            routes[left][leftStep] ==
+                                routes[right][rightStep - 1];
+                        if (sameDirection || oppositeDirection) {
+                            std::ostringstream message;
+                            message << "sequential routes " << left << " and "
+                                    << right
+                                    << " from different sources share a coarse edge";
+                            throw std::runtime_error(message.str());
+                        }
+                    }
+                }
+                continue;
+            }
+            if (routes[left].back() == routes[right].back()) {
+                std::ostringstream message;
+                message << "sequential routes " << left << " and " << right
+                        << " duplicate one source-to-sink connection";
+                throw std::runtime_error(message.str());
+            }
+            const std::size_t commonPrefix =
+                sharedPrefixLength(routes[left], routes[right]);
+            if (commonPrefix ==
+                std::min(routes[left].size(), routes[right].size())) {
+                std::ostringstream message;
+                message << "sequential fanout routes " << left << " and "
+                        << right << " use one route as a strict prefix";
+                throw std::runtime_error(message.str());
+            }
+            std::unordered_set<position, MappingPositionHash> leftSuffix;
+            leftSuffix.insert(routes[left].begin() + commonPrefix,
+                              routes[left].end());
+            for (auto it = routes[right].begin() + commonPrefix;
+                 it != routes[right].end(); ++it) {
+                if (leftSuffix.find(*it) == leftSuffix.end()) {
+                    continue;
+                }
+                std::ostringstream message;
+                message << "sequential fanout routes " << left << " and "
+                        << right << " rejoin after their shared prefix at ("
+                        << it->first << ',' << it->second << ')';
+                throw std::runtime_error(message.str());
+            }
+        }
+    }
+}
+
 bool routeHasUnexpectedOverlap(const std::vector<std::vector<position>>& routes,
                                std::size_t routeIndex)
 {
@@ -1461,10 +1566,164 @@ std::unordered_set<position, MappingPositionHash> buildRequiredCrossPositions(
     return requiredPositions;
 }
 
+struct SequentialMappingCoverage
+{
+    std::size_t disconnectedRoutes = 0;
+    std::size_t missingTiles = 0;
+    std::size_t missingTransitions = 0;
+};
+
+SequentialMappingCoverage sequentialMappingCoverage(
+    const RouteMappingList& routeMappings,
+    const RouteMappingList& crossMappings,
+    const std::vector<std::vector<position>>& routes,
+    const std::map<std::string, std::vector<position>>& nodeCells)
+{
+    SequentialMappingCoverage coverage;
+    std::unordered_map<position,
+                       std::unordered_set<position, MappingPositionHash>,
+                       MappingPositionHash> nodeCellsByTile;
+    for (const auto& bucket : nodeCells) {
+        for (const position& cell : bucket.second) {
+            nodeCellsByTile[{cell.first / 5, cell.second / 5}].insert(cell);
+        }
+    }
+
+    const auto cellsConnect = [](const auto& cells,
+                                 const position& start,
+                                 const position& finish) {
+        if (cells.find(start) == cells.end() ||
+            cells.find(finish) == cells.end()) {
+            return false;
+        }
+        std::unordered_set<position, MappingPositionHash> visited;
+        std::queue<position> pending;
+        visited.insert(start);
+        pending.push(start);
+        constexpr int offsets[4][2] = {
+            {-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+        while (!pending.empty()) {
+            const position current = pending.front();
+            pending.pop();
+            if (current == finish) {
+                return true;
+            }
+            for (const auto& offset : offsets) {
+                const ShiftedPosition neighbor = shiftedCell(
+                    current, offset[0], offset[1]);
+                if (!neighbor.valid ||
+                    cells.find(neighbor.pos) == cells.end() ||
+                    !visited.insert(neighbor.pos).second) {
+                    continue;
+                }
+                pending.push(neighbor.pos);
+            }
+        }
+        return false;
+    };
+
+    for (const auto& route : routes) {
+        const RouteMappingKey routeKey{route.front(), route.back()};
+        std::unordered_set<position, MappingPositionHash> coveredTiles;
+        std::unordered_map<position,
+                           std::unordered_set<position, MappingPositionHash>,
+                           MappingPositionHash> cellsByTile;
+        const auto includeMappedTiles = [&](const RouteMappingList& mappings) {
+            const auto mappingIt = mappings.find(routeKey);
+            if (mappingIt == mappings.end()) {
+                return;
+            }
+            for (const auto& segment : mappingIt->second) {
+                for (const position& cell : segment) {
+                    const position tile{cell.first / 5, cell.second / 5};
+                    coveredTiles.insert(tile);
+                    cellsByTile[tile].insert(cell);
+                }
+            }
+        };
+        includeMappedTiles(routeMappings);
+        includeMappedTiles(crossMappings);
+
+        const auto sourceNodeCells = nodeCellsByTile.find(route.front());
+        const auto sinkNodeCells = nodeCellsByTile.find(route.back());
+        const ShiftedPosition sourceBoundary =
+            nodeBoundaryCell(route.front(), route[1]);
+        const ShiftedPosition sinkBoundary =
+            nodeBoundaryCell(route.back(), route[route.size() - 2]);
+        bool routeConnected =
+            sourceBoundary.valid && sinkBoundary.valid &&
+            sourceNodeCells != nodeCellsByTile.end() &&
+            sinkNodeCells != nodeCellsByTile.end() &&
+            sourceNodeCells->second.find(sourceBoundary.pos) !=
+                sourceNodeCells->second.end() &&
+            sinkNodeCells->second.find(sinkBoundary.pos) !=
+                sinkNodeCells->second.end();
+
+        // Endpoints are supplied by node templates.  Every intermediate tile
+        // is part of the directed route and, in sequential mode, may encode a
+        // deliberate hold/advance detour.  Silently dropping one would create
+        // a cell-level shortcut that no longer matches the clock solution.
+        for (std::size_t index = 1; index + 1 < route.size(); ++index) {
+            if (coveredTiles.find(route[index]) == coveredTiles.end()) {
+                ++coverage.missingTiles;
+                routeConnected = false;
+            }
+        }
+
+        // Validate the exact directed port on every waypoint, rather than an
+        // arbitrary path through the same coarse tile.  This prevents a
+        // feedback detour from being accepted through the wrong terminal arm
+        // or through a shortcut belonging to another turn in the route.
+        for (std::size_t index = 1; index + 1 < route.size(); ++index) {
+            const ShiftedPosition entryBoundary =
+                nodeBoundaryCell(route[index], route[index - 1]);
+            const ShiftedPosition exitBoundary =
+                nodeBoundaryCell(route[index], route[index + 1]);
+            const auto tileCells = cellsByTile.find(route[index]);
+            const bool connected =
+                entryBoundary.valid && exitBoundary.valid &&
+                tileCells != cellsByTile.end() &&
+                cellsConnect(tileCells->second,
+                             entryBoundary.pos,
+                             exitBoundary.pos);
+            if (!connected) {
+                ++coverage.missingTransitions;
+                routeConnected = false;
+            }
+        }
+
+        if (route.size() == 2) {
+            routeConnected =
+                routeConnected &&
+                manhattanDistance(sourceBoundary.pos, sinkBoundary.pos) == 1;
+        } else {
+            const ShiftedPosition firstRouteBoundary =
+                nodeBoundaryCell(route[1], route.front());
+            const ShiftedPosition lastRouteBoundary =
+                nodeBoundaryCell(route[route.size() - 2], route.back());
+            routeConnected =
+                routeConnected && firstRouteBoundary.valid &&
+                lastRouteBoundary.valid &&
+                manhattanDistance(sourceBoundary.pos,
+                                  firstRouteBoundary.pos) == 1 &&
+                manhattanDistance(lastRouteBoundary.pos,
+                                  sinkBoundary.pos) == 1;
+        }
+        if (!routeConnected) {
+            ++coverage.disconnectedRoutes;
+        }
+    }
+    return coverage;
+}
+
 } // namespace
 
 struct MappingOrderScore
 {
+    bool crossoversValid = false;
+    std::size_t disconnectedSequentialRoutes = 0;
+    std::size_t missingSequentialRouteTiles = 0;
+    std::size_t missingSequentialRouteTransitions = 0;
     std::size_t missingRequiredCrossPositions = 0;
     std::size_t crossSegments = 0;
     std::size_t uniqueCrossCells = 0;
@@ -1475,6 +1734,10 @@ struct MappingOrderScore
 bool shouldUseFanoutOptimizedMapping(const MappingOrderScore& optimized,
                                      const MappingOrderScore& baseline)
 {
+    if (optimized.crossoversValid != baseline.crossoversValid) {
+        return optimized.crossoversValid;
+    }
+
     if (optimized.missingRequiredCrossPositions > baseline.missingRequiredCrossPositions) {
         return false;
     }
@@ -1535,13 +1798,25 @@ void Mapping::updateDeviateLookup(const std::pair<position, position>& route_key
 }
 
     //门级->元胞级坐标映射
-std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapping::mapping_line(std::vector<std::vector<position>>& _example){
+std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapping::mapping_line(
+    std::vector<std::vector<position>>& _example,
+    MappingMode mode,
+    const std::vector<unsigned int>& iterationDistances){
     const auto resetMappingState = [&]() {
         deviate_list.clear();
         deviatemapping_list.clear();
         crossline_list.clear();
         deviate_lookup.clear();
     };
+    resetMappingState();
+    if (mode == MappingMode::Sequential) {
+        validateSequentialRouteInputs(_example, iterationDistances);
+    } else if (std::any_of(iterationDistances.begin(),
+                           iterationDistances.end(),
+                           [](unsigned int distance) { return distance > 0; })) {
+        throw std::runtime_error(
+            "combinational mapping received a positive iteration distance");
+    }
 
     const auto requiredCrossPositions = buildRequiredCrossPositions(_example);
     std::unordered_set<position, MappingPositionHash> mustKeepCrossPositions;
@@ -1558,8 +1833,17 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
         return coveredCrossBlocks;
     };
 
-    const auto currentScore = [&]() {
+    const auto currentScore = [&](const std::vector<std::vector<position>>& routes) {
         MappingOrderScore score;
+        score.crossoversValid = validate_crossovers(nullptr);
+        if (mode == MappingMode::Sequential) {
+            const SequentialMappingCoverage coverage = sequentialMappingCoverage(
+                deviatemapping_list, crossline_list, routes, nodecell_list);
+            score.disconnectedSequentialRoutes = coverage.disconnectedRoutes;
+            score.missingSequentialRouteTiles = coverage.missingTiles;
+            score.missingSequentialRouteTransitions =
+                coverage.missingTransitions;
+        }
         std::unordered_set<position, MappingPositionHash> uniqueCrossCells;
         std::unordered_set<position, MappingPositionHash> coveredCrossBlocks;
         for (const auto& crossline : crossline_list) {
@@ -1587,6 +1871,22 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
     };
 
     const auto betterScore = [](const MappingOrderScore& left, const MappingOrderScore& right) {
+        if (left.crossoversValid != right.crossoversValid) {
+            return left.crossoversValid;
+        }
+        if (left.disconnectedSequentialRoutes !=
+            right.disconnectedSequentialRoutes) {
+            return left.disconnectedSequentialRoutes <
+                   right.disconnectedSequentialRoutes;
+        }
+        if (left.missingSequentialRouteTransitions !=
+            right.missingSequentialRouteTransitions) {
+            return left.missingSequentialRouteTransitions <
+                   right.missingSequentialRouteTransitions;
+        }
+        if (left.missingSequentialRouteTiles != right.missingSequentialRouteTiles) {
+            return left.missingSequentialRouteTiles < right.missingSequentialRouteTiles;
+        }
         if (left.missingRequiredCrossPositions != right.missingRequiredCrossPositions) {
             return left.missingRequiredCrossPositions < right.missingRequiredCrossPositions;
         }
@@ -1622,11 +1922,12 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
         removeBlockedTemplatePorts();
         const auto rawBaselineRouteMappings = deviatemapping_list;
         crossline_mapping(routes);
+        removeBlockedTemplatePorts();
         preferOppositeFanoutBranchSegments(deviatemapping_list, crossline_list, routes);
         removeBlockedTemplatePorts();
-        const auto baselineRouteMappings = deviatemapping_list;
-        const auto baselineCrossMappings = crossline_list;
-        const MappingOrderScore baselineScore = currentScore();
+        const auto adjustedBaselineRouteMappings = deviatemapping_list;
+        const auto adjustedBaselineCrossMappings = crossline_list;
+        const MappingOrderScore adjustedBaselineScore = currentScore(routes);
 
         deviatemapping_list = rawBaselineRouteMappings;
         crossline_list.clear();
@@ -1637,12 +1938,32 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
         preferOppositeFanoutBranchSegments(deviatemapping_list, crossline_list, routes);
         preferSharedFanoutCenterlines(deviatemapping_list, crossline_list, routes);
         removeBlockedTemplatePorts();
-        const MappingOrderScore optimizedScore = currentScore();
+        const MappingOrderScore optimizedScore = currentScore(routes);
 
-        if (!shouldUseFanoutOptimizedMapping(optimizedScore, baselineScore)) {
-            deviatemapping_list = baselineRouteMappings;
-            crossline_list = baselineCrossMappings;
-            return baselineScore;
+        bool useOptimized = shouldUseFanoutOptimizedMapping(
+            optimizedScore, adjustedBaselineScore);
+        if (mode == MappingMode::Sequential &&
+            optimizedScore.crossoversValid ==
+                adjustedBaselineScore.crossoversValid &&
+            std::tie(optimizedScore.disconnectedSequentialRoutes,
+                     optimizedScore.missingSequentialRouteTransitions,
+                     optimizedScore.missingSequentialRouteTiles) !=
+                std::tie(adjustedBaselineScore.disconnectedSequentialRoutes,
+                         adjustedBaselineScore.missingSequentialRouteTransitions,
+                         adjustedBaselineScore.missingSequentialRouteTiles)) {
+            useOptimized =
+                std::tie(optimizedScore.disconnectedSequentialRoutes,
+                         optimizedScore.missingSequentialRouteTransitions,
+                         optimizedScore.missingSequentialRouteTiles) <
+                std::tie(adjustedBaselineScore.disconnectedSequentialRoutes,
+                         adjustedBaselineScore.missingSequentialRouteTransitions,
+                         adjustedBaselineScore.missingSequentialRouteTiles);
+        }
+
+        if (!useOptimized) {
+            deviatemapping_list = adjustedBaselineRouteMappings;
+            crossline_list = adjustedBaselineCrossMappings;
+            return adjustedBaselineScore;
         }
 
         return optimizedScore;
@@ -1678,9 +1999,291 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
         }
     }
 
-    runMappingWithOrder(bestOrder);
+    const MappingOrderScore selectedScore = runMappingWithOrder(bestOrder);
+    if (mode == MappingMode::Sequential &&
+        (selectedScore.disconnectedSequentialRoutes != 0 ||
+         selectedScore.missingSequentialRouteTiles != 0 ||
+         selectedScore.missingSequentialRouteTransitions != 0)) {
+        std::ostringstream message;
+        message << "sequential mapping left "
+                << selectedScore.disconnectedSequentialRoutes
+                << " source-to-sink route(s) disconnected, dropped "
+                << selectedScore.missingSequentialRouteTiles
+                << " directed intermediate route tile(s) and "
+                << selectedScore.missingSequentialRouteTransitions
+                << " ordered tile transition(s)";
+        throw std::runtime_error(message.str());
+    }
 
     return deviatemapping_list;
+}
+
+std::vector<std::vector<position>> Mapping::orderedPhysicalRoutes(
+    const std::vector<std::vector<position>>& coarseRoutes) const
+{
+    const auto appendAdjacent = [](std::vector<position>& path,
+                                   const position& cell) {
+        if (!path.empty() && path.back() == cell) {
+            return;
+        }
+        if (!path.empty() && manhattanDistance(path.back(), cell) != 1) {
+            throw std::runtime_error(
+                "mapped physical route contains a non-adjacent cell transition");
+        }
+        path.push_back(cell);
+    };
+
+    const auto pathInsideTile = [](const auto& cells,
+                                   const position& start,
+                                   const position& finish) {
+        if (cells.find(start) == cells.end() ||
+            cells.find(finish) == cells.end()) {
+            throw std::runtime_error(
+                "mapped physical route is missing a directed tile boundary");
+        }
+        std::unordered_map<position, position, MappingPositionHash> parent;
+        std::unordered_set<position, MappingPositionHash> visited;
+        std::queue<position> pending;
+        visited.insert(start);
+        pending.push(start);
+        constexpr int offsets[4][2] = {
+            {-1, 0}, {0, -1}, {0, 1}, {1, 0}};
+        while (!pending.empty() && visited.find(finish) == visited.end()) {
+            const position current = pending.front();
+            pending.pop();
+            for (const auto& offset : offsets) {
+                const ShiftedPosition neighbor = shiftedCell(
+                    current, offset[0], offset[1]);
+                if (!neighbor.valid ||
+                    cells.find(neighbor.pos) == cells.end() ||
+                    !visited.insert(neighbor.pos).second) {
+                    continue;
+                }
+                parent.emplace(neighbor.pos, current);
+                pending.push(neighbor.pos);
+            }
+        }
+        if (visited.find(finish) == visited.end()) {
+            throw std::runtime_error(
+                "mapped physical route is disconnected inside a coarse tile");
+        }
+        std::vector<position> result{finish};
+        while (result.back() != start) {
+            result.push_back(parent.at(result.back()));
+        }
+        std::reverse(result.begin(), result.end());
+        return result;
+    };
+
+    std::vector<std::vector<position>> physicalRoutes;
+    physicalRoutes.reserve(coarseRoutes.size());
+    for (const auto& coarseRoute : coarseRoutes) {
+        if (coarseRoute.size() < 2) {
+            throw std::runtime_error(
+                "cannot reconstruct a physical route with fewer than two tiles");
+        }
+        const auto sourceBoundary =
+            nodeBoundaryCell(coarseRoute.front(), coarseRoute[1]);
+        const auto sinkBoundary = nodeBoundaryCell(
+            coarseRoute.back(), coarseRoute[coarseRoute.size() - 2]);
+        if (!sourceBoundary.valid || !sinkBoundary.valid) {
+            throw std::runtime_error(
+                "cannot reconstruct a physical route with a non-adjacent endpoint");
+        }
+
+        std::unordered_map<position,
+                           std::unordered_set<position, MappingPositionHash>,
+                           MappingPositionHash> cellsByTile;
+        const auto includeMappedCells = [&](const RouteCellMap& mappings) {
+            const auto found = mappings.find(
+                {coarseRoute.front(), coarseRoute.back()});
+            if (found == mappings.end()) {
+                return;
+            }
+            for (const auto& segment : found->second) {
+                for (const position& cell : segment) {
+                    cellsByTile[{cell.first / 5, cell.second / 5}].insert(cell);
+                }
+            }
+        };
+        includeMappedCells(deviatemapping_list);
+        includeMappedCells(crossline_list);
+
+        std::vector<position> path;
+        appendAdjacent(path, sourceBoundary.pos);
+        for (std::size_t index = 1;
+             index + 1 < coarseRoute.size(); ++index) {
+            const auto entry = nodeBoundaryCell(
+                coarseRoute[index], coarseRoute[index - 1]);
+            const auto exit = nodeBoundaryCell(
+                coarseRoute[index], coarseRoute[index + 1]);
+            const auto tile = cellsByTile.find(coarseRoute[index]);
+            if (!entry.valid || !exit.valid || tile == cellsByTile.end()) {
+                throw std::runtime_error(
+                    "mapped physical route is missing an intermediate tile");
+            }
+            const auto localPath = pathInsideTile(
+                tile->second, entry.pos, exit.pos);
+            for (const position& cell : localPath) {
+                appendAdjacent(path, cell);
+            }
+        }
+        appendAdjacent(path, sinkBoundary.pos);
+        physicalRoutes.push_back(std::move(path));
+    }
+    return physicalRoutes;
+}
+
+std::vector<std::vector<PhysicalCellSite>>
+Mapping::orderedLayerAwarePhysicalRoutes(
+    const std::vector<std::vector<position>>& coarseRoutes) const
+{
+    const auto xyRoutes = orderedPhysicalRoutes(coarseRoutes);
+    if (xyRoutes.size() != coarseRoutes.size()) {
+        throw std::runtime_error(
+            "mapped XY/layer-aware route counts are inconsistent");
+    }
+
+    std::map<std::pair<position, position>, std::set<position>>
+        crossCellsByRoute;
+    for (const auto& route : crossline_list) {
+        for (const auto& segment : route.second) {
+            crossCellsByRoute[route.first].insert(
+                segment.begin(), segment.end());
+        }
+    }
+
+    const auto adjacentSites = [](const PhysicalCellSite& left,
+                                  const PhysicalCellSite& right) {
+        if (left.layer == right.layer) {
+            return manhattanDistance(left.xy, right.xy) == 1;
+        }
+        if (left.xy != right.xy) {
+            return false;
+        }
+        const int delta = left.layer - right.layer;
+        return delta == 1 || delta == -1;
+    };
+    std::vector<std::vector<PhysicalCellSite>> result;
+    result.reserve(xyRoutes.size());
+    std::map<PhysicalCellSite, position> sourceByExactSite;
+    for (std::size_t routeIndex = 0;
+         routeIndex < xyRoutes.size(); ++routeIndex) {
+        const auto& coarse = coarseRoutes[routeIndex];
+        const auto routeKey = std::make_pair(coarse.front(), coarse.back());
+        const auto cross = crossCellsByRoute.find(routeKey);
+        const auto ownsCross = [&](const position& cell) {
+            return cross != crossCellsByRoute.end() &&
+                   cross->second.count(cell) != 0;
+        };
+        std::vector<PhysicalCellSite> layered;
+        const auto append = [&](const PhysicalCellSite& site) {
+            if (!layered.empty() && layered.back() == site) {
+                return;
+            }
+            if (!layered.empty() && !adjacentSites(layered.back(), site)) {
+                std::ostringstream message;
+                message << "layer-aware mapped route is disconnected between ("
+                        << layered.back().xy.first << ','
+                        << layered.back().xy.second << ",L"
+                        << layered.back().layer << ") and ("
+                        << site.xy.first << ',' << site.xy.second << ",L"
+                        << site.layer << ')';
+                throw std::runtime_error(message.str());
+            }
+            layered.push_back(site);
+        };
+
+        const auto& xy = xyRoutes[routeIndex];
+        for (std::size_t index = 0; index < xy.size(); ++index) {
+            const position cell = xy[index];
+            if (!ownsCross(cell)) {
+                append(PhysicalCellSite{cell, 0});
+                continue;
+            }
+            const bool previousIsCross =
+                index != 0 && ownsCross(xy[index - 1]);
+            const bool nextIsCross =
+                index + 1 < xy.size() && ownsCross(xy[index + 1]);
+            if (previousIsCross && nextIsCross) {
+                append(PhysicalCellSite{cell, 2});
+                continue;
+            }
+            if (previousIsCross == nextIsCross) {
+                throw std::runtime_error(
+                    "isolated lifted crossover cell has no directed corridor");
+            }
+            if (nextIsCross) {
+                append(PhysicalCellSite{cell, 0});
+                append(PhysicalCellSite{cell, 1});
+                append(PhysicalCellSite{cell, 2});
+            } else {
+                append(PhysicalCellSite{cell, 2});
+                append(PhysicalCellSite{cell, 1});
+                append(PhysicalCellSite{cell, 0});
+            }
+        }
+        if (layered.size() < 2 || layered.front().layer != 0 ||
+            layered.back().layer != 0) {
+            throw std::runtime_error(
+                "layer-aware physical route does not terminate on layer 0");
+        }
+
+        std::set<position> layeredXy;
+        std::set<PhysicalCellSite> routeSites;
+        for (const PhysicalCellSite& site : layered) {
+            if (!routeSites.insert(site).second) {
+                std::ostringstream message;
+                message << "layer-aware mapped route revisits exact QCA site ("
+                        << site.xy.first << ',' << site.xy.second << ",L"
+                        << site.layer << ')';
+                throw std::runtime_error(message.str());
+            }
+            layeredXy.insert(site.xy);
+            const auto [owner, inserted] =
+                sourceByExactSite.emplace(site, coarse.front());
+            if (!inserted && owner->second != coarse.front()) {
+                std::ostringstream message;
+                message << "different source routes share exact QCA site ("
+                        << site.xy.first << ',' << site.xy.second << ",L"
+                        << site.layer << ')';
+                throw std::runtime_error(message.str());
+            }
+        }
+        const auto requireMappedCoverage = [&](const RouteCellMap& mappings) {
+            const auto found = mappings.find(routeKey);
+            if (found == mappings.end()) {
+                return;
+            }
+            for (const auto& segment : found->second) {
+                for (const position& cell : segment) {
+                    if (layeredXy.count(cell) == 0) {
+                        throw std::runtime_error(
+                            "ordered layer-aware route omits an emitted mapping cell");
+                    }
+                }
+            }
+        };
+        requireMappedCoverage(deviatemapping_list);
+        requireMappedCoverage(crossline_list);
+        result.push_back(std::move(layered));
+    }
+    return result;
+}
+
+std::set<PhysicalCellSite> Mapping::physicalCellSites(
+    const std::vector<std::vector<position>>& coarseRoutes) const
+{
+    std::set<PhysicalCellSite> sites;
+    for (const auto& bucket : nodecell_list) {
+        for (const position& cell : bucket.second) {
+            sites.emplace(cell, 0);
+        }
+    }
+    for (const auto& route : orderedLayerAwarePhysicalRoutes(coarseRoutes)) {
+        sites.insert(route.begin(), route.end());
+    }
+    return sites;
 }
 
 bool Mapping::validate_crossovers(std::string* error) const
@@ -4143,6 +4746,7 @@ void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_li
     std::set<std::pair<RoutePair, position>> tempposKeys;
     std::unordered_set<position, MappingPositionHash> onerouteposPositions;
     std::vector<std::unordered_set<position, MappingPositionHash>> routePositionSets;
+    const auto requiredCrossPositions = buildRequiredCrossPositions(_routepos_list);
     routePositionSets.reserve(_routepos_list.size());
     for (const auto& route : _routepos_list)
     {
@@ -4986,17 +5590,110 @@ void Mapping::crossline_mapping(std::vector<std::vector<position>> &_routepos_li
             
         }
     }
+
+    // Fanout centerline stitching may extend a route's per-tile unit mapping
+    // into an adjacent tile.  A crossover, however, is a local 5x5 structure;
+    // lifting the stitched segment wholesale creates an illegal long L3
+    // corridor.  Keep only the legal local portion at the actual inter-source
+    // crossing tile.  If no legal portion exists, retain the original segment
+    // so validate_crossovers() still reports the routing/mapping defect.
+    for (auto& routeEntry : crossline_list) {
+        for (auto& segment : routeEntry.second) {
+            Mapping originalProbe;
+            originalProbe.crossline_list[routeEntry.first].push_back(segment);
+            if (originalProbe.validate_crossovers(nullptr)) {
+                continue;
+            }
+
+            std::vector<position> bestLocalSegment;
+            position bestTile{};
+            bool haveBest = false;
+            for (const position& crossPos : requiredCrossPositions) {
+                std::vector<position> localSegment;
+                std::copy_if(segment.begin(), segment.end(),
+                             std::back_inserter(localSegment),
+                             [&](const position& cell) {
+                                 return cell.first / 5 == crossPos.first &&
+                                        cell.second / 5 == crossPos.second;
+                             });
+                if (localSegment.empty()) {
+                    continue;
+                }
+
+                Mapping localProbe;
+                localProbe.crossline_list[routeEntry.first].push_back(localSegment);
+                if (!localProbe.validate_crossovers(nullptr)) {
+                    continue;
+                }
+                if (!haveBest || localSegment.size() > bestLocalSegment.size() ||
+                    (localSegment.size() == bestLocalSegment.size() && crossPos < bestTile)) {
+                    bestLocalSegment = std::move(localSegment);
+                    bestTile = crossPos;
+                    haveBest = true;
+                }
+            }
+            if (haveBest) {
+                segment = std::move(bestLocalSegment);
+            }
+        }
+    }
 }
 
 //通过节点的扇入扇出关系对节点的组成元胞分类映射(input,output,normal,fix0,fix1)
-void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>>& _Nodelink)
+void Mapping::node_mapping(
+    std::map<std::pair<position, std::string>,
+             std::pair<std::vector<position>, std::vector<position>>>& _Nodelink,
+    MappingMode mode)
 {
+    nodecell_list.clear();
+    io_terminal_origins_.clear();
     nodecell_list["input"];
     nodecell_list["output"];
     nodecell_list["normal"];
     nodecell_list["fix0"];
     nodecell_list["fix1"];
     multi_output_not_input_boundaries.clear();
+
+    const auto appendUniqueNormalCell = [&](const position& cell) {
+        auto& normalCells = nodecell_list["normal"];
+        if (std::find(normalCells.begin(), normalCells.end(), cell) ==
+            normalCells.end()) {
+            normalCells.push_back(cell);
+        }
+    };
+    const auto mapSequentialTerminalPort = [&](const position& nodePosition,
+                                               const position& physicalOrigin,
+                                               const position& neighbor) {
+        const long long dx = static_cast<long long>(neighbor.first) -
+                             static_cast<long long>(nodePosition.first);
+        const long long dy = static_cast<long long>(neighbor.second) -
+                             static_cast<long long>(nodePosition.second);
+        if (std::abs(dx) + std::abs(dy) != 1) {
+            throw std::runtime_error(
+                "sequential terminal port is not on an adjacent coarse tile");
+        }
+        if (dx < 0) {
+            appendUniqueNormalCell({physicalOrigin.first,
+                                    physicalOrigin.second + 2});
+            appendUniqueNormalCell({physicalOrigin.first + 1,
+                                    physicalOrigin.second + 2});
+        } else if (dx > 0) {
+            appendUniqueNormalCell({physicalOrigin.first + 3,
+                                    physicalOrigin.second + 2});
+            appendUniqueNormalCell({physicalOrigin.first + 4,
+                                    physicalOrigin.second + 2});
+        } else if (dy < 0) {
+            appendUniqueNormalCell({physicalOrigin.first + 2,
+                                    physicalOrigin.second});
+            appendUniqueNormalCell({physicalOrigin.first + 2,
+                                    physicalOrigin.second + 1});
+        } else {
+            appendUniqueNormalCell({physicalOrigin.first + 2,
+                                    physicalOrigin.second + 3});
+            appendUniqueNormalCell({physicalOrigin.first + 2,
+                                    physicalOrigin.second + 4});
+        }
+    };
     
 
 
@@ -5015,6 +5712,18 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         if (node.first.second == "input")
         {
             nodecell_list["input"].emplace_back(temppos1.first+2, temppos1.second+2);
+            if (mode == MappingMode::Sequential)
+            {
+                for (const position& inputPort : node.second.first)
+                {
+                    mapSequentialTerminalPort(temppos, temppos1, inputPort);
+                }
+                for (const position& outputPort : node.second.second)
+                {
+                    mapSequentialTerminalPort(temppos, temppos1, outputPort);
+                }
+                continue;
+            }
             int size = node.second.second.size();
             if (size == 1)
             {
@@ -5086,6 +5795,18 @@ void Mapping::node_mapping(std::map<std::pair<position, std::string>, std::pair<
         else if (node.first.second == "output")
         {
             nodecell_list["output"].emplace_back(temppos1.first+2, temppos1.second+2);
+            if (mode == MappingMode::Sequential)
+            {
+                for (const position& inputPort : node.second.first)
+                {
+                    mapSequentialTerminalPort(temppos, temppos1, inputPort);
+                }
+                for (const position& outputPort : node.second.second)
+                {
+                    mapSequentialTerminalPort(temppos, temppos1, outputPort);
+                }
+                continue;
+            }
             if ((node.second.first.size() == 1)||(node.second.first.size() == 2))
             {
                 if ((node.second.first.front().first < temppos.first)&&(node.second.first.front().second == temppos.second))//左

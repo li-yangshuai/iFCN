@@ -1,0 +1,115 @@
+{
+  "schema": "ifcn.seqir.v0.example",
+  "status": "hand_authored_expected_import_contract",
+  "module": "counter2_sync",
+  "ports": [
+    { "id": "clk", "direction": "input", "width": 1, "role": "logical_clock" },
+    { "id": "rst", "direction": "input", "width": 1, "role": "synchronous_reset" },
+    { "id": "en", "direction": "input", "width": 1, "role": "register_enable" },
+    { "id": "q", "direction": "output", "width": 2, "role": "state_output" }
+  ],
+  "clock_domains": [
+    { "id": "clk0", "signal": "clk", "edge": "posedge" }
+  ],
+  "semantics": {
+    "register_controls": "executable_high_level_transition_semantics",
+    "control_priority": ["reset", "enable", "data_or_hold"],
+    "physical_lowering": "exactly_once_to_d_muxes_and_plain_dff"
+  },
+  "registers": [
+    {
+      "id": "reg.q0",
+      "data": "q0_inc",
+      "q": "q[0]",
+      "width": 1,
+      "clock_domain": "clk0",
+      "init": "unknown",
+      "enable": {
+        "signal": "en",
+        "polarity": "active_high"
+      },
+      "reset": {
+        "signal": "rst",
+        "kind": "synchronous",
+        "polarity": "active_high",
+        "value": 0
+      }
+    },
+    {
+      "id": "reg.q1",
+      "data": "q1_inc",
+      "q": "q[1]",
+      "width": 1,
+      "clock_domain": "clk0",
+      "init": "unknown",
+      "enable": {
+        "signal": "en",
+        "polarity": "active_high"
+      },
+      "reset": {
+        "signal": "rst",
+        "kind": "synchronous",
+        "polarity": "active_high",
+        "value": 0
+      }
+    }
+  ],
+  "combinational_nodes": [
+    { "id": "q0_inc", "op": "not", "inputs": ["q[0]"] },
+    { "id": "q1_inc", "op": "xor", "inputs": ["q[1]", "q[0]"] }
+  ],
+  "state_edges": [
+    { "data": "q0_inc", "to": "q[0]", "register": "reg.q0", "controls": ["rst", "en"], "logical_latency_ticks": 1 },
+    { "data": "q1_inc", "to": "q[1]", "register": "reg.q1", "controls": ["rst", "en"], "logical_latency_ticks": 1 }
+  ],
+  "comb_regions": [
+    {
+      "id": "next_state",
+      "pseudo_inputs": ["q[0]", "q[1]"],
+      "pseudo_outputs": ["q0_inc", "q1_inc"],
+      "must_be_dag": true
+    }
+  ],
+  "lowering_contract": {
+    "status": "not_executed_in_this_semantic_seqir",
+    "control_order": ["reset", "enable", "data_or_hold"],
+    "result": "d_muxes_plus_plain_dff",
+    "register_macro": "IFCN_DFF_PLAIN",
+    "provenance_controls_after_lowering": "non_executable"
+  },
+  "physical_contract": {
+    "clocking_scheme": "post_route_irregular_4phase",
+    "phase_count": 4,
+    "phase_origin": 0,
+    "epoch_unit": "one_qca_zone_handoff",
+    "input_application_epoch": null,
+    "state_capture_epoch": null,
+    "output_valid_epoch": null,
+    "endpoint_timing": [
+      {
+        "endpoint": "reg.q0.D",
+        "sources": ["q[0]", "rst", "en"],
+        "arrival_min_epoch_offset": null,
+        "arrival_max_epoch_offset": null,
+        "inserted_balance_epochs": null,
+        "capture_window": null,
+        "setup_slack_epochs": null,
+        "hold_slack_epochs": null
+      },
+      {
+        "endpoint": "reg.q1.D",
+        "sources": ["q[0]", "q[1]", "rst", "en"],
+        "arrival_min_epoch_offset": null,
+        "arrival_max_epoch_offset": null,
+        "inserted_balance_epochs": null,
+        "capture_window": null,
+        "setup_slack_epochs": null,
+        "hold_slack_epochs": null
+      }
+    ],
+    "max_feedback_latency_epochs": null,
+    "initiation_interval_epochs": null,
+    "output_valid_window": null,
+    "status": "must_be_filled_and_verified_after_physical_design"
+  }
+}

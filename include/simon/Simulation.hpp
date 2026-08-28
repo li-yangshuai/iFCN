@@ -464,12 +464,15 @@ namespace simon
             auto &self = static_cast<Host&>(*this);
             //initilizations
             self.initialize_sample_size();
+            // Design initialization may remove duplicate cells.  Do it before
+            // collecting I/O pointers so vector erasure cannot leave dangling
+            // pointers in self.inputs/self.outputs.
+            self.initialize_design(design);
             self.initialize_io(design, vector_table, inames, onames);
 
             self.initialize_input_generator(mode, self.number_of_samples, vector_table);
             self.initialize_clock_generator(mode, self.number_of_samples, vector_table, self.inames);
 
-            self.initialize_design(design);
             self.initialize_result(result, 4);
 
             //iteration

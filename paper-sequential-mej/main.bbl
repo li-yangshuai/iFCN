@@ -1,0 +1,206 @@
+\begin{thebibliography}{10}
+\expandafter\ifx\csname url\endcsname\relax
+  \def\url#1{\texttt{#1}}\fi
+\expandafter\ifx\csname urlprefix\endcsname\relax\def\urlprefix{URL }\fi
+\expandafter\ifx\csname href\endcsname\relax
+  \def\href#1#2{#2} \def\path#1{#1}\fi
+
+\bibitem{Huang2007Sequential}
+J.~Huang, M.~Momenzadeh, F.~Lombardi, Design of sequential circuits by
+  quantum-dot cellular automata, Microelectronics Journal 38~(4--5) (2007)
+  525--537.
+\newblock \href {https://doi.org/10.1016/j.mejo.2007.03.013}
+  {\path{doi:10.1016/j.mejo.2007.03.013}}.
+
+\bibitem{2ddwave}
+V.~Vankamamidi, M.~Ottavi, F.~Lombardi, Two-dimensional schemes for
+  clocking/timing of {QCA} circuits, IEEE Transactions on Computer-Aided Design
+  of Integrated Circuits and Systems 27~(1) (2008) 34--44.
+\newblock \href {https://doi.org/10.1109/TCAD.2007.907020}
+  {\path{doi:10.1109/TCAD.2007.907020}}.
+
+\bibitem{fiction2019}
+M.~Walter, R.~Wille, F.~S. Torres, D.~Gro{\ss}e, R.~Drechsler, fiction: An open
+  source framework for the design of field-coupled nanocomputing circuits
+  (2019).
+\newblock \href {http://arxiv.org/abs/1905.02477} {\path{arXiv:1905.02477}},
+  \href {https://doi.org/10.48550/arXiv.1905.02477}
+  {\path{doi:10.48550/arXiv.1905.02477}}.
+
+\bibitem{Li2022FCNPR}
+Y.~Li, G.~Xie, Q.~Han, X.~Li, G.~Li, B.~Zhang, F.~Peng, Field-coupled
+  nanocomputing placement and routing with genetic and {A*} algorithms, IEEE
+  Transactions on Circuits and Systems I: Regular Papers 69~(11) (2022)
+  4619--4631.
+\newblock \href {https://doi.org/10.1109/TCSI.2022.3197450}
+  {\path{doi:10.1109/TCSI.2022.3197450}}.
+
+\bibitem{Walter2024ClockAssignment}
+M.~Walter, J.~Drewniok, R.~Wille, Ending the tyranny of the clock: {SAT}-based
+  clock number assignment for field-coupled nanotechnologies, in: Proceedings
+  of the IEEE International Conference on Nanotechnology, 2024, pp. 68--73.
+\newblock \href {https://doi.org/10.1109/NANO61778.2024.10628908}
+  {\path{doi:10.1109/NANO61778.2024.10628908}}.
+
+\bibitem{Hofmann2025PostLayout}
+S.~Hofmann, M.~Walter, R.~Wille, Efficient and scalable post-layout
+  optimization for field-coupled nanotechnologies, IEEE Transactions on
+  Computer-Aided Design of Integrated Circuits and Systems 44~(10) (2025)
+  3790--3803.
+\newblock \href {https://doi.org/10.1109/TCAD.2025.3549354}
+  {\path{doi:10.1109/TCAD.2025.3549354}}.
+
+\bibitem{Li2026iFCN}
+Y.~Li, F.~Peng, X.~Tong, R.~Zhu, Q.~Han, G.~Xie, {iFCN}: An automated
+  {RTL}-to-device framework for molecular field-coupled nanocomputing circuits,
+  IEEE Transactions on Circuits and Systems I: Regular Papers 73~(2) (2026)
+  1196--1208.
+\newblock \href {https://doi.org/10.1109/TCSI.2025.3599115}
+  {\path{doi:10.1109/TCSI.2025.3599115}}.
+
+\bibitem{Bhowmik2021Systematic}
+D.~Bhowmik, J.~Pal, M.~Goswami, P.~Sen, A.~K. Saha, B.~Sen, Systematic cell
+  placement in quantum-dot cellular automata embedding underlying regular
+  clocking circuit, IET Circuits, Devices \& Systems 15~(2) (2021) 156--167.
+\newblock \href {https://doi.org/10.1049/cds2.12015}
+  {\path{doi:10.1049/cds2.12015}}.
+
+\bibitem{Pramanik2022RegularGA}
+A.~K. Pramanik, D.~Bhowmik, J.~Pal, P.~Sen, A.~K. Saha, B.~Sen, Towards the
+  realization of regular clocking-based {QCA} circuits using genetic algorithm,
+  Computers \& Electrical Engineering 97 (2022) 107640.
+\newblock \href {https://doi.org/10.1016/j.compeleceng.2021.107640}
+  {\path{doi:10.1016/j.compeleceng.2021.107640}}.
+
+\bibitem{Bhowmik2022SequentialPlacement}
+D.~Bhowmik, A.~K. Pramanik, J.~Pal, P.~Sen, A.~R. Singh, A.~K. Saha, B.~Sen,
+  Regular clocking-based automated cell placement technique in {QCA} targeting
+  sequential circuit, Computers \& Electrical Engineering 98 (2022) 107668.
+\newblock \href {https://doi.org/10.1016/j.compeleceng.2021.107668}
+  {\path{doi:10.1016/j.compeleceng.2021.107668}}.
+
+\bibitem{Deng2022ModuleClocking}
+F.~Deng, G.~Xie, Y.~Zhang, S.~Chen, Module-based design method using clocking
+  scheme for quantum-dot cellular automata, International Journal of Circuit
+  Theory and Applications 50~(2) (2022) 448--464.
+\newblock \href {https://doi.org/10.1002/cta.3185}
+  {\path{doi:10.1002/cta.3185}}.
+
+\bibitem{Deng2022GeneralClocking}
+F.~Deng, G.~Xie, X.~Cheng, Y.~Zhang, A general and efficient clocking scheme
+  for majority logic in quantum-dot cellular automata, Microelectronics Journal
+  128 (2022) 105544.
+\newblock \href {https://doi.org/10.1016/j.mejo.2022.105544}
+  {\path{doi:10.1016/j.mejo.2022.105544}}.
+
+\bibitem{Gholami2022LatchFF}
+M.~Gholami, M.~Movahedi, Z.~Amirzadeh, Latch and flip-flop design in {QCA}
+  technology with minimum number of cells, Computers \& Electrical Engineering
+  102 (2022) 108186.
+\newblock \href {https://doi.org/10.1016/j.compeleceng.2022.108186}
+  {\path{doi:10.1016/j.compeleceng.2022.108186}}.
+
+\bibitem{Gholami2023TLatchCounter}
+M.~Gholami, Z.~Amirzadeh, Low-power, high-speed, and area-efficient sequential
+  circuits by quantum-dot cellular automata: {T}-latch and counter study,
+  Frontiers of Information Technology \& Electronic Engineering 24~(3) (2023)
+  457--469.
+\newblock \href {https://doi.org/10.1631/FITEE.2200361}
+  {\path{doi:10.1631/FITEE.2200361}}.
+
+\bibitem{Roshan2024UniversalShift}
+M.~Gholamnia~Roshan, M.~Gholami, Novel level and edge-triggered universal shift
+  registers with low latency in {QCA} technology, Heliyon 10~(5) (2024) e26086.
+\newblock \href {https://doi.org/10.1016/j.heliyon.2024.e26086}
+  {\path{doi:10.1016/j.heliyon.2024.e26086}}.
+
+\bibitem{Vosta2025LatchFF}
+P.~Kiani~Vosta, M.~Gholami, A novel and optimized design of {D}-latch and {D}
+  flip-flop for {QCA}-based digital systems, Scientific Reports 15~(1) (2025)
+  30959.
+\newblock \href {https://doi.org/10.1038/s41598-025-15949-y}
+  {\path{doi:10.1038/s41598-025-15949-y}}.
+
+\bibitem{Shaw2026BCD}
+R.~K. Shaw, A.~Khan, S.~Halder, A scalable asynchronous mod-10 {BCD} counter
+  realization using delay flip-flops: A quantum-dot cellular automata approach,
+  Analog Integrated Circuits and Signal Processing 128~(1) (2026) 2.
+\newblock \href {https://doi.org/10.1007/s10470-026-02608-z}
+  {\path{doi:10.1007/s10470-026-02608-z}}.
+
+\bibitem{Zhang2024QCAHierarchicalPR}
+B.~Zhang, F.~Peng, G.~Li, Y.~Li, G.~Xie, Quantum-dot cellular automata
+  placement and routing with hierarchical algorithm, Nano Communication
+  Networks 39 (2024) 100495.
+\newblock \href {https://doi.org/10.1016/j.nancom.2024.100495}
+  {\path{doi:10.1016/j.nancom.2024.100495}}.
+
+\bibitem{Hofmann2024AStarBorn}
+S.~Hofmann, M.~Walter, R.~Wille, {A*} is born: Efficient and scalable physical
+  design for field-coupled nanocomputing, in: Proceedings of the IEEE
+  International Conference on Nanotechnology, 2024, pp. 80--85.
+\newblock \href {https://doi.org/10.1109/NANO61778.2024.10628808}
+  {\path{doi:10.1109/NANO61778.2024.10628808}}.
+
+\bibitem{Hofmann2026GOLD}
+S.~Hofmann, M.~Walter, R.~Wille, Graph-oriented layout design for field-coupled
+  nanocomputing via parallel multi-objective search space exploration, IEEE
+  Transactions on Circuits and Systems I: Regular Papers 73~(3) (2026)
+  1579--1592.
+\newblock \href {https://doi.org/10.1109/TCSI.2025.3614709}
+  {\path{doi:10.1109/TCSI.2025.3614709}}.
+
+\bibitem{Walter2023SequentialSDN}
+M.~Walter, B.~Hien, R.~Wille, Versatile signal distribution networks for
+  scalable placement and routing of field-coupled nanocomputing technologies,
+  in: Proceedings of the IEEE Computer Society Annual Symposium on VLSI, 2023,
+  pp. 1--6.
+\newblock \href {https://doi.org/10.1109/ISVLSI59464.2023.10238604}
+  {\path{doi:10.1109/ISVLSI59464.2023.10238604}}.
+
+\bibitem{Hofmann2024MNTBench}
+S.~Hofmann, M.~Walter, R.~Wille, {MNT Bench}: Benchmarking software and layout
+  libraries for field-coupled nanocomputing, in: Proceedings of the Design,
+  Automation \& Test in Europe Conference \& Exhibition, 2024, pp. 1--2.
+\newblock \href {https://doi.org/10.23919/DATE58400.2024.10546596}
+  {\path{doi:10.23919/DATE58400.2024.10546596}}.
+
+\bibitem{Hofmann2025MNTDesigner}
+S.~Hofmann, J.~Drewniok, M.~Walter, R.~Wille, {MNT Designer}: A comprehensive
+  design tool for field-coupled nanocomputing, in: Proceedings of the IEEE
+  International Conference on Nanotechnology, 2025, pp. 40--45.
+\newblock \href {https://doi.org/10.1109/NANO63165.2025.11113823}
+  {\path{doi:10.1109/NANO63165.2025.11113823}}.
+
+\bibitem{Wolf2013Yosys}
+C.~Wolf, J.~Glaser, {Yosys}: A free {Verilog} synthesis suite, in: Austrochip
+  Workshop on Microelectronics 2013, 2013, pp. 47--52.
+
+\bibitem{DeMoura2008Z3}
+L.~de~Moura, N.~Bj{\o}rner, {Z3}: An efficient {SMT} solver, in: Tools and
+  Algorithms for the Construction and Analysis of Systems, 2008, pp. 337--340.
+\newblock \href {https://doi.org/10.1007/978-3-540-78800-3_24}
+  {\path{doi:10.1007/978-3-540-78800-3_24}}.
+
+\bibitem{Alharbi2023ReversibleFF}
+M.~Alharbi, G.~Edwards, R.~Stocker, Novel ultra-energy-efficient reversible
+  designs of sequential logic quantum-dot cellular automata flip-flop circuits,
+  The Journal of Supercomputing 79~(10) (2023) 11530--11557.
+\newblock \href {https://doi.org/10.1007/s11227-023-05134-1}
+  {\path{doi:10.1007/s11227-023-05134-1}}.
+
+\bibitem{KianiVosta2024Counters}
+P.~Kiani~Vosta, M.~Gholami, Three different topologies for 4-bit counters in
+  quantum-dot cellular automata technology, Physica Scripta 99~(11) (2024)
+  115104.
+\newblock \href {https://doi.org/10.1088/1402-4896/ad8047}
+  {\path{doi:10.1088/1402-4896/ad8047}}.
+
+\bibitem{Deng2020CFE}
+F.~Deng, G.~Xie, X.~Cheng, Z.~Zhang, Y.~Zhang, {CFE}: A convenient, flexible,
+  and efficient clocking scheme for quantum-dot cellular automata, IET
+  Circuits, Devices \& Systems 14~(1) (2020) 88--92.
+\newblock \href {https://doi.org/10.1049/iet-cds.2019.0096}
+  {\path{doi:10.1049/iet-cds.2019.0096}}.
+
+\end{thebibliography}

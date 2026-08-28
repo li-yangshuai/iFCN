@@ -189,6 +189,8 @@ PYBIND11_MODULE(iFCN_Lab, m) {
              py::arg("start_dx"), py::arg("start_dy"),
              py::arg("end_dx"), py::arg("end_dy"),
              py::arg("use_start") = true, py::arg("use_end") = true)
+        .def("set_expansion_limit", &iFCN_Lab::MapPhaseAStar::setExpansionLimit,
+             py::arg("limit"))
         .def("reset", &iFCN_Lab::MapPhaseAStar::reset)
         ;
 

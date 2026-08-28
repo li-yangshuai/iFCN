@@ -167,8 +167,7 @@ bool MainWindow::mapIfcnFile(const QString &fileName,
 
 bool MainWindow::exportCellLevelLayout(const QString &outputPath)
 {
-    return verilogHandler != nullptr
-        && verilogHandler->exportCellLevelLayout(outputPath);
+    return saveCellLevelLayoutGraphic(outputPath);
 }
 
 void MainWindow::loadClockRegionsFromFile(const QString &fileName)

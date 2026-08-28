@@ -1,0 +1,39 @@
+#circuit name: ifcn_cut_toggle_ff
+#flow: sequential register-cut P&R v0
+#status: sequential-aware abstract state boundary
+#phase count: 4
+#initiation interval epochs: 4
+#mapped qca cells: 56
+#state arc: d0(t) -> q0(t+1), distance=1, latency=0
+
+#nodes info
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, i0, input, (4,4);
+1, q0, input, (6,4);
+2, d0, output, (5,10);
+3, n0, or, (5,6);
+4, ~n0, not, (5,8);
+#nodes info
+
+#paths info
+### {node1, node2} : path ###
+(0,3): (4,4),(4,5),(4,6),(5,6);
+(1,3): (6,4),(5,4),(5,5),(5,6);
+(3,4): (5,6),(5,7),(5,8);
+(4,2): (5,8),(5,9),(5,10);
+#paths info
+
+#phase map
+### coarse clock resource (x,y) : zero-based phase ###
+(4,4): 0;
+(4,5): 1;
+(4,6): 2;
+(5,4): 1;
+(5,5): 2;
+(5,6): 3;
+(5,7): 0;
+(5,8): 0;
+(5,9): 0;
+(5,10): 0;
+(6,4): 0;
+#phase map

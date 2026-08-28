@@ -8,11 +8,58 @@
 #include <unordered_set>
 #include <utility>
 #include <iterator>
+#include <set>
 #include <string>
 #include <cstdint>
 
 namespace fcngraph{
     using position = std::pair<unsigned int , unsigned int>;
+
+    // One concrete cell in the layer-aware QCA layout.  The layer is physical
+    // topology only: clock phase belongs to the enclosing 5x5 coarse tile,
+    // so every layer at this fine-cell XY inherits phase[(x/5,y/5)].
+    struct PhysicalCellSite
+    {
+        position xy{};
+        int layer = 0;
+
+        PhysicalCellSite() = default;
+        PhysicalCellSite(position coordinate, int physicalLayer = 0)
+            : xy(std::move(coordinate)), layer(physicalLayer)
+        {
+        }
+        PhysicalCellSite(unsigned int x, unsigned int y,
+                         int physicalLayer = 0)
+            : xy{x, y}, layer(physicalLayer)
+        {
+        }
+
+        bool operator==(const PhysicalCellSite &other) const noexcept
+        {
+            return xy == other.xy && layer == other.layer;
+        }
+
+        bool operator!=(const PhysicalCellSite &other) const noexcept
+        {
+            return !(*this == other);
+        }
+
+        bool operator<(const PhysicalCellSite &other) const noexcept
+        {
+            return xy < other.xy ||
+                   (xy == other.xy && layer < other.layer);
+        }
+    };
+
+    // Combinational layouts may trade equivalent intra-tile route shapes for
+    // fewer cells.  Sequential layouts can contain deliberate detours whose
+    // ordered coarse tiles carry clock/epoch latency, so those tiles must be
+    // preserved during cell-level mapping.
+    enum class MappingMode
+    {
+        Combinational,
+        Sequential
+    };
 
     using NodeLinkMap = std::map<
         std::pair<position, std::string>,
@@ -48,14 +95,39 @@ namespace fcngraph{
         Mapping(){}
         ~Mapping(){}
 
-        RouteCellMap mapping_line(std::vector<std::vector<position>>& _example);
+        RouteCellMap mapping_line(
+            std::vector<std::vector<position>>& _example,
+            MappingMode mode = MappingMode::Combinational,
+            const std::vector<unsigned int>& iterationDistances = {});
+        // Reconstruct one directed, 4-neighbour physical-cell path for every
+        // coarse route passed to mapping_line().  This is a geometry/export
+        // view; sequential clock constraints remain on the ordered coarse
+        // tiles and never count these fine-cell steps.
+        std::vector<std::vector<position>> orderedPhysicalRoutes(
+            const std::vector<std::vector<position>>& coarseRoutes) const;
+        // Expand ordered physical geometry through the exact exported QCA
+        // layers.  These extra layer sites do not create clock occurrences.
+        // Lifted crossover segments use layer 2 and their entry/exit pillars
+        // explicitly traverse layers 0, 1 and 2.  Every consecutive pair is
+        // therefore adjacent in the realized three-dimensional cell graph.
+        std::vector<std::vector<PhysicalCellSite>>
+        orderedLayerAwarePhysicalRoutes(
+            const std::vector<std::vector<position>>& coarseRoutes) const;
+        // Exact layer-aware sites emitted by the mapping state before I/O
+        // contraction.  This mirrors the QCAD exporter: node/ordinary wire
+        // cells are on layer 0, crossover corridors on layer 2, and pillar
+        // endpoints occupy layers 0, 1 and 2.
+        std::set<PhysicalCellSite> physicalCellSites(
+            const std::vector<std::vector<position>>& coarseRoutes) const;
         bool validate_crossovers(std::string* error = nullptr) const;
         void routepos_Deviate(std::vector<position>& _oneroutepos_list);
         void deviate_mapping(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list);
         std::string findInVectorPairFirst(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list, position& target_pair);
         bool isfindpostype(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list, position& target_pair, std::string& _type);
         void crossline_mapping(std::vector<std::vector<position>> &_routepos_list);
-        void node_mapping(NodeLinkMap& _Nodelink);
+        void node_mapping(
+            NodeLinkMap& _Nodelink,
+            MappingMode mode = MappingMode::Combinational);
         IoPortContractionStats contract_io_ports(const NodeLinkMap& node_links,
                                                  RouteCellMap& route_cells);
         const std::map<position, position>& io_terminal_origins() const noexcept

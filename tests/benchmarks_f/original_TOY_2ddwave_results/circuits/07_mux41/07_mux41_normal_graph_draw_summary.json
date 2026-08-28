@@ -1,0 +1,1326 @@
+{
+  "benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/original_TOY/07_mux41.v",
+  "resolved_benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/original_TOY/07_mux41.v",
+  "parser_safe_generated": false,
+  "node_count": 18,
+  "edge_count": 21,
+  "input_count": 6,
+  "output_count": 1,
+  "io_count": 7,
+  "layer_count": 6,
+  "seed": 1,
+  "seed_attempts": [
+    {
+      "seed": 1,
+      "failed_edge_count": 0,
+      "clock_template_ok": true,
+      "clock_template_conflicts": 0,
+      "area": 56,
+      "route_expansion_rounds": 4,
+      "route_expansion_exhausted": false
+    }
+  ],
+  "output_dir": "/tmp/ifcn-mux-publish.ACXjyY",
+  "ifcn": "/tmp/ifcn-mux-publish.ACXjyY/07_mux41_normal_graph_draw.ifcn",
+  "encoded_ifcn": "/tmp/ifcn-mux-publish.ACXjyY/07_mux41_normal_graph_draw_encoded.ifcn",
+  "raw_svg": "/tmp/ifcn-mux-publish.ACXjyY/07_mux41_raw.svg",
+  "ordered_svg": "/tmp/ifcn-mux-publish.ACXjyY/07_mux41.svg",
+  "physical_svg": "/tmp/ifcn-mux-publish.ACXjyY/07_mux41_physical.svg",
+  "stage_tex_dir": "",
+  "failed_edge_count": 0,
+  "failed_edges": [],
+  "layout_legal": true,
+  "route_expansion_round_count": 4,
+  "route_expansion_exhausted": false,
+  "route_incompatibility_reason": "",
+  "right_down_port_capacity_nodes": [],
+  "route_expansion_history": [
+    {
+      "round": 1,
+      "previous_failed": 4,
+      "failed": 2,
+      "inserted_rows": [
+        2,
+        4
+      ],
+      "inserted_cols": [
+        1,
+        3
+      ],
+      "shifted_target_rows": 1,
+      "propagated_right_down_moves": 0,
+      "route_variant": "failed-first",
+      "width": 10,
+      "height": 9,
+      "elapsed_sec": 0.27660085799993794
+    },
+    {
+      "round": 2,
+      "previous_failed": 2,
+      "failed": 1,
+      "inserted_rows": [
+        2,
+        7
+      ],
+      "inserted_cols": [
+        2,
+        7
+      ],
+      "shifted_target_rows": 0,
+      "propagated_right_down_moves": 0,
+      "route_variant": "global",
+      "width": 12,
+      "height": 11,
+      "elapsed_sec": 0.2789210789999288
+    },
+    {
+      "round": 3,
+      "previous_failed": 1,
+      "failed": 1,
+      "inserted_rows": [
+        11
+      ],
+      "inserted_cols": [
+        7,
+        9
+      ],
+      "shifted_target_rows": 0,
+      "propagated_right_down_moves": 0,
+      "route_variant": "failed-first-reverse",
+      "width": 14,
+      "height": 11,
+      "elapsed_sec": 0.28081317099986336
+    },
+    {
+      "round": 4,
+      "previous_failed": 1,
+      "failed": 0,
+      "inserted_rows": [
+        5,
+        10
+      ],
+      "inserted_cols": [
+        7,
+        9
+      ],
+      "shifted_target_rows": 0,
+      "propagated_right_down_moves": 0,
+      "route_variant": "global-reverse",
+      "width": 16,
+      "height": 13,
+      "elapsed_sec": 0.28313043399998605
+    }
+  ],
+  "contraction_step_count": 37,
+  "contraction_evaluations": 323,
+  "contraction_global_evaluations": 75,
+  "contraction_recursive_evaluations": 19,
+  "contraction_empty_line_evaluations": 181,
+  "contraction_layer_merge_evaluations": 48,
+  "contraction_exhausted": false,
+  "contraction_history": [
+    {
+      "step": 1,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "axis": "y",
+      "axis_window": [
+        0,
+        12
+      ],
+      "y_window": [
+        0,
+        12
+      ],
+      "node": 11,
+      "from_coord": [
+        6,
+        4
+      ],
+      "to_coord": [
+        6,
+        5
+      ],
+      "route_edge": [
+        11,
+        18
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 16,
+      "old_height": 13,
+      "width": 16,
+      "height": 13,
+      "area": 208,
+      "old_used_cell_count": 109,
+      "used_cell_count": 109,
+      "old_routed_wire_cells": 112,
+      "routed_wire_cells": 113,
+      "pass": 1
+    },
+    {
+      "step": 2,
+      "mode": "phase_node_global_bottom_up",
+      "recursive_depth": 0,
+      "axis": "y",
+      "axis_window": [
+        0,
+        12
+      ],
+      "y_window": [
+        0,
+        12
+      ],
+      "node": 16,
+      "from_coord": [
+        4,
+        12
+      ],
+      "to_coord": [
+        4,
+        11
+      ],
+      "route_edge": [
+        5,
+        16
+      ],
+      "phase_from": 0,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 16,
+      "old_height": 13,
+      "width": 16,
+      "height": 13,
+      "area": 208,
+      "old_used_cell_count": 109,
+      "used_cell_count": 109,
+      "old_routed_wire_cells": 113,
+      "routed_wire_cells": 113,
+      "pass": 1
+    },
+    {
+      "step": 3,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 0,
+      "from_coord": [
+        0,
+        0
+      ],
+      "to_coord": [
+        1,
+        0
+      ],
+      "route_edge": [
+        0,
+        9
+      ],
+      "phase_from": 0,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 16,
+      "old_height": 13,
+      "width": 16,
+      "height": 13,
+      "area": 208,
+      "old_used_cell_count": 109,
+      "used_cell_count": 108,
+      "old_routed_wire_cells": 113,
+      "routed_wire_cells": 112,
+      "pass": 1
+    },
+    {
+      "step": 4,
+      "mode": "phase_node_global_right_left",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 6,
+      "from_coord": [
+        15,
+        12
+      ],
+      "to_coord": [
+        14,
+        12
+      ],
+      "route_edge": [
+        18,
+        6
+      ],
+      "phase_from": 3,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 16,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 108,
+      "used_cell_count": 106,
+      "old_routed_wire_cells": 112,
+      "routed_wire_cells": 110,
+      "pass": 1
+    },
+    {
+      "step": 5,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 4,
+      "from_coord": [
+        0,
+        1
+      ],
+      "to_coord": [
+        1,
+        1
+      ],
+      "route_edge": [
+        4,
+        7
+      ],
+      "phase_from": 1,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 106,
+      "used_cell_count": 101,
+      "old_routed_wire_cells": 110,
+      "routed_wire_cells": 106,
+      "pass": 1
+    },
+    {
+      "step": 6,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 3,
+      "from_coord": [
+        0,
+        10
+      ],
+      "to_coord": [
+        1,
+        10
+      ],
+      "route_edge": [
+        3,
+        14
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 101,
+      "used_cell_count": 100,
+      "old_routed_wire_cells": 106,
+      "routed_wire_cells": 105,
+      "pass": 1
+    },
+    {
+      "step": 7,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 0,
+      "from_coord": [
+        1,
+        0
+      ],
+      "to_coord": [
+        2,
+        0
+      ],
+      "route_edge": [
+        0,
+        9
+      ],
+      "phase_from": 1,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 100,
+      "used_cell_count": 99,
+      "old_routed_wire_cells": 105,
+      "routed_wire_cells": 104,
+      "pass": 1
+    },
+    {
+      "step": 8,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 4,
+      "from_coord": [
+        1,
+        1
+      ],
+      "to_coord": [
+        2,
+        1
+      ],
+      "route_edge": [
+        4,
+        7
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 99,
+      "used_cell_count": 97,
+      "old_routed_wire_cells": 104,
+      "routed_wire_cells": 100,
+      "pass": 1
+    },
+    {
+      "step": 9,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 1,
+      "from_coord": [
+        0,
+        4
+      ],
+      "to_coord": [
+        1,
+        4
+      ],
+      "route_edge": [
+        1,
+        10
+      ],
+      "phase_from": 0,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 97,
+      "used_cell_count": 96,
+      "old_routed_wire_cells": 100,
+      "routed_wire_cells": 99,
+      "pass": 1
+    },
+    {
+      "step": 10,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 0,
+      "from_coord": [
+        2,
+        0
+      ],
+      "to_coord": [
+        3,
+        0
+      ],
+      "route_edge": [
+        0,
+        9
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 96,
+      "used_cell_count": 95,
+      "old_routed_wire_cells": 99,
+      "routed_wire_cells": 98,
+      "pass": 1
+    },
+    {
+      "step": 11,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 4,
+      "from_coord": [
+        2,
+        1
+      ],
+      "to_coord": [
+        3,
+        1
+      ],
+      "route_edge": [
+        4,
+        7
+      ],
+      "phase_from": 3,
+      "phase_target_before": 0,
+      "phase_after": 0,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 95,
+      "used_cell_count": 91,
+      "old_routed_wire_cells": 98,
+      "routed_wire_cells": 94,
+      "pass": 1
+    },
+    {
+      "step": 12,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 1,
+      "from_coord": [
+        1,
+        4
+      ],
+      "to_coord": [
+        2,
+        4
+      ],
+      "route_edge": [
+        1,
+        10
+      ],
+      "phase_from": 1,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 91,
+      "used_cell_count": 90,
+      "old_routed_wire_cells": 94,
+      "routed_wire_cells": 93,
+      "pass": 1
+    },
+    {
+      "step": 13,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 0,
+      "from_coord": [
+        3,
+        0
+      ],
+      "to_coord": [
+        4,
+        0
+      ],
+      "route_edge": [
+        0,
+        9
+      ],
+      "phase_from": 3,
+      "phase_target_before": 0,
+      "phase_after": 0,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 90,
+      "used_cell_count": 89,
+      "old_routed_wire_cells": 93,
+      "routed_wire_cells": 92,
+      "pass": 1
+    },
+    {
+      "step": 14,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 7,
+      "from_coord": [
+        4,
+        1
+      ],
+      "to_coord": [
+        5,
+        1
+      ],
+      "route_edge": [
+        7,
+        9
+      ],
+      "phase_from": 1,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 89,
+      "used_cell_count": 89,
+      "old_routed_wire_cells": 92,
+      "routed_wire_cells": 92,
+      "pass": 1
+    },
+    {
+      "step": 15,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 0,
+      "from_coord": [
+        4,
+        0
+      ],
+      "to_coord": [
+        5,
+        0
+      ],
+      "route_edge": [
+        0,
+        9
+      ],
+      "phase_from": 0,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 89,
+      "used_cell_count": 88,
+      "old_routed_wire_cells": 92,
+      "routed_wire_cells": 91,
+      "pass": 1
+    },
+    {
+      "step": 16,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 14,
+      "from_coord": [
+        4,
+        10
+      ],
+      "to_coord": [
+        5,
+        10
+      ],
+      "route_edge": [
+        14,
+        15
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 88,
+      "used_cell_count": 87,
+      "old_routed_wire_cells": 91,
+      "routed_wire_cells": 92,
+      "pass": 1
+    },
+    {
+      "step": 17,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 3,
+      "from_coord": [
+        1,
+        10
+      ],
+      "to_coord": [
+        2,
+        10
+      ],
+      "route_edge": [
+        3,
+        14
+      ],
+      "phase_from": 3,
+      "phase_target_before": 0,
+      "phase_after": 0,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 87,
+      "used_cell_count": 86,
+      "old_routed_wire_cells": 92,
+      "routed_wire_cells": 91,
+      "pass": 1
+    },
+    {
+      "step": 18,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 3,
+      "from_coord": [
+        2,
+        10
+      ],
+      "to_coord": [
+        3,
+        10
+      ],
+      "route_edge": [
+        3,
+        14
+      ],
+      "phase_from": 0,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 86,
+      "used_cell_count": 85,
+      "old_routed_wire_cells": 91,
+      "routed_wire_cells": 90,
+      "pass": 1
+    },
+    {
+      "step": 19,
+      "mode": "phase_node_global_left_right",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        15
+      ],
+      "y_window": [],
+      "node": 0,
+      "from_coord": [
+        5,
+        0
+      ],
+      "to_coord": [
+        6,
+        0
+      ],
+      "route_edge": [
+        0,
+        9
+      ],
+      "phase_from": 1,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 85,
+      "used_cell_count": 84,
+      "old_routed_wire_cells": 90,
+      "routed_wire_cells": 89,
+      "pass": 1
+    },
+    {
+      "step": 20,
+      "mode": "phase_node_recursive_right_left",
+      "recursive_depth": 1,
+      "axis": "x",
+      "axis_window": [
+        0,
+        7
+      ],
+      "y_window": [],
+      "node": 13,
+      "from_coord": [
+        6,
+        8
+      ],
+      "to_coord": [
+        5,
+        8
+      ],
+      "route_edge": [
+        2,
+        13
+      ],
+      "phase_from": 2,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 13,
+      "area": 195,
+      "old_used_cell_count": 84,
+      "used_cell_count": 83,
+      "old_routed_wire_cells": 89,
+      "routed_wire_cells": 88,
+      "pass": 1
+    },
+    {
+      "step": 21,
+      "mode": "empty_row_delete",
+      "axis": "y",
+      "line": 2,
+      "old_width": 15,
+      "old_height": 13,
+      "width": 15,
+      "height": 12,
+      "area": 180,
+      "old_used_cell_count": 83,
+      "used_cell_count": 81,
+      "old_routed_wire_cells": 88,
+      "routed_wire_cells": 84,
+      "pass": 1
+    },
+    {
+      "step": 22,
+      "mode": "empty_row_delete",
+      "axis": "y",
+      "line": 2,
+      "old_width": 15,
+      "old_height": 12,
+      "width": 15,
+      "height": 11,
+      "area": 165,
+      "old_used_cell_count": 81,
+      "used_cell_count": 78,
+      "old_routed_wire_cells": 84,
+      "routed_wire_cells": 80,
+      "pass": 1
+    },
+    {
+      "step": 23,
+      "mode": "empty_row_delete",
+      "axis": "y",
+      "line": 5,
+      "old_width": 15,
+      "old_height": 11,
+      "width": 15,
+      "height": 10,
+      "area": 150,
+      "old_used_cell_count": 78,
+      "used_cell_count": 71,
+      "old_routed_wire_cells": 80,
+      "routed_wire_cells": 75,
+      "pass": 1
+    },
+    {
+      "step": 24,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 1,
+      "old_width": 15,
+      "old_height": 10,
+      "width": 14,
+      "height": 10,
+      "area": 140,
+      "old_used_cell_count": 71,
+      "used_cell_count": 69,
+      "old_routed_wire_cells": 75,
+      "routed_wire_cells": 72,
+      "pass": 1
+    },
+    {
+      "step": 25,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 6,
+      "old_width": 14,
+      "old_height": 10,
+      "width": 13,
+      "height": 10,
+      "area": 130,
+      "old_used_cell_count": 69,
+      "used_cell_count": 65,
+      "old_routed_wire_cells": 72,
+      "routed_wire_cells": 68,
+      "pass": 1
+    },
+    {
+      "step": 26,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 6,
+      "old_width": 13,
+      "old_height": 10,
+      "width": 12,
+      "height": 10,
+      "area": 120,
+      "old_used_cell_count": 65,
+      "used_cell_count": 61,
+      "old_routed_wire_cells": 68,
+      "routed_wire_cells": 64,
+      "pass": 1
+    },
+    {
+      "step": 27,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 6,
+      "old_width": 12,
+      "old_height": 10,
+      "width": 11,
+      "height": 10,
+      "area": 110,
+      "old_used_cell_count": 61,
+      "used_cell_count": 57,
+      "old_routed_wire_cells": 64,
+      "routed_wire_cells": 60,
+      "pass": 1
+    },
+    {
+      "step": 28,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 6,
+      "old_width": 11,
+      "old_height": 10,
+      "width": 10,
+      "height": 10,
+      "area": 100,
+      "old_used_cell_count": 57,
+      "used_cell_count": 53,
+      "old_routed_wire_cells": 60,
+      "routed_wire_cells": 56,
+      "pass": 1
+    },
+    {
+      "step": 29,
+      "mode": "empty_col_delete",
+      "axis": "x",
+      "line": 6,
+      "old_width": 10,
+      "old_height": 10,
+      "width": 9,
+      "height": 10,
+      "area": 90,
+      "old_used_cell_count": 53,
+      "used_cell_count": 49,
+      "old_routed_wire_cells": 56,
+      "routed_wire_cells": 52,
+      "pass": 1
+    },
+    {
+      "step": 30,
+      "mode": "adjacent_row_merge",
+      "axis": "y",
+      "line": 3,
+      "merged_layers": [
+        3,
+        4
+      ],
+      "first_layer_node_count": 1,
+      "second_layer_node_count": 2,
+      "moved_node_count": 11,
+      "old_width": 9,
+      "old_height": 10,
+      "width": 9,
+      "height": 9,
+      "area": 81,
+      "old_used_cell_count": 49,
+      "used_cell_count": 46,
+      "old_routed_wire_cells": 52,
+      "routed_wire_cells": 49,
+      "pass": 1
+    },
+    {
+      "step": 31,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "axis": "y",
+      "axis_window": [
+        0,
+        8
+      ],
+      "y_window": [
+        0,
+        8
+      ],
+      "node": 9,
+      "from_coord": [
+        5,
+        1
+      ],
+      "to_coord": [
+        5,
+        2
+      ],
+      "route_edge": [
+        9,
+        11
+      ],
+      "phase_from": 2,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 9,
+      "old_height": 9,
+      "width": 9,
+      "height": 9,
+      "area": 81,
+      "old_used_cell_count": 46,
+      "used_cell_count": 46,
+      "old_routed_wire_cells": 49,
+      "routed_wire_cells": 50,
+      "pass": 2
+    },
+    {
+      "step": 32,
+      "mode": "phase_node_global_top_down",
+      "recursive_depth": 0,
+      "axis": "y",
+      "axis_window": [
+        0,
+        8
+      ],
+      "y_window": [
+        0,
+        8
+      ],
+      "node": 0,
+      "from_coord": [
+        5,
+        0
+      ],
+      "to_coord": [
+        5,
+        1
+      ],
+      "route_edge": [
+        0,
+        9
+      ],
+      "phase_from": 1,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 9,
+      "old_height": 9,
+      "width": 9,
+      "height": 8,
+      "area": 72,
+      "old_used_cell_count": 46,
+      "used_cell_count": 45,
+      "old_routed_wire_cells": 50,
+      "routed_wire_cells": 49,
+      "pass": 2
+    },
+    {
+      "step": 33,
+      "mode": "phase_node_global_right_left",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        8
+      ],
+      "y_window": [],
+      "node": 18,
+      "from_coord": [
+        7,
+        8
+      ],
+      "to_coord": [
+        6,
+        8
+      ],
+      "route_edge": [
+        16,
+        18
+      ],
+      "phase_from": 3,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 9,
+      "old_height": 8,
+      "width": 9,
+      "height": 8,
+      "area": 72,
+      "old_used_cell_count": 45,
+      "used_cell_count": 45,
+      "old_routed_wire_cells": 49,
+      "routed_wire_cells": 48,
+      "pass": 2
+    },
+    {
+      "step": 34,
+      "mode": "phase_node_global_right_left",
+      "recursive_depth": 0,
+      "axis": "x",
+      "axis_window": [
+        0,
+        8
+      ],
+      "y_window": [],
+      "node": 6,
+      "from_coord": [
+        8,
+        8
+      ],
+      "to_coord": [
+        7,
+        8
+      ],
+      "route_edge": [
+        18,
+        6
+      ],
+      "phase_from": 0,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 9,
+      "old_height": 8,
+      "width": 8,
+      "height": 8,
+      "area": 64,
+      "old_used_cell_count": 45,
+      "used_cell_count": 43,
+      "old_routed_wire_cells": 48,
+      "routed_wire_cells": 46,
+      "pass": 2
+    },
+    {
+      "step": 35,
+      "mode": "phase_node_recursive_bottom_up",
+      "recursive_depth": 1,
+      "axis": "y",
+      "axis_window": [
+        5,
+        8
+      ],
+      "y_window": [
+        5,
+        8
+      ],
+      "node": 18,
+      "from_coord": [
+        6,
+        8
+      ],
+      "to_coord": [
+        6,
+        7
+      ],
+      "route_edge": [
+        11,
+        18
+      ],
+      "phase_from": 2,
+      "phase_target_before": 1,
+      "phase_after": 1,
+      "old_width": 8,
+      "old_height": 8,
+      "width": 8,
+      "height": 8,
+      "area": 64,
+      "old_used_cell_count": 43,
+      "used_cell_count": 42,
+      "old_routed_wire_cells": 46,
+      "routed_wire_cells": 45,
+      "pass": 2
+    },
+    {
+      "step": 36,
+      "mode": "phase_node_recursive_bottom_up",
+      "recursive_depth": 1,
+      "axis": "y",
+      "axis_window": [
+        5,
+        8
+      ],
+      "y_window": [
+        5,
+        8
+      ],
+      "node": 6,
+      "from_coord": [
+        7,
+        8
+      ],
+      "to_coord": [
+        7,
+        7
+      ],
+      "route_edge": [
+        19,
+        6
+      ],
+      "phase_from": 3,
+      "phase_target_before": 2,
+      "phase_after": 2,
+      "old_width": 8,
+      "old_height": 8,
+      "width": 8,
+      "height": 7,
+      "area": 56,
+      "old_used_cell_count": 42,
+      "used_cell_count": 40,
+      "old_routed_wire_cells": 45,
+      "routed_wire_cells": 43,
+      "pass": 2
+    },
+    {
+      "step": 37,
+      "mode": "phase_node_recursive_right_left",
+      "recursive_depth": 1,
+      "axis": "x",
+      "axis_window": [
+        0,
+        4
+      ],
+      "y_window": [],
+      "node": 13,
+      "from_coord": [
+        4,
+        4
+      ],
+      "to_coord": [
+        3,
+        4
+      ],
+      "route_edge": [
+        2,
+        13
+      ],
+      "phase_from": 0,
+      "phase_target_before": 3,
+      "phase_after": 3,
+      "old_width": 8,
+      "old_height": 7,
+      "width": 8,
+      "height": 7,
+      "area": 56,
+      "old_used_cell_count": 40,
+      "used_cell_count": 40,
+      "old_routed_wire_cells": 43,
+      "routed_wire_cells": 42,
+      "pass": 2
+    }
+  ],
+  "pre_contraction_width": 16,
+  "pre_contraction_height": 13,
+  "pre_contraction_area": 208,
+  "contraction_area_reduction": 152,
+  "contraction_area_reduction_percent": 73.07692307692308,
+  "pre_contraction_used_cell_count": 109,
+  "used_cell_count": 40,
+  "contraction_used_cell_reduction": 69,
+  "contraction_used_cell_reduction_percent": 63.30275229357798,
+  "pre_contraction_routed_wire_cells": 112,
+  "routed_wire_cells": 42,
+  "contraction_routed_wire_cell_reduction": 70,
+  "width": 8,
+  "height": 7,
+  "area": 56,
+  "layout_routing_runtime_sec": 0.6911848639999789,
+  "contraction_runtime_sec": 0.8399678200000835,
+  "run_time_sec": 1.5311526840000624,
+  "algorithm_description": "normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, right-down reachable initialization, structural-feature-guided node reposition, failure-directed row/column expansion, legality-verified recursive top-down/bottom-up phase-aware node-to-wire contraction, fixed-point blank-row/column deletion, and post-routing 2DDWave template consistency verification"
+}

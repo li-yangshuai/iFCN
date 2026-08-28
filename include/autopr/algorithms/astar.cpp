@@ -20,6 +20,9 @@ std::vector<position> Astar::findPath(const position& startPosInput, const posit
     startPos = startPosInput;
     goalPos = goalPosInput;
     is_pathReused = false;
+    if (!isInsideSearchBounds(startPos) || !isInsideSearchBounds(goalPos)) {
+        return {};
+    }
     
     std::unordered_map<position, position, PositionHash> cameFrom;      // 记录父节点，value是父节点
     std::unordered_map<position, double, PositionHash> gScore;          //当前节点到起点的消耗，这里实际作用是当做关闭列表使用
@@ -264,6 +267,9 @@ std::vector<position> Astar::getNeighbors(
                 if(chessboard.gridMap.find(neighbor_pos) == chessboard.gridMap.end())
                     continue;
 
+                if (!isInsideSearchBounds(neighbor_pos))
+                    continue;
+
                 if (!continuesStraightAcrossCurrent(neighbor_pos))
                     continue;
 
@@ -314,6 +320,9 @@ std::vector<position> Astar::getNeighbors(
         }
 
         for(auto &neighbor_pos : can_wire_positions){
+
+            if (!isInsideSearchBounds(neighbor_pos))
+                continue;
 
             if (!continuesStraightAcrossCurrent(neighbor_pos))
                 continue;

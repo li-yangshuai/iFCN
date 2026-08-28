@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 
 ALGORITHM_ROOT = Path(__file__).resolve().parents[1] / "src" / "algorithm"
@@ -36,6 +37,36 @@ def test_adjacent_route_cannot_bypass_incompatible_sink_port():
     assert invalid == []
 
 
+def test_shared_fanout_cannot_route_through_another_gate_at_sink_port():
+    board = iFCN_Lab.MapChessboard()
+    board.placeNode(0, (0, 0), iFCN_Lab.NodeType.Input)
+    board.placeNode(1, (1, 2), iFCN_Lab.NodeType.And)
+    board.placeNode(2, (2, 2), iFCN_Lab.NodeType.Or)
+    router = iFCN_Lab.RightDownAStar(board)
+
+    trunk = router.route_with_dirs(0, 1, (0, 1), (-1, 0))
+    invalid_branch = router.route_with_dirs(0, 2, (0, 1), (-1, 0))
+
+    assert trunk == [(0, 0), (0, 1), (0, 2), (1, 2)]
+    assert invalid_branch == []
+
+
+def test_layout_validation_rejects_route_through_logic_node():
+    draw = NormalGraphDraw.__new__(NormalGraphDraw)
+    draw._coord_cache_dirty = False
+    draw._node_coord = {0: (0, 0), 1: (1, 2), 2: (2, 2)}
+    draw._coord_set = set(draw._node_coord.values())
+    draw.mapChessboard = SimpleNamespace(
+        nodePairRoutes={(0, 2): [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)]}
+    )
+
+    valid, violations, bad_edges = draw.validate_route_topology()
+
+    assert not valid
+    assert bad_edges == {(0, 2)}
+    assert "crosses logic node(s) [1] at (1, 2)" in violations[0][1]
+
+
 def test_rejects_non_monotone_endpoint_ports():
     _, bad_source_router = _router()
     assert bad_source_router.route_with_dirs(0, 1, (-1, 0), (0, -1)) == []
@@ -65,7 +96,7 @@ def test_fallback_cannot_take_another_fanins_reserved_port():
     draw = NormalGraphDraw.__new__(NormalGraphDraw)
     attempted = []
 
-    def fake_route(src, dst, fanout_direction, fanin_direction):
+    def fake_route(src, dst, fanin_direction, fanout_direction=None):
         attempted.append(fanin_direction)
         if fanin_direction == (0, -1):
             return [(0, 0), (0, 1)]
@@ -75,11 +106,31 @@ def test_fallback_cannot_take_another_fanins_reserved_port():
     path, selected = draw._route_edge_with_direction_options(
         0,
         2,
-        (1, 0),
         (-1, 0),
         forbidden_directions={(0, -1)},
     )
 
     assert path == []
+    assert selected == (-1, 0)
+    assert attempted == [(-1, 0)]
+
+
+def test_fallback_uses_only_the_unoccupied_physical_sink_port():
+    draw = NormalGraphDraw.__new__(NormalGraphDraw)
+    draw._uses_right_down_astar = False
+    draw.fanin_directions = {}
+    draw.mapChessboard = SimpleNamespace(
+        nodePairRoutes={(1, 2): [(2, 0), (2, 1)]}
+    )
+    attempted = []
+
+    def fake_route(src, dst, fanin_direction, fanout_direction=None):
+        attempted.append(fanin_direction)
+        return [(0, 1), (1, 1), (2, 1)]
+
+    draw._route_edge = fake_route
+    path, selected = draw._route_edge_with_direction_options(0, 2, (0, -1))
+
+    assert path
     assert selected == (-1, 0)
     assert attempted == [(-1, 0)]

@@ -27,26 +27,18 @@ public:
     // 公开接口
     void handleParseVerilogFile();
     void handleGraphRender();  // 新增的函数
-    void handleJuneRandomClockGraphLayout();
-    void handleLegacyGraphvizGraphDraw();
     void handleGcnRlLayout();
     void handleNormalGraphDrawLayout();
     void runHeuristicLayoutForFile(const QString &filePath);
     void runGraphRenderForFile(const QString &filePath);
-    void runJuneRandomClockGraphLayoutForFile(const QString &filePath);
-    void runLegacyGraphvizGraphDrawForFile(const QString &filePath);
     void runGcnRlLayoutForFile(const QString &filePath,
                                bool quietStatusMessages = false,
                                bool forceLiveTraining = false);
     void runNormalGraphDrawLayoutForFile(const QString &filePath,
                                          bool quietStatusMessages = false,
                                          bool generateVisualizations = false,
-                                         bool generateStageSnapshots = false,
-                                         bool generatePhaseLatex = true,
-                                         const QString &crossingOrderer = QStringLiteral("ogdf"));
+                                         bool generateStageSnapshots = false);
     void generateSVG();
-    bool exportCellLevelLayout(const QString &outputPath,
-                               const QString &selectedFilter = QString());
 
 signals:
     void operationStarted(const QString &title, const QString &detail);
@@ -60,14 +52,14 @@ private:
     bool isOptimizeNOTNode = false;
     bool heuristicLayoutRunning = false;
     bool gcnRlLayoutRunning = false;
-    bool juneRandomClockGraphLayoutRunning = false;
-    bool legacyGraphvizDrawRunning = false;
     int optimizeNOTNode_time = 1;
 
     void mappingCellItem(std::map<unsigned int, position>& _node_pos, 
                                     std::map<std::pair<unsigned int, unsigned int>, 
                                     std::vector<position>>& _nodepair_route, 
                                     Parse _parse, std::map<position, int>& _pos_phase);
+
+    position coordtrans(const position& pos, unsigned int scale);
 
     void putClock(std::map<position, int>& pos_phase);
 
@@ -88,16 +80,17 @@ private:
                               const QString &algorithmLabel,
                               const QString &outputDirSuffix,
                               const QString &outputFileSuffix);
-    QString saveGraphRenderLatex(const QString &sourceFilePath,
-                                 Parse &parse,
-                                 const std::map<unsigned int, position> &nodePositions,
-                                 const std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> &routes,
-                                 const std::map<position, int> &posPhase,
-                                 int phaseCount,
-                                 int width,
-                                 int height,
-                                 const QString &outputDirSuffix,
-                                 const QString &outputFileSuffix);
+    void saveGraphRenderLatex(const QString &sourceFilePath,
+                              Parse &parse,
+                              const std::map<unsigned int, position> &nodePositions,
+                              const std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> &routes,
+                              const std::map<position, int> &posPhase,
+                              int phaseCount,
+                              int width,
+                              int height,
+                              const QString &outputDirSuffix,
+                              const QString &outputFileSuffix,
+                              bool showNullLabels = true);
 
 
 };

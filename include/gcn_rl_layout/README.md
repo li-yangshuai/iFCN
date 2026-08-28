@@ -1,15 +1,15 @@
-# GCN+RL Layout Backend
+# Graphviz+sifting + RL Layout Backend
 
 这个目录是 iFCN GUI 使用的第二 Layout/P&R 后端，保留的是运行链路需要的代码：
 
-- `src/algorithm/main/train_layout_ppo.py`: GCN warm start + PPO/RL 压缩主入口。
+- `src/algorithm/main/train_layout_ppo.py`: Graphviz dot/mincross + 精确增益 sifting warm start 和 PPO/RL 压缩主入口。
 - `src/algorithm/main/train_universal_graph_ppo.py`: 多电路、冻结随机时钟场、动态图动作的通用 GNN+PPO 训练入口。
 - `src/algorithm/main/evaluate_universal_graph_ppo.py`: 在独立电路与独立 clock seeds 上对比 policy 和 warm-start baseline。
 - `scripts/gui_universal_agent_runner.py`: GUI 的通用记忆智能体推理、严格随机时钟验证和 `.ifcn` 导出入口。
 - `scripts/gui_gcn_rl_runner.py`: GUI 调用入口，支持多个 seed 并行训练并选最优结果。
-- `src/algorithm/main/test_randomPhase.py`: GCN 排序、自适应布局、相位感知布线基础实现。
+- `src/algorithm/main/test_randomPhase.py`: Graphviz+sifting 排序、自适应布局、相位感知布线基础实现。
 - `src/algorithm/main/test_normal_graph_draw.py`: 面向 2DDWave 时钟方案的 normal graph draw P&R 入口。
-- `src/algorithm/src`: Python 侧解析、GCN 和 `.ifcn` 导出工具。
+- `src/algorithm/src`: Python 侧解析、Graphviz+sifting（并保留旧 GCN API 兼容层）和 `.ifcn` 导出工具。
 - `src/algorithm/src/stochastic_clock.py`: 先采样后冻结的因果随机时钟场与多场景鲁棒指标。
 - `src/algorithm/src/universal_graph_policy.py`: 面向任意电路规模和动态动作候选的有向图 actor/critic。
 - `src/parse`、`src/chessboard`、`lib/bindings`: 独立 pybind 后端源码。
@@ -19,6 +19,48 @@
 后验 DRC 和多场景 mean+CVaR 反馈。桌面 GUI 已接入训练后的 checkpoint 推理和严格
 合法导出；更大规模 held-out 电路的成功率、面积和延迟仍需继续训练与评估。
 设计、现状审计和接入顺序见 `UNIVERSAL_STOCHASTIC_CLOCK.md`。
+
+## 当前确定性布局布线闭环
+
+`test_normal_graph_draw.py` 的 2DDWave 生产流程为：Graphviz dot/mincross 与精确增益
+sifting 交叉优化、固定分层右下可达放置、端口预留、RightDown A* 全边布线、按失败端点
+压力插入行列，最后执行三阶段“压缩收缩相位算法”。第一阶段从顶部向下扫描上半区
+节点，让节点吸收自己唯一出线的相邻 cell；再从底部向上扫描下半区节点，让节点吸收
+自己唯一入线的相邻 cell。目标位置必须无其他节点、只被该节点的一根关联线占用，而且
+移动方向必须朝当前收缩区间的中心。第二阶段递归二分物理 y 层区间，为内部层建立局部
+中心并重复双向收缩；窗口按递归深度广度优先调度，同一节点首次成功后锁定移动方向，
+避免不同层级来回振荡。每次移动都完整重布全网并验证节点无重叠、右下可达、失败边为
+零和 2DDWave 模板一致。允许面积暂时不变但已用 cell 数不增加的向内移动，以便连续
+局部移动释放边界。第三阶段反复删除不含 node 的行/列；候选层即使有 wire 也会先压缩
+节点坐标，再丢弃旧线路并完整重布。每次删除都重新校验相位，直到不存在仍可合法删除
+的行/列。非法、面积未严格下降或破坏布线/相位的候选完整回退。
+重复失败集合长期不改善时会停止扩张并记录停滞原因，避免用无效空白制造超大面积。
+
+`test_randomPhase.py` 不施加 2DDWave 右下流向：先紧凑放置，A* 搜索路径时同步分配相位，
+失败后在拥塞端点和跨距中部插入行列并完整重布线；成功后使用同样的由外向内收缩，
+每一个收缩候选都重新执行相位感知布线和端口方向校验。
+
+全电路 2DDWave 回归命令：
+
+```bash
+python3 include/gcn_rl_layout/scripts/run_all_normal_graph_layouts.py \
+  --include-generated-sources --jobs 2 \
+  --output-root include/gcn_rl_layout/results/<experiment-name>
+```
+
+目录内会保存逐电路 IFCN、encoded IFCN、日志和 JSON，以及聚合 CSV、JSON、Markdown
+和可单独编译的 LaTeX 长表。
+
+将 2DDWave 未通过项按相同电路清单转入随机时钟复测：
+
+```bash
+python3 include/gcn_rl_layout/scripts/run_random_clock_fallbacks.py \
+  --normal-results include/gcn_rl_layout/results/<experiment-name>/layout_results.json \
+  --output-root include/gcn_rl_layout/results/<experiment-name>/random_clock_fallback
+```
+
+回退脚本同样隔离每个进程、限制单边 A* 状态数和单电路时间，并保留失败/超时，
+不会把部分路由 IFCN 计为合法成功。
 
 最小通用训练示例：
 
@@ -93,8 +135,8 @@ export IFCN_GCN_RL_PYTHON=/home/lys/projects/github/iFCN/include/gcn_rl_layout/m
 - causal clock mode、clock-aligned start、retrieval top-k 和同拓扑记忆检索。
 - 每个候选都经过 exact routing；只有 `strict_success=true` 才导出并加载 `.ifcn`。
 
-`Legacy PPO (advanced)` 页保留旧版逐电路训练的 runs/workers、GCN epochs、RL episodes、
-PPO 参数、repair/pack 和旧 action memory，供对照实验使用。
+`Legacy PPO (advanced)` 页保留旧版逐电路训练的 runs/workers、Graphviz/sifting 搜索预算、
+RL episodes、PPO 参数、repair/pack 和旧 action memory，供对照实验使用。
 
 ## 可选构建 Python 扩展
 

@@ -102,12 +102,31 @@ void MainWindow::updateLayoutInfoFromMapping(const GateLevelMapping &mapping)
     QVector<QPair<QString, QString>> rows;
     rows.push_back({tr("Mode"), tr("Mapped .ifcn")});
     appendIfPresent(rows, tr("Circuit"), mapping.circuitName);
+    QString mappingMode = mapping.resolvedMappingMode() == MappingMode::Sequential
+        ? tr("Sequential") : tr("Combinational");
+    if (!mapping.hasExplicitMappingMode()) {
+        mappingMode += mapping.resolvedMappingMode() == MappingMode::Sequential
+            ? tr(" (legacy inferred)") : tr(" (legacy default)");
+    }
+    rows.push_back({tr("Mapping mode"), mappingMode});
+    int feedbackRoutes = 0;
+    for (auto it = mapping.routeIterationDistances.cbegin();
+         it != mapping.routeIterationDistances.cend(); ++it) {
+        if (it.value() > 0) {
+            ++feedbackRoutes;
+        }
+    }
+    rows.push_back({tr("Feedback routes"), QString::number(feedbackRoutes)});
     appendIfPresent(rows, tr("Gates"), mappingMetadataValue(mapping.metadata, {QStringLiteral("gates number")}));
     appendIfPresent(rows, tr("I/O"), mappingMetadataValue(mapping.metadata, {QStringLiteral("input/output")}));
     appendIfPresent(rows, tr("Edges"), mappingMetadataValue(mapping.metadata, {QStringLiteral("edges number")}));
     appendIfPresent(rows, tr("Layers"), mappingMetadataValue(mapping.metadata, {QStringLiteral("total layers")}));
     appendIfPresent(rows, tr("Area"), mappingMetadataValue(mapping.metadata, {QStringLiteral("layout area")}));
-    appendIfPresent(rows, tr("Mapped cells"), mappingMetadataValue(mapping.metadata, {QStringLiteral("cell count")}));
+    appendIfPresent(rows, tr("Mapped sites"), mappingMetadataValue(mapping.metadata, {
+        QStringLiteral("mapped unique xy sites"),
+        QStringLiteral("mapped qca cells"),
+        QStringLiteral("cell count"),
+    }));
     appendIfPresent(rows, tr("Cross"), mappingMetadataValue(mapping.metadata, {QStringLiteral("cross count")}));
     rows.push_back({tr("Current cells"), QString::number(currentSceneCellCount())});
     appendIfPresent(rows, tr("Critical path"), mappingMetadataValue(mapping.metadata, {QStringLiteral("critical path")}));
@@ -158,6 +177,13 @@ void MainWindow::updateLayoutInfoAfterIoContraction(const CellLevelIoContraction
         !gateLevelMapping->metadata.isEmpty();
     if (mappedSource) {
         appendIfPresent(rows, tr("Circuit"), gateLevelMapping->circuitName);
+        QString mappingMode =
+            gateLevelMapping->resolvedMappingMode() == MappingMode::Sequential
+                ? tr("Sequential") : tr("Combinational");
+        if (!gateLevelMapping->hasExplicitMappingMode()) {
+            mappingMode += tr(" (legacy)");
+        }
+        rows.push_back({tr("Mapping mode"), mappingMode});
         appendIfPresent(rows, tr("Gates"), mappingMetadataValue(
                             gateLevelMapping->metadata, {QStringLiteral("gates number")}));
         appendIfPresent(rows, tr("Edges"), mappingMetadataValue(

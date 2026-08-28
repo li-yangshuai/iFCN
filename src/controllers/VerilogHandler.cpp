@@ -1,12 +1,10 @@
 #include "VerilogHandler.h"
 #include "ui/mainwindow/MainWindow.h"
-#include <autopr/graph/legacyGraphvizRenderer.h>
 #include <QFileDialog>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QSaveFile>
 #include <QMessageBox>
 #include <QImage>
 #include <QDateTime>
@@ -30,11 +28,7 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QScrollArea>
-#include <QGraphicsScene>
-#include <QGraphicsView>
-#include <QGraphicsSvgItem>
 #include <QLineEdit>
-#include <QLabel>
 #include <QSettings>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -44,13 +38,10 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QThread>
-#include <QTimer>
-#include <QSvgRenderer>
 #include <QScopedValueRollback>
 #include <autopr/algorithms/phase_codec.h>
 #include "ui/widgets/GaChessboardInputDialog.h"
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <QElapsedTimer>
 #include <cmath>
@@ -65,26 +56,7 @@
 namespace {
 struct GraphRenderSettings {
     int phaseCount = 4;
-    int maxSamePhase = 4;
-    int maxAttempts = 32;
-    int timeBudgetSeconds = 15;
-    int compactionRounds = 6;
-    bool generateSvg = false;
-    bool generateLatex = false;
-};
-
-struct JuneRandomClockGraphSettings {
-    bool generateSvg = false;
-    bool generateLatex = false;
-};
-
-struct LegacyGraphvizPreviewTaskResult {
-    bool success = false;
-    QString error;
-    QByteArray svg;
-    std::size_t nodeCount = 0;
-    std::size_t edgeCount = 0;
-    double elapsedMilliseconds = 0.0;
+    int maxAttempts = 320;
 };
 
 struct GcnRlSettings {
@@ -93,7 +65,7 @@ struct GcnRlSettings {
     QString checkpoint = "auto";
     QString clockMode = "stochastic-bands";
     QString device = "auto";
-    QString startStrategy = "gcn";
+    QString startStrategy = "structural";
     QString startOrientation = "auto";
     QString trainEvalMode = "auto";
     QString parseMode = "auto";
@@ -108,7 +80,9 @@ struct GcnRlSettings {
     int runs = 2;
     int workers = 2;
     int baseSeed = 7;
-    int gcnEpochs = 120;
+    int graphvizTimeoutSeconds = 60;
+    int siftTimeoutSeconds = 20;
+    int siftEvaluationBudget = 200000;
     int episodes = 80;
     int stepsPerEpisode = 8;
     int ppoEpochs = 4;
@@ -142,8 +116,6 @@ struct GcnRlSettings {
 struct NormalGraphDrawSettings {
     bool generateVisualizations = false;
     bool generateStageSnapshots = false;
-    bool generatePhaseLatex = true;
-    QString crossingOrderer = QStringLiteral("ogdf");
 };
 
 class StatusMessagesMuteGuard
@@ -176,6 +148,8 @@ struct LayoutAttempt {
     unsigned int xSpacing = 4;
     unsigned int ySpacing = 4;
     double searchCost = 90.0;
+    bool reverseWithinLayer = false;
+    bool elasticPlacement = false;
 };
 
 struct LayoutBounds {
@@ -188,36 +162,21 @@ struct LayoutBounds {
     int area = 0;
 };
 
-struct PhaseRepeatStats {
-    int repeatedAdjacent = 0;
-    int totalAdjacent = 0;
+struct PhaseRunStats {
     int maxRun = 1;
 };
 
 struct LayoutSearchResult {
     LayoutBounds bounds;
     int routeLength = 0;
-    PhaseRepeatStats phaseRepeats;
-    QString placementEngine;
+    PhaseRunStats phaseRuns;
     unsigned int xSpacing = 0;
     unsigned int ySpacing = 0;
     double searchCost = 0.0;
-    int compactionCuts = 0;
+    bool elasticPlacement = false;
     std::map<int, fcngraph::position> nodePositions;
     std::map<std::pair<unsigned int, unsigned int>, std::vector<fcngraph::position>> routes;
     std::unordered_map<fcngraph::position, fcngraph::GridCell, fcngraph::PositionHash> gridCells;
-};
-
-struct JuneRandomClockGraphTaskResult {
-    bool success = false;
-    QString error;
-    fcngraph::Parse parse;
-    LayoutSearchResult layout;
-    int gateNum = 0;
-    int inputNum = 0;
-    int outputNum = 0;
-    int wireNum = 0;
-    double elapsedSeconds = 0.0;
 };
 
 struct HeuristicLayoutRequest {
@@ -251,131 +210,25 @@ struct HeuristicLayoutResult {
 
 using HeuristicProgressCallback = std::function<void(const QString &, int, int)>;
 
-void showLegacyGraphvizPreviewDialog(QWidget *parent,
-                                     const QString &sourceFilePath,
-                                     const LegacyGraphvizPreviewTaskResult &result)
-{
-    QDialog dialog(parent);
-    dialog.setObjectName(QStringLiteral("legacyGraphvizPreviewDialog"));
-    dialog.setWindowTitle(QObject::tr("Legacy Graphviz Graph Draw · June 2025"));
-    dialog.resize(1040, 760);
-    dialog.setMinimumSize(720, 520);
-
-    auto *layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(14, 14, 14, 12);
-    layout->setSpacing(10);
-
-    auto *summary = new QLabel(
-        QObject::tr("DOT topology preview for %1 · %2 nodes · %3 edges · %4 ms")
-            .arg(QFileInfo(sourceFilePath).fileName())
-            .arg(result.nodeCount)
-            .arg(result.edgeCount)
-            .arg(result.elapsedMilliseconds, 0, 'f', 1),
-        &dialog);
-    summary->setStyleSheet(QStringLiteral("font-weight: 600; color: #243447;"));
-    layout->addWidget(summary);
-
-    auto *notice = new QLabel(
-        QObject::tr("View only: the arrows below are Graphviz logical edges. They are not the legacy A* physical routes and this preview is not IO-, phase-, or mapping-certified."),
-        &dialog);
-    notice->setObjectName(QStringLiteral("legacyGraphvizPreviewNotice"));
-    notice->setWordWrap(true);
-    notice->setStyleSheet(QStringLiteral(
-        "background: #fff8e1; border: 1px solid #e5c968; border-radius: 6px; "
-        "padding: 8px 10px; color: #644f12;"));
-    layout->addWidget(notice);
-
-    auto *scene = new QGraphicsScene(&dialog);
-    auto *svgItem = new QGraphicsSvgItem();
-    auto *renderer = new QSvgRenderer(result.svg, svgItem);
-    svgItem->setSharedRenderer(renderer);
-    scene->addItem(svgItem);
-    scene->setSceneRect(svgItem->boundingRect().adjusted(-24.0, -24.0, 24.0, 24.0));
-
-    auto *view = new QGraphicsView(scene, &dialog);
-    view->setObjectName(QStringLiteral("legacyGraphvizPreviewView"));
-    view->setDragMode(QGraphicsView::ScrollHandDrag);
-    view->setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing |
-                         QPainter::SmoothPixmapTransform);
-    view->setBackgroundBrush(QColor(250, 251, 253));
-    view->setFrameShape(QFrame::StyledPanel);
-    layout->addWidget(view, 1);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
-    auto *fitButton = buttons->addButton(QObject::tr("Fit"), QDialogButtonBox::ActionRole);
-    auto *zoomInButton = buttons->addButton(QObject::tr("Zoom In"), QDialogButtonBox::ActionRole);
-    auto *zoomOutButton = buttons->addButton(QObject::tr("Zoom Out"), QDialogButtonBox::ActionRole);
-    auto *saveButton = buttons->addButton(QObject::tr("Save SVG…"), QDialogButtonBox::ActionRole);
-    layout->addWidget(buttons);
-
-    const auto fitPreview = [view, svgItem]() {
-        if (!svgItem->boundingRect().isEmpty()) {
-            view->fitInView(svgItem, Qt::KeepAspectRatio);
-        }
-    };
-    QObject::connect(fitButton, &QPushButton::clicked, &dialog, fitPreview);
-    QObject::connect(zoomInButton, &QPushButton::clicked, &dialog,
-                     [view]() { view->scale(1.2, 1.2); });
-    QObject::connect(zoomOutButton, &QPushButton::clicked, &dialog,
-                     [view]() { view->scale(1.0 / 1.2, 1.0 / 1.2); });
-    QObject::connect(saveButton, &QPushButton::clicked, &dialog,
-                     [&dialog, sourceFilePath, svg = result.svg]() {
-        const QFileInfo sourceInfo(sourceFilePath);
-        const QString suggestedPath = sourceInfo.dir().filePath(
-            sourceInfo.completeBaseName() + QStringLiteral("_legacy_graphviz.svg"));
-        QString outputPath = QFileDialog::getSaveFileName(
-            &dialog,
-            QObject::tr("Save Legacy Graphviz Preview"),
-            suggestedPath,
-            QObject::tr("SVG files (*.svg)"));
-        if (outputPath.isEmpty()) {
-            return;
-        }
-        if (QFileInfo(outputPath).suffix().compare(QStringLiteral("svg"), Qt::CaseInsensitive) != 0) {
-            outputPath += QStringLiteral(".svg");
-        }
-
-        QSaveFile output(outputPath);
-        if (!output.open(QIODevice::WriteOnly) || output.write(svg) != svg.size() || !output.commit()) {
-            QMessageBox::warning(
-                &dialog,
-                QObject::tr("Save Legacy Graphviz Preview"),
-                QObject::tr("Could not save %1\n\n%2")
-                    .arg(QDir::toNativeSeparators(outputPath), output.errorString()));
-            return;
-        }
-        QMessageBox::information(
-            &dialog,
-            QObject::tr("Save Legacy Graphviz Preview"),
-            QObject::tr("Saved: %1").arg(QDir::toNativeSeparators(outputPath)));
-    });
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-    QTimer::singleShot(0, &dialog, fitPreview);
-    dialog.exec();
-}
-
 bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
 {
-    // Reproducible/offscreen runs use the same production algorithm and
-    // exporters, while avoiding an interactive settings dialog.
-    if (!qEnvironmentVariable("IFCN_AUTO_GRAPH_RENDER_FILE").trimmed().isEmpty()) {
-        settings.generateSvg = true;
-        settings.generateLatex = true;
+    if (qEnvironmentVariableIsSet("IFCN_COMPACT_GRAPH_BATCH")) {
+        bool phaseOk = false;
+        const int phaseCount = qEnvironmentVariableIntValue("IFCN_COMPACT_GRAPH_PHASES", &phaseOk);
+        if (phaseOk && phaseCount >= 2) {
+            settings.phaseCount = phaseCount;
+        }
+
+        bool attemptsOk = false;
+        const int maxAttempts = qEnvironmentVariableIntValue("IFCN_COMPACT_GRAPH_ATTEMPTS", &attemptsOk);
+        if (attemptsOk && maxAttempts > 0) {
+            settings.maxAttempts = maxAttempts;
+        }
         return true;
     }
 
     QDialog dialog(parent);
-    dialog.setWindowTitle(QObject::tr("Stochastic Compact Graph P&R"));
-    dialog.setMinimumWidth(470);
-
-    auto *description = new QLabel(
-        QObject::tr("Non-GCN flow: OGDF crossing order (deterministic barycenter fallback), "
-                    "unit-spacing compact placement, "
-                    "conflict-driven row/column insertion, four-direction routing, "
-                    "and post-route random-phase closure."),
-        &dialog);
-    description->setWordWrap(true);
+    dialog.setWindowTitle(QObject::tr("Graph Render Options"));
 
     auto *phaseCombo = new QComboBox(&dialog);
     phaseCombo->addItem(QObject::tr("4-phase"), 4);
@@ -383,50 +236,15 @@ bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
     phaseCombo->setCurrentIndex(0);
 
     auto *attemptSpin = new QSpinBox(&dialog);
-    attemptSpin->setRange(1, 128);
+    attemptSpin->setRange(8, 600);
     attemptSpin->setValue(settings.maxAttempts);
-    attemptSpin->setSingleStep(4);
-
-    auto *timeBudgetSpin = new QSpinBox(&dialog);
-    timeBudgetSpin->setRange(5, 300);
-    timeBudgetSpin->setValue(settings.timeBudgetSeconds);
-    timeBudgetSpin->setSuffix(QObject::tr(" s"));
-
-    auto *samePhaseSpin = new QSpinBox(&dialog);
-    samePhaseSpin->setRange(1, 12);
-    samePhaseSpin->setValue(settings.maxSamePhase);
-
-    auto *compactionSpin = new QSpinBox(&dialog);
-    compactionSpin->setRange(0, 16);
-    compactionSpin->setValue(settings.compactionRounds);
+    attemptSpin->setSingleStep(8);
 
     auto *form = new QFormLayout(&dialog);
-    form->addRow(description);
-    form->addRow(QObject::tr("Clock phases:"), phaseCombo);
-    form->addRow(QObject::tr("Maximum same-phase run:"), samePhaseSpin);
+    form->addRow(QObject::tr("Phase assignment:"), phaseCombo);
     form->addRow(QObject::tr("Search attempts:"), attemptSpin);
-    form->addRow(QObject::tr("Candidate time budget:"), timeBudgetSpin);
-    form->addRow(QObject::tr("Fallback compaction rounds:"), compactionSpin);
-
-    auto *outputGroup = new QGroupBox(QObject::tr("Optional output artifacts"), &dialog);
-    auto *outputLayout = new QVBoxLayout(outputGroup);
-    auto *svgCheck = new QCheckBox(
-        QObject::tr("Export final mapped cell-level SVG"), outputGroup);
-    svgCheck->setChecked(settings.generateSvg);
-    auto *latexCheck = new QCheckBox(
-        QObject::tr("Export phase-layout LaTeX (TikZ)"), outputGroup);
-    latexCheck->setChecked(settings.generateLatex);
-    auto *outputNote = new QLabel(
-        QObject::tr("The .ifcn result is always saved because it is required to load and validate the layout."),
-        outputGroup);
-    outputNote->setWordWrap(true);
-    outputLayout->addWidget(svgCheck);
-    outputLayout->addWidget(latexCheck);
-    outputLayout->addWidget(outputNote);
-    form->addRow(outputGroup);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    buttons->button(QDialogButtonBox::Ok)->setText(QObject::tr("Run"));
     form->addWidget(buttons);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -436,61 +254,30 @@ bool readGraphRenderSettings(QWidget *parent, GraphRenderSettings &settings)
     }
 
     settings.phaseCount = phaseCombo->currentData().toInt();
-    settings.maxSamePhase = samePhaseSpin->value();
     settings.maxAttempts = attemptSpin->value();
-    settings.timeBudgetSeconds = timeBudgetSpin->value();
-    settings.compactionRounds = compactionSpin->value();
-    settings.generateSvg = svgCheck->isChecked();
-    settings.generateLatex = latexCheck->isChecked();
     return true;
 }
 
-bool readJuneRandomClockGraphSettings(QWidget *parent,
-                                      JuneRandomClockGraphSettings &settings)
+bool readNormalGraphDrawSettings(QWidget *parent, NormalGraphDrawSettings &settings)
 {
     QDialog dialog(parent);
-    dialog.setWindowTitle(QObject::tr("June 2025 Random-Clock Graph P&R"));
-    dialog.setMinimumWidth(500);
+    dialog.setWindowTitle(QObject::tr("Normal Graph P&R Options"));
+
+    auto *visualCheck = new QCheckBox(
+        QObject::tr("Generate circuit layer/SVG figures"),
+        &dialog);
+    visualCheck->setChecked(settings.generateVisualizations);
+
+    auto *stageCheck = new QCheckBox(
+        QObject::tr("Generate stage debug TeX snapshots"),
+        &dialog);
+    stageCheck->setChecked(settings.generateStageSnapshots);
 
     auto *form = new QFormLayout(&dialog);
-    auto *description = new QLabel(
-        QObject::tr("Hardened restoration of the June 2025 flow: Graphviz DOT "
-                    "placement, source-aware four-direction A* routing, then "
-                    "post-route assignment of an irregular 4-phase clock field."),
-        &dialog);
-    description->setWordWrap(true);
-    form->addRow(description);
+    form->addRow(visualCheck);
+    form->addRow(stageCheck);
 
-    auto *contract = new QLabel(
-        QObject::tr("The original /40 Graphviz scale is attempted first. One "
-                    "roomier /20 fallback is used only when strict routing, "
-                    "phase, or cell-level crossover validation fails."),
-        &dialog);
-    contract->setWordWrap(true);
-    contract->setStyleSheet(QStringLiteral(
-        "background: #eef6ff; border: 1px solid #b8d3ee; border-radius: 6px; "
-        "padding: 8px; color: #294d70;"));
-    form->addRow(contract);
-
-    auto *outputGroup = new QGroupBox(QObject::tr("Optional output artifacts"), &dialog);
-    auto *outputLayout = new QVBoxLayout(outputGroup);
-    auto *svgCheck = new QCheckBox(
-        QObject::tr("Export final mapped cell-level SVG"), outputGroup);
-    svgCheck->setChecked(settings.generateSvg);
-    auto *latexCheck = new QCheckBox(
-        QObject::tr("Export random-clock phase-layout LaTeX (TikZ)"), outputGroup);
-    latexCheck->setChecked(settings.generateLatex);
-    auto *outputNote = new QLabel(
-        QObject::tr("The .ifcn layout is always saved and loaded into the UI."),
-        outputGroup);
-    outputNote->setWordWrap(true);
-    outputLayout->addWidget(svgCheck);
-    outputLayout->addWidget(latexCheck);
-    outputLayout->addWidget(outputNote);
-    form->addRow(outputGroup);
-
-    auto *buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     buttons->button(QDialogButtonBox::Ok)->setText(QObject::tr("Run"));
     form->addWidget(buttons);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -499,123 +286,9 @@ bool readJuneRandomClockGraphSettings(QWidget *parent,
     if (dialog.exec() != QDialog::Accepted) {
         return false;
     }
-    settings.generateSvg = svgCheck->isChecked();
-    settings.generateLatex = latexCheck->isChecked();
-    return true;
-}
 
-bool readNormalGraphDrawSettings(QWidget *parent, NormalGraphDrawSettings &settings)
-{
-    QDialog dialog(parent);
-    dialog.setWindowTitle(QObject::tr("2DDWave Fixed-Clock P&R"));
-    dialog.setMinimumWidth(470);
-
-    auto *rootLayout = new QVBoxLayout(&dialog);
-    rootLayout->setContentsMargins(18, 16, 18, 14);
-    rootLayout->setSpacing(12);
-
-    auto *header = new QFrame(&dialog);
-    header->setObjectName(QStringLiteral("dwaveOptionsHeader"));
-    auto *headerLayout = new QVBoxLayout(header);
-    headerLayout->setContentsMargins(16, 12, 16, 12);
-    headerLayout->setSpacing(3);
-    auto *titleLabel = new QLabel(QObject::tr("Normal Graph Draw · fixed 2DDWave"), header);
-    titleLabel->setObjectName(QStringLiteral("dwaveOptionsTitle"));
-    auto *subtitleLabel = new QLabel(
-        QObject::tr("This flow is specialized for the fixed 2DDWave clock template; it does not search or accept a random clock field."),
-        header);
-    subtitleLabel->setObjectName(QStringLiteral("dwaveOptionsSubtitle"));
-    subtitleLabel->setWordWrap(true);
-    headerLayout->addWidget(titleLabel);
-    headerLayout->addWidget(subtitleLabel);
-    rootLayout->addWidget(header);
-
-    auto *clockGroup = new QGroupBox(QObject::tr("Clock contract"), &dialog);
-    auto *clockForm = new QFormLayout(clockGroup);
-    clockForm->setContentsMargins(12, 12, 12, 10);
-    clockForm->setHorizontalSpacing(18);
-    clockForm->setVerticalSpacing(8);
-    auto *schemeLabel = new QLabel(QObject::tr("2DDWave (fixed)"), clockGroup);
-    auto *coverageLabel = new QLabel(
-        QObject::tr("Every tile in the final layout rectangle"), clockGroup);
-    schemeLabel->setObjectName(QStringLiteral("dwaveContractValue"));
-    coverageLabel->setObjectName(QStringLiteral("dwaveContractValue"));
-    clockForm->addRow(QObject::tr("Clock scheme:"), schemeLabel);
-    clockForm->addRow(QObject::tr("Phase-map coverage:"), coverageLabel);
-    rootLayout->addWidget(clockGroup);
-
-    auto *orderingGroup = new QGroupBox(QObject::tr("Within-layer crossing minimization"), &dialog);
-    auto *orderingForm = new QFormLayout(orderingGroup);
-    orderingForm->setContentsMargins(12, 12, 12, 10);
-    auto *orderingCombo = new QComboBox(orderingGroup);
-    orderingCombo->addItem(
-        QObject::tr("OGDF Sugiyama (fast)"),
-        QStringLiteral("ogdf"));
-    const int orderingIndex = orderingCombo->findData(settings.crossingOrderer);
-    orderingCombo->setCurrentIndex(orderingIndex >= 0 ? orderingIndex : 0);
-    orderingCombo->setToolTip(QObject::tr(
-        "Only the node order inside fixed logic layers changes; placement, routing, compaction, and legality checks are shared."));
-    orderingForm->addRow(QObject::tr("Orderer:"), orderingCombo);
-    rootLayout->addWidget(orderingGroup);
-
-    auto *routingGroup = new QGroupBox(QObject::tr("Monotone routing"), &dialog);
-    auto *routingForm = new QFormLayout(routingGroup);
-    routingForm->setContentsMargins(12, 12, 12, 10);
-    auto *routerLabel = new QLabel(
-        QObject::tr("Auto: negotiated L/Z Manhattan (up to 128 edges), direct/DP for larger graphs"),
-        routingGroup);
-    routerLabel->setWordWrap(true);
-    routerLabel->setObjectName(QStringLiteral("dwaveContractValue"));
-    routingForm->addRow(QObject::tr("Router:"), routerLabel);
-    rootLayout->addWidget(routingGroup);
-
-    auto *outputGroup = new QGroupBox(QObject::tr("Output artifacts"), &dialog);
-    auto *outputLayout = new QVBoxLayout(outputGroup);
-    outputLayout->setContentsMargins(12, 12, 12, 10);
-    outputLayout->setSpacing(8);
-
-    auto *phaseLatexCheck = new QCheckBox(
-        QObject::tr("Export full-layout 2DDWave phase LaTeX"),
-        outputGroup);
-    phaseLatexCheck->setChecked(settings.generatePhaseLatex);
-
-    auto *visualCheck = new QCheckBox(
-        QObject::tr("Export circuit-layer and SVG figures"),
-        outputGroup);
-    visualCheck->setChecked(settings.generateVisualizations);
-
-    auto *stageCheck = new QCheckBox(
-        QObject::tr("Export intermediate debug TeX snapshots"),
-        outputGroup);
-    stageCheck->setChecked(settings.generateStageSnapshots);
-
-    outputLayout->addWidget(phaseLatexCheck);
-    outputLayout->addWidget(visualCheck);
-    outputLayout->addWidget(stageCheck);
-    rootLayout->addWidget(outputGroup);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    buttons->button(QDialogButtonBox::Ok)->setText(QObject::tr("Run"));
-    rootLayout->addWidget(buttons);
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-    dialog.setStyleSheet(QStringLiteral(
-        "QFrame#dwaveOptionsHeader { background: #f0f7f7; border: 1px solid #b8d8d5; border-radius: 8px; }"
-        "QLabel#dwaveOptionsTitle { color: #174b50; font-size: 15px; font-weight: 700; background: transparent; }"
-        "QLabel#dwaveOptionsSubtitle { color: #50666a; background: transparent; }"
-        "QLabel#dwaveContractValue { color: #174b50; font-weight: 600; }"
-        "QGroupBox { font-weight: 600; border: 1px solid #d8dee8; border-radius: 7px; margin-top: 8px; padding-top: 8px; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"));
-
-    if (dialog.exec() != QDialog::Accepted) {
-        return false;
-    }
-
-    settings.generatePhaseLatex = phaseLatexCheck->isChecked();
     settings.generateVisualizations = visualCheck->isChecked();
     settings.generateStageSnapshots = stageCheck->isChecked();
-    settings.crossingOrderer = orderingCombo->currentData().toString();
     return true;
 }
 
@@ -686,7 +359,12 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     settings.allowExactMemoryRetrieval = persisted.value(QStringLiteral("allowExactMemoryRetrieval"), settings.allowExactMemoryRetrieval).toBool();
     settings.runs = persisted.value(QStringLiteral("runs"), settings.runs).toInt();
     settings.workers = persisted.value(QStringLiteral("workers"), settings.workers).toInt();
-    settings.gcnEpochs = persisted.value(QStringLiteral("gcnEpochs"), settings.gcnEpochs).toInt();
+    settings.graphvizTimeoutSeconds = persisted.value(
+        QStringLiteral("graphvizTimeoutSeconds"), settings.graphvizTimeoutSeconds).toInt();
+    settings.siftTimeoutSeconds = persisted.value(
+        QStringLiteral("siftTimeoutSeconds"), settings.siftTimeoutSeconds).toInt();
+    settings.siftEvaluationBudget = persisted.value(
+        QStringLiteral("siftEvaluationBudget"), settings.siftEvaluationBudget).toInt();
     settings.episodes = persisted.value(QStringLiteral("episodes"), settings.episodes).toInt();
     settings.ppoEpochs = persisted.value(QStringLiteral("ppoEpochs"), settings.ppoEpochs).toInt();
     settings.minibatchSize = persisted.value(QStringLiteral("minibatchSize"), settings.minibatchSize).toInt();
@@ -711,6 +389,12 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     settings.clockAlignedStart = environmentBoolOrDefault("IFCN_GCN_RL_CLOCK_ALIGNED_START", settings.clockAlignedStart);
     settings.stochasticActions = environmentBoolOrDefault("IFCN_GCN_RL_STOCHASTIC_ACTIONS", settings.stochasticActions);
     settings.allowExactMemoryRetrieval = environmentBoolOrDefault("IFCN_GCN_RL_ALLOW_EXACT_MEMORY", settings.allowExactMemoryRetrieval);
+    settings.graphvizTimeoutSeconds = environmentIntOrDefault(
+        "IFCN_GRAPHVIZ_TIMEOUT", settings.graphvizTimeoutSeconds);
+    settings.siftTimeoutSeconds = environmentIntOrDefault(
+        "IFCN_SIFT_TIMEOUT", settings.siftTimeoutSeconds);
+    settings.siftEvaluationBudget = environmentIntOrDefault(
+        "IFCN_SIFT_EVALUATIONS", settings.siftEvaluationBudget);
 
     QDialog dialog(parent);
     dialog.setObjectName(QStringLiteral("gcnRlOptionsDialog"));
@@ -879,7 +563,9 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     legacyModeCombo->setCurrentIndex(settings.memoryOnlyInference ? 1 : 0);
     auto *runsSpin = createSpin(1, 16, settings.runs);
     auto *workersSpin = createSpin(1, 16, settings.workers);
-    auto *gcnEpochSpin = createSpin(1, 1000, settings.gcnEpochs, 10);
+    auto *graphvizTimeoutSpin = createSpin(1, 3600, settings.graphvizTimeoutSeconds, 5);
+    auto *siftTimeoutSpin = createSpin(0, 3600, settings.siftTimeoutSeconds, 5);
+    auto *siftEvaluationSpin = createSpin(1, 100000000, settings.siftEvaluationBudget, 10000);
     auto *episodesSpin = createSpin(1, 10000, settings.episodes);
     auto *ppoEpochsSpin = createSpin(1, 1000, settings.ppoEpochs);
     auto *minibatchSpin = createSpin(1, 4096, settings.minibatchSize);
@@ -908,7 +594,9 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     legacyForm->addRow(QObject::tr("Run mode:"), legacyModeCombo);
     legacyForm->addRow(QObject::tr("Parallel runs:"), runsSpin);
     legacyForm->addRow(QObject::tr("Workers:"), workersSpin);
-    legacyForm->addRow(QObject::tr("GCN epochs:"), gcnEpochSpin);
+    legacyForm->addRow(QObject::tr("Graphviz timeout (s):"), graphvizTimeoutSpin);
+    legacyForm->addRow(QObject::tr("Sifting timeout (s):"), siftTimeoutSpin);
+    legacyForm->addRow(QObject::tr("Sifting evaluation budget:"), siftEvaluationSpin);
     legacyForm->addRow(QObject::tr("RL episodes:"), episodesSpin);
     legacyForm->addRow(QObject::tr("PPO epochs:"), ppoEpochsSpin);
     legacyForm->addRow(QObject::tr("Minibatch:"), minibatchSpin);
@@ -1060,7 +748,9 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     settings.memoryOnlyInference = legacyModeCombo->currentData().toBool();
     settings.runs = runsSpin->value();
     settings.workers = workersSpin->value();
-    settings.gcnEpochs = gcnEpochSpin->value();
+    settings.graphvizTimeoutSeconds = graphvizTimeoutSpin->value();
+    settings.siftTimeoutSeconds = siftTimeoutSpin->value();
+    settings.siftEvaluationBudget = siftEvaluationSpin->value();
     settings.episodes = episodesSpin->value();
     settings.ppoEpochs = ppoEpochsSpin->value();
     settings.minibatchSize = minibatchSpin->value();
@@ -1104,7 +794,9 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
     persisted.setValue(QStringLiteral("allowExactMemoryRetrieval"), settings.allowExactMemoryRetrieval);
     persisted.setValue(QStringLiteral("runs"), settings.runs);
     persisted.setValue(QStringLiteral("workers"), settings.workers);
-    persisted.setValue(QStringLiteral("gcnEpochs"), settings.gcnEpochs);
+    persisted.setValue(QStringLiteral("graphvizTimeoutSeconds"), settings.graphvizTimeoutSeconds);
+    persisted.setValue(QStringLiteral("siftTimeoutSeconds"), settings.siftTimeoutSeconds);
+    persisted.setValue(QStringLiteral("siftEvaluationBudget"), settings.siftEvaluationBudget);
     persisted.setValue(QStringLiteral("episodes"), settings.episodes);
     persisted.setValue(QStringLiteral("ppoEpochs"), settings.ppoEpochs);
     persisted.setValue(QStringLiteral("minibatchSize"), settings.minibatchSize);
@@ -1115,34 +807,75 @@ bool readGcnRlSettings(QWidget *parent, GcnRlSettings &settings)
 
 std::vector<LayoutAttempt> buildLayoutAttempts()
 {
-    // Establish a routable baseline first, then move inward.  Starting from
-    // (1,1) is counterproductive with the mandatory one-cell gate-port halo:
-    // those placements are structurally unroutable and used to consume the
-    // majority of the search time before a useful candidate was attempted.
-    std::vector<LayoutAttempt> attempts = {
-        {8, 8, 480.0},
-        {6, 6, 360.0},
-        {6, 4, 300.0}, {4, 6, 300.0},
-        {5, 5, 320.0},
-        {5, 4, 360.0}, {4, 5, 360.0},
-        {4, 4, 420.0},
-        {6, 3, 480.0}, {3, 6, 480.0},
-        {5, 3, 540.0}, {3, 5, 540.0},
-        {4, 3, 600.0}, {3, 4, 600.0},
-        {3, 3, 720.0}
-    };
-    for (unsigned int ySpacing = 3; ySpacing <= 10; ++ySpacing) {
-        for (unsigned int xSpacing = 3; xSpacing <= 10; ++xSpacing) {
-            const bool duplicate = std::any_of(
-                attempts.begin(), attempts.end(), [&](const LayoutAttempt &candidate) {
-                    return candidate.xSpacing == xSpacing &&
-                           candidate.ySpacing == ySpacing;
-                });
-            if (!duplicate) {
-                attempts.push_back({xSpacing, ySpacing,
-                    (xSpacing <= 4 || ySpacing <= 4) ? 600.0 : 420.0});
+    std::vector<LayoutAttempt> generated;
+    for (unsigned int ySpacing = 1; ySpacing <= 14; ++ySpacing) {
+        for (unsigned int xSpacing = 1; xSpacing <= 14; ++xSpacing) {
+            generated.push_back({xSpacing, ySpacing, 90.0});
+            if (xSpacing <= 8 && ySpacing <= 8) {
+                generated.push_back({xSpacing, ySpacing, 150.0});
+            }
+            if (xSpacing <= 3 || ySpacing <= 3 || xSpacing >= 7 || ySpacing >= 7) {
+                generated.push_back({xSpacing, ySpacing, 240.0});
+            }
+            if (xSpacing <= 4 || ySpacing <= 4 || xSpacing >= 7 || ySpacing >= 7) {
+                generated.push_back({xSpacing, ySpacing, 600.0});
             }
         }
+    }
+
+    std::sort(generated.begin(), generated.end(), [](const LayoutAttempt &lhs, const LayoutAttempt &rhs) {
+        const auto lhsArea = lhs.xSpacing * lhs.ySpacing;
+        const auto rhsArea = rhs.xSpacing * rhs.ySpacing;
+        if (lhsArea != rhsArea) {
+            return lhsArea < rhsArea;
+        }
+        if (lhs.searchCost != rhs.searchCost) {
+            return lhs.searchCost < rhs.searchCost;
+        }
+        if (lhs.ySpacing != rhs.ySpacing) {
+            return lhs.ySpacing < rhs.ySpacing;
+        }
+        return lhs.xSpacing < rhs.xSpacing;
+    });
+
+    // Layered circuits primarily need vertical clearance.  Put a short set
+    // of compact, vertically biased candidates before the exhaustive area
+    // ordering so small legal layouts are evaluated before wide fallbacks.
+    std::vector<LayoutAttempt> attempts;
+    std::set<std::tuple<unsigned int, unsigned int, double, bool, bool>> inserted;
+    const auto appendUnique = [&attempts, &inserted](const LayoutAttempt &attempt) {
+        const auto key = std::make_tuple(
+            attempt.xSpacing, attempt.ySpacing, attempt.searchCost,
+            attempt.reverseWithinLayer, attempt.elasticPlacement);
+        if (inserted.insert(key).second) {
+            attempts.push_back(attempt);
+        }
+    };
+    for (const LayoutAttempt &attempt : std::vector<LayoutAttempt>{
+             // Elastic seeds use xSpacing/ySpacing only as a starting scale;
+             // non-input gates receive independent physical Y coordinates.
+             {1, 2, 90.0, false, true}, {2, 2, 90.0, false, true},
+             {1, 3, 150.0, false, true}, {2, 3, 150.0, false, true},
+             {2, 4, 240.0, false, true}, {3, 4, 240.0, false, true},
+             {2, 5, 240.0, false, true}, {3, 5, 600.0, false, true},
+             {3, 6, 600.0, false, true}, {4, 6, 600.0, false, true},
+             // Some shallow MAJ networks need horizontal port clearance.
+             {3, 1, 90.0}, {4, 1, 90.0},
+             {5, 1, 90.0}, {6, 1, 90.0},
+             {3, 4, 240.0, true}, {3, 4, 240.0},
+             {1, 2, 90.0, true, true}, {2, 2, 90.0, true, true},
+             {2, 3, 150.0, true, true}, {3, 4, 240.0, true, true},
+             {1, 1, 90.0, true}, {1, 2, 90.0, true},
+             {2, 2, 90.0, true}, {2, 3, 150.0, true},
+             {2, 4, 240.0, true}, {3, 4, 240.0, true},
+             {3, 5, 600.0, true}, {4, 6, 600.0, true},
+             {1, 1, 90.0}, {1, 2, 90.0}, {2, 2, 90.0},
+             {2, 3, 150.0}, {2, 4, 240.0}, {3, 4, 240.0},
+             {3, 5, 600.0}, {4, 6, 600.0}}) {
+        appendUnique(attempt);
+    }
+    for (const LayoutAttempt &attempt : generated) {
+        appendUnique(attempt);
     }
     return attempts;
 }
@@ -1265,9 +998,12 @@ QString safeParseNodeType(fcngraph::Parse &parse, unsigned int nodeIndex, const 
     return type.isEmpty() ? fallbackType : type;
 }
 
-QString rlStyleCoord(const fcngraph::position &pos, int gridHeight)
+QString rlStyleCoord(const fcngraph::position &pos)
 {
-    const int drawY = gridHeight - static_cast<int>(pos.second) - 1;
+    // Qt uses a downward-positive Y axis, while TikZ uses an upward-positive
+    // Y axis. Convert exactly once at the exporter boundary. Nodes, routes,
+    // and phase cells all use this helper, so their coordinates stay aligned.
+    const int drawY = -static_cast<int>(pos.second);
     return QStringLiteral("(%1,%2)").arg(pos.first).arg(drawY);
 }
 
@@ -1406,20 +1142,6 @@ GateLevelIfcnLayout restoreHiddenNotNodesForIfcn(
         occupiedPositions.insert(entry.second);
         layout.nodeNames[entry.first] = safeParseNodeName(parse, entry.first);
         layout.nodeTypes[entry.first] = safeParseNodeType(parse, entry.first, QStringLiteral("unknown"));
-    }
-    std::map<fcngraph::position, std::set<unsigned int>> routeSourcesByPosition;
-    for (const auto &route : layout.routes) {
-        for (const fcngraph::position &routePosition : route.second) {
-            routeSourcesByPosition[routePosition].insert(route.first.first);
-        }
-    }
-    for (const auto &usage : routeSourcesByPosition) {
-        if (usage.second.size() > 1) {
-            // A restored gate must never replace an inter-source crossover
-            // cell.  The route-only mapper cannot diagnose that node/cross
-            // collision until after the scene has begun to load.
-            occupiedPositions.insert(usage.first);
-        }
     }
     for (const auto &entry : parse.hide_not_place_pair) {
         maxNodeIndex = std::max(maxNodeIndex, entry.first);
@@ -1668,11 +1390,11 @@ int totalRouteLength(const std::map<std::pair<unsigned int, unsigned int>, std::
     return length;
 }
 
-PhaseRepeatStats calculatePhaseRepeatStats(
+PhaseRunStats calculatePhaseRunStats(
     const std::map<std::pair<unsigned int, unsigned int>, std::vector<fcngraph::position>> &routes,
     const std::unordered_map<fcngraph::position, fcngraph::GridCell, fcngraph::PositionHash> &gridCells)
 {
-    PhaseRepeatStats stats;
+    PhaseRunStats stats;
     for (const auto &route : routes) {
         int previousPhase = -1;
         int currentRun = 1;
@@ -1680,9 +1402,7 @@ PhaseRepeatStats calculatePhaseRepeatStats(
             auto cell = gridCells.find(pos);
             const int phase = (cell != gridCells.end()) ? cell->second.getPhase() : -1;
             if (phase >= 1 && previousPhase >= 1) {
-                ++stats.totalAdjacent;
                 if (phase == previousPhase) {
-                    ++stats.repeatedAdjacent;
                     ++currentRun;
                     stats.maxRun = std::max(stats.maxRun, currentRun);
                 } else {
@@ -1697,205 +1417,38 @@ PhaseRepeatStats calculatePhaseRepeatStats(
     return stats;
 }
 
-using JuneProgressCallback = std::function<void(const QString &, int, int)>;
-
-JuneRandomClockGraphTaskResult runJuneRandomClockGraphSearch(
-    const QString &filePath,
-    const JuneProgressCallback &progress)
+constexpr int phaseRunLimit()
 {
-    JuneRandomClockGraphTaskResult task;
-    QElapsedTimer timer;
-    timer.start();
-
-    try {
-        const std::string source = filePath.toStdString();
-        Parse parse;
-        parse.parseVerilog(source);
-        if (parse.getm_numVertices() == 0) {
-            throw std::runtime_error("The Verilog file contains no placeable circuit nodes.");
-        }
-
-        task.gateNum = parse.getm_numVertices();
-        task.inputNum = parse.get_input_num();
-        task.outputNum = parse.get_output_num();
-        task.wireNum = parse.getm_numEdges();
-
-        if (progress) {
-            progress(QObject::tr("Parsing and optimizing the June graph pipeline"), 5, 100);
-        }
-        parse.optimizeAIOG_DRC(2, 2, 2, 2, 2, 2);
-        // The July 14 Graph Draw revision intentionally kept buffer nodes
-        // in the DOT topology.  Removing them here changes both the Graphviz
-        // geometry and the compact-area characteristics of that algorithm.
-        parse.addLayerRedundancyNode();
-        parse.caculateSameLayerNodeRoutePair();
-
-        struct JuneAttempt {
-            double gridSize;
-            double searchCost;
-            int routeOrderRetries;
-        };
-        // The first candidate keeps the June /40 Graphviz geometry and fast
-        // bounded search.  The roomier candidate is used only when strict
-        // source ownership or phase validation rejects that result.
-        const std::array<JuneAttempt, 2> attempts{{
-            {40.0, 40.0, 4},
-            {20.0, 320.0, 24},
-        }};
-
-        std::optional<LayoutSearchResult> selectedLayout;
-        QString lastFailure = QObject::tr("no legal candidate was produced");
-        for (std::size_t attemptIndex = 0; attemptIndex < attempts.size(); ++attemptIndex) {
-            const JuneAttempt &attempt = attempts[attemptIndex];
-            if (progress) {
-                progress(
-                    QObject::tr("June candidate %1/%2: Graphviz scale /%3, A* cost %4")
-                        .arg(attemptIndex + 1)
-                        .arg(attempts.size())
-                        .arg(attempt.gridSize, 0, 'f', 0)
-                        .arg(attempt.searchCost, 0, 'f', 0),
-                    12 + static_cast<int>(attemptIndex) * 30,
-                    100);
-            }
-
-            GridChessboard board;
-            Astar router(board, false, attempt.searchCost);
-            router.setAllowInterSourceWireOverlap(false);
-            CircuitGraph graph(parse, source, board, router);
-            graph.setFitnessCallback([&lastFailure](const std::string &detail) {
-                if (detail.rfind("June random-clock graph P&R:", 0) == 0 ||
-                    detail.rfind("A* routing failed", 0) == 0) {
-                    lastFailure = QString::fromStdString(detail);
-                }
-            });
-
-            if (!graph.placeAndRouteJuneRandomClock(
-                    4, attempt.gridSize, attempt.routeOrderRetries)) {
-                continue;
-            }
-
-            std::map<unsigned int, position> candidateNodePositions;
-            for (const auto &node : graph.nodeIndex_pos) {
-                candidateNodePositions[static_cast<unsigned int>(node.first)] = node.second;
-            }
-            const GateLevelIfcnLayout restoredCandidate = restoreHiddenNotNodesForIfcn(
-                parse, candidateNodePositions, graph.routes);
-            if (restoredCandidate.skippedHiddenNotRoutes > 0) {
-                lastFailure = QObject::tr("hidden-NOT restoration skipped %1 route(s)")
-                    .arg(restoredCandidate.skippedHiddenNotRoutes);
-                continue;
-            }
-
-            std::vector<std::vector<position>> restoredRouteGeometry;
-            restoredRouteGeometry.reserve(restoredCandidate.routes.size());
-            for (const auto &route : restoredCandidate.routes) {
-                restoredRouteGeometry.push_back(route.second);
-            }
-            Mapping restoredMapping;
-            restoredMapping.mapping_line(restoredRouteGeometry);
-            std::string restoredCrossoverError;
-            if (!restoredMapping.validate_crossovers(&restoredCrossoverError)) {
-                lastFailure = QObject::tr("hidden-NOT restoration produced an invalid crossover: %1")
-                    .arg(QString::fromStdString(restoredCrossoverError));
-                continue;
-            }
-
-            const auto bounds = calculateGridBounds(board.getGridMap());
-            if (!bounds.has_value()) {
-                lastFailure = QObject::tr("the routed board is empty");
-                continue;
-            }
-
-            LayoutSearchResult result;
-            result.bounds = bounds.value();
-            result.routeLength = totalRouteLength(graph.routes);
-            result.phaseRepeats = calculatePhaseRepeatStats(graph.routes, board.getGridMap());
-            result.searchCost = attempt.searchCost;
-            result.nodePositions = graph.nodeIndex_pos;
-            result.routes = graph.routes;
-            result.gridCells = board.getGridMap();
-            selectedLayout = std::move(result);
-            break;
-        }
-
-        if (!selectedLayout.has_value()) {
-            throw std::runtime_error(
-                QObject::tr("June Graphviz/A* pipeline failed both bounded candidates. Last status: %1")
-                    .arg(lastFailure)
-                    .toStdString());
-        }
-
-        task.parse = std::move(parse);
-        task.layout = std::move(selectedLayout.value());
-        task.success = true;
-    } catch (const std::exception &ex) {
-        task.error = QString::fromLocal8Bit(ex.what());
-    } catch (...) {
-        task.error = QObject::tr("unknown June Graphviz/A* failure");
-    }
-    task.elapsedSeconds = timer.elapsed() / 1000.0;
-    return task;
+    return 4;
 }
 
-int phaseRepeatMaxRunLimit(int phaseCount)
+bool hasAcceptablePhaseRun(const PhaseRunStats &stats)
 {
-    return std::max(phaseCount + 2, phaseCount * 2 + 2);
+    return stats.maxRun <= phaseRunLimit();
 }
 
-bool hasAcceptablePhaseRepeats(const PhaseRepeatStats &stats, int phaseCount)
+int phaseRunPenalty(const PhaseRunStats &stats)
 {
-    if (stats.maxRun > phaseRepeatMaxRunLimit(phaseCount)) {
-        return false;
-    }
-    if (stats.totalAdjacent == 0) {
-        return true;
-    }
-    return stats.repeatedAdjacent * 10 <= stats.totalAdjacent * 3;
-}
-
-int phaseRepeatPenalty(const PhaseRepeatStats &stats, int phaseCount)
-{
-    const int maxRunPenalty = std::max(0, stats.maxRun - phaseRepeatMaxRunLimit(phaseCount));
-    const int repeatPenalty = (stats.totalAdjacent == 0)
-        ? 0
-        : std::max(0, stats.repeatedAdjacent * 10 - stats.totalAdjacent * 3);
-    return maxRunPenalty * 100000 + repeatPenalty;
+    return std::max(0, stats.maxRun - phaseRunLimit());
 }
 
 bool isBetterLayout(const LayoutSearchResult &candidate,
-                    const LayoutSearchResult &currentBest,
-                    int phaseCount)
+                    const LayoutSearchResult &currentBest)
 {
-    const bool candidatePhaseOk = hasAcceptablePhaseRepeats(candidate.phaseRepeats, phaseCount);
-    const bool currentPhaseOk = hasAcceptablePhaseRepeats(currentBest.phaseRepeats, phaseCount);
-    if (candidatePhaseOk != currentPhaseOk) {
-        return candidatePhaseOk;
-    }
-
-    if (candidatePhaseOk) {
-        const auto score = [](const LayoutSearchResult &layout) {
-            return std::make_tuple(layout.bounds.area,
-                                   layout.phaseRepeats.maxRun,
-                                   layout.phaseRepeats.repeatedAdjacent,
-                                   layout.routeLength,
-                                   std::max(layout.bounds.width, layout.bounds.height),
-                                   layout.bounds.width,
-                                   layout.bounds.height,
-                                   layout.xSpacing * layout.ySpacing,
-                                   layout.searchCost);
-        };
-        return score(candidate) < score(currentBest);
-    }
-
-    const auto score = [phaseCount](const LayoutSearchResult &layout) {
-        return std::make_tuple(phaseRepeatPenalty(layout.phaseRepeats, phaseCount),
-                               layout.phaseRepeats.maxRun,
-                               layout.phaseRepeats.repeatedAdjacent,
-                               layout.bounds.area,
+    // Phase continuity is a hard validity check performed by assignPhases().
+    // The four-cell same-phase run is a quality preference, not a geometric
+    // design-rule failure.  Area therefore remains the primary objective;
+    // among equal-area layouts prefer the smaller phase-run penalty.
+    const auto score = [](const LayoutSearchResult &layout) {
+        return std::make_tuple(layout.bounds.area,
+                               phaseRunPenalty(layout.phaseRuns),
+                               layout.phaseRuns.maxRun,
                                layout.routeLength,
                                std::max(layout.bounds.width, layout.bounds.height),
                                layout.bounds.width,
-                               layout.bounds.height);
+                               layout.bounds.height,
+                               layout.xSpacing * layout.ySpacing,
+                               layout.searchCost);
     };
 
     return score(candidate) < score(currentBest);
@@ -1924,257 +1477,6 @@ QString projectSourceDir()
 #else
     return QString();
 #endif
-}
-
-struct FixedLayerOrderResult
-{
-    std::vector<std::vector<int>> layers;
-    QString engine;
-    int crossings = -1;
-};
-
-int countAdjacentLayerCrossings(const std::vector<std::vector<int>> &layers,
-                                const std::vector<std::pair<int, int>> &edges)
-{
-    std::map<int, std::pair<int, int>> positionByNode;
-    for (std::size_t layer = 0; layer < layers.size(); ++layer) {
-        for (std::size_t order = 0; order < layers[layer].size(); ++order) {
-            positionByNode[layers[layer][order]] = {
-                static_cast<int>(layer), static_cast<int>(order)};
-        }
-    }
-
-    int crossings = 0;
-    for (std::size_t left = 0; left < edges.size(); ++left) {
-        const auto leftSource = positionByNode.find(edges[left].first);
-        const auto leftTarget = positionByNode.find(edges[left].second);
-        if (leftSource == positionByNode.end() || leftTarget == positionByNode.end() ||
-            leftTarget->second.first != leftSource->second.first + 1) {
-            continue;
-        }
-        for (std::size_t right = left + 1; right < edges.size(); ++right) {
-            const auto rightSource = positionByNode.find(edges[right].first);
-            const auto rightTarget = positionByNode.find(edges[right].second);
-            if (rightSource == positionByNode.end() || rightTarget == positionByNode.end() ||
-                rightSource->second.first != leftSource->second.first ||
-                rightTarget->second.first != leftTarget->second.first) {
-                continue;
-            }
-            const int sourceDelta = leftSource->second.second - rightSource->second.second;
-            const int targetDelta = leftTarget->second.second - rightTarget->second.second;
-            if (sourceDelta != 0 && targetDelta != 0 &&
-                ((sourceDelta < 0) != (targetDelta < 0))) {
-                ++crossings;
-            }
-        }
-    }
-    return crossings;
-}
-
-std::vector<std::vector<int>> barycenterFixedLayerOrder(
-    const std::vector<std::vector<int>> &originalLayers,
-    const std::vector<std::pair<int, int>> &edges)
-{
-    std::vector<std::vector<int>> layers = originalLayers;
-    std::map<int, std::vector<int>> predecessors;
-    std::map<int, std::vector<int>> successors;
-    std::map<int, int> layerOf;
-    for (std::size_t layer = 0; layer < layers.size(); ++layer) {
-        for (int node : layers[layer]) {
-            layerOf[node] = static_cast<int>(layer);
-        }
-    }
-    for (const auto &edge : edges) {
-        const auto sourceLayer = layerOf.find(edge.first);
-        const auto targetLayer = layerOf.find(edge.second);
-        if (sourceLayer == layerOf.end() || targetLayer == layerOf.end() ||
-            targetLayer->second != sourceLayer->second + 1) {
-            continue;
-        }
-        successors[edge.first].push_back(edge.second);
-        predecessors[edge.second].push_back(edge.first);
-    }
-
-    const auto reorder = [](std::vector<int> &nodes,
-                            const std::vector<int> &reference,
-                            const std::map<int, std::vector<int>> &neighbors) {
-        std::map<int, int> referenceOrder;
-        for (std::size_t index = 0; index < reference.size(); ++index) {
-            referenceOrder[reference[index]] = static_cast<int>(index);
-        }
-        std::map<int, int> oldOrder;
-        for (std::size_t index = 0; index < nodes.size(); ++index) {
-            oldOrder[nodes[index]] = static_cast<int>(index);
-        }
-        const auto barycenter = [&](int node) {
-            const auto found = neighbors.find(node);
-            if (found == neighbors.end() || found->second.empty()) {
-                return static_cast<double>(oldOrder[node]);
-            }
-            double sum = 0.0;
-            int count = 0;
-            for (int adjacent : found->second) {
-                const auto order = referenceOrder.find(adjacent);
-                if (order != referenceOrder.end()) {
-                    sum += order->second;
-                    ++count;
-                }
-            }
-            return count > 0 ? sum / count : static_cast<double>(oldOrder[node]);
-        };
-        std::stable_sort(nodes.begin(), nodes.end(), [&](int left, int right) {
-            const double leftCenter = barycenter(left);
-            const double rightCenter = barycenter(right);
-            if (leftCenter != rightCenter) {
-                return leftCenter < rightCenter;
-            }
-            return oldOrder[left] < oldOrder[right];
-        });
-    };
-
-    std::vector<std::vector<int>> best = layers;
-    int bestCrossings = countAdjacentLayerCrossings(best, edges);
-    for (int pass = 0; pass < 8; ++pass) {
-        for (std::size_t layer = 1; layer < layers.size(); ++layer) {
-            reorder(layers[layer], layers[layer - 1], predecessors);
-        }
-        for (std::size_t offset = 1; offset < layers.size(); ++offset) {
-            const std::size_t layer = layers.size() - 1 - offset;
-            reorder(layers[layer], layers[layer + 1], successors);
-        }
-        const int crossings = countAdjacentLayerCrossings(layers, edges);
-        if (crossings < bestCrossings) {
-            bestCrossings = crossings;
-            best = layers;
-        }
-    }
-    return best;
-}
-
-FixedLayerOrderResult fixedLayerCrossingOrder(fcngraph::Parse &parse)
-{
-    FixedLayerOrderResult result;
-    const auto &parserLayers = parse.getlayerNodeDivVec();
-    result.layers.reserve(parserLayers.size());
-    for (const auto &layer : parserLayers) {
-        result.layers.emplace_back(layer.begin(), layer.end());
-    }
-    const auto edges = parse.getEffectiveEdges();
-
-    QStringList candidates;
-    const QString configured = qEnvironmentVariable("IFCN_OGDF_ORDERER").trimmed();
-    if (!configured.isEmpty()) {
-        candidates << configured;
-    }
-    const QString sourceRoot = projectSourceDir();
-    if (!sourceRoot.isEmpty()) {
-        candidates << QDir(sourceRoot).filePath(QStringLiteral("build/ifcn_ogdf_layer_order"))
-                   << QDir(sourceRoot).filePath(QStringLiteral("build-release/ifcn_ogdf_layer_order"))
-                   << QDir(sourceRoot).filePath(QStringLiteral("build-ogdf/ifcn_ogdf_layer_order"));
-    }
-    candidates << QDir(QCoreApplication::applicationDirPath()).filePath(
-        QStringLiteral("ifcn_ogdf_layer_order"));
-
-    QString executable;
-    for (const QString &candidate : candidates) {
-        const QFileInfo info(candidate);
-        if (info.isFile() && info.isExecutable()) {
-            executable = info.absoluteFilePath();
-            break;
-        }
-    }
-
-    if (!executable.isEmpty()) {
-        std::map<int, int> layerOf;
-        QString payload;
-        QTextStream stream(&payload);
-        int adjacentEdgeCount = 0;
-        for (std::size_t layer = 0; layer < result.layers.size(); ++layer) {
-            for (int node : result.layers[layer]) {
-                layerOf[node] = static_cast<int>(layer);
-            }
-        }
-        for (const auto &edge : edges) {
-            if (layerOf.count(edge.first) != 0 && layerOf.count(edge.second) != 0 &&
-                layerOf[edge.second] == layerOf[edge.first] + 1) {
-                ++adjacentEdgeCount;
-            }
-        }
-        int nodeCount = 0;
-        for (const auto &layer : result.layers) {
-            nodeCount += static_cast<int>(layer.size());
-        }
-        stream << nodeCount << ' ' << adjacentEdgeCount << ' '
-               << result.layers.size() << '\n';
-        for (std::size_t layer = 0; layer < result.layers.size(); ++layer) {
-            for (std::size_t order = 0; order < result.layers[layer].size(); ++order) {
-                stream << result.layers[layer][order] << ' ' << layer << ' ' << order << '\n';
-            }
-        }
-        for (const auto &edge : edges) {
-            if (layerOf.count(edge.first) != 0 && layerOf.count(edge.second) != 0 &&
-                layerOf[edge.second] == layerOf[edge.first] + 1) {
-                stream << edge.first << ' ' << edge.second << '\n';
-            }
-        }
-
-        QProcess process;
-        process.start(executable);
-        if (process.waitForStarted(2000)) {
-            process.write(payload.toUtf8());
-            process.closeWriteChannel();
-            if (process.waitForFinished(30000) && process.exitStatus() == QProcess::NormalExit &&
-                process.exitCode() == 0) {
-                const QStringList lines = QString::fromUtf8(process.readAllStandardOutput())
-                    .split(QRegularExpression(QStringLiteral("[\\r\\n]+")), Qt::SkipEmptyParts);
-                std::vector<std::vector<int>> ordered(result.layers.size());
-                bool valid = !lines.isEmpty() && lines.front().startsWith(QStringLiteral("OGDF "));
-                for (int lineIndex = 1; valid && lineIndex < lines.size(); ++lineIndex) {
-                    const QStringList fields = lines[lineIndex].trimmed().split(
-                        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
-                    if (fields.size() != 3) {
-                        valid = false;
-                        break;
-                    }
-                    bool layerOk = false, orderOk = false, nodeOk = false;
-                    const int layer = fields[0].toInt(&layerOk);
-                    const int order = fields[1].toInt(&orderOk);
-                    const int node = fields[2].toInt(&nodeOk);
-                    if (!layerOk || !orderOk || !nodeOk || layer < 0 ||
-                        layer >= static_cast<int>(ordered.size()) ||
-                        order != static_cast<int>(ordered[layer].size())) {
-                        valid = false;
-                        break;
-                    }
-                    ordered[layer].push_back(node);
-                }
-                if (valid) {
-                    for (std::size_t layer = 0; layer < ordered.size(); ++layer) {
-                        std::set<int> expected(result.layers[layer].begin(), result.layers[layer].end());
-                        std::set<int> received(ordered[layer].begin(), ordered[layer].end());
-                        if (expected != received) {
-                            valid = false;
-                            break;
-                        }
-                    }
-                }
-                if (valid) {
-                    result.layers = std::move(ordered);
-                    result.engine = QStringLiteral("OGDF Sugiyama fixed-layer");
-                    result.crossings = countAdjacentLayerCrossings(result.layers, edges);
-                    return result;
-                }
-            } else if (process.state() != QProcess::NotRunning) {
-                process.kill();
-                process.waitForFinished(1000);
-            }
-        }
-    }
-
-    result.layers = barycenterFixedLayerOrder(result.layers, edges);
-    result.engine = QStringLiteral("deterministic barycenter fixed-layer fallback");
-    result.crossings = countAdjacentLayerCrossings(result.layers, edges);
-    return result;
 }
 
 bool hasGcnRlScript(const QString &rootPath)
@@ -2407,15 +1709,6 @@ QString locateNormalGraphDrawIfcn(const QString &outputDirPath, const QString &s
     return QString();
 }
 
-QString locateNormalGraphDrawLatex(const QString &outputDirPath)
-{
-    const QDir outputDir(outputDirPath);
-    const QStringList candidates = outputDir.entryList(QStringList() << "*.tex",
-                                                       QDir::Files,
-                                                       QDir::Time);
-    return candidates.isEmpty() ? QString() : outputDir.filePath(candidates.first());
-}
-
 QString findIfcnMetricsExecutable()
 {
     const QString envPath = QString::fromLocal8Bit(qgetenv("IFCN_MAPPING_METRICS_EXE"));
@@ -2454,8 +1747,7 @@ bool writeMappingMetricsToIfcn(const QString &ifcnPath)
 
     QProcess process;
     process.setProgram(executable);
-    QStringList arguments{ifcnPath, QStringLiteral("--no-io-contraction")};
-    process.setArguments(arguments);
+    process.setArguments(QStringList() << ifcnPath);
     process.start();
     if (!process.waitForStarted(3000) || !process.waitForFinished(120000)) {
         qWarning() << "[GCN+RL] ifcn_mapping_metrics timed out for" << ifcnPath;
@@ -2469,7 +1761,13 @@ bool writeMappingMetricsToIfcn(const QString &ifcnPath)
     }
 
     const QString output = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
-    const QStringList parts = output.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    const QStringList parts = output.split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+#else
+    const QStringList parts = output.split(
+        QRegularExpression(QStringLiteral("\\s+")), QString::SkipEmptyParts);
+#endif
     if (parts.size() < 2) {
         qWarning() << "[GCN+RL] ifcn_mapping_metrics returned invalid output:" << output;
         return false;
@@ -2572,7 +1870,7 @@ void VerilogHandler::handleNormalGraphDrawLayout()
 {
     NormalGraphDrawSettings settings;
     if (!readNormalGraphDrawSettings(mainWindow, settings)) {
-        mainWindow->printToStatusBar(tr("2DDWave fixed-clock placement and routing cancelled."));
+        mainWindow->printToStatusBar(tr("Normal graph draw placement and routing cancelled."));
         return;
     }
 
@@ -2583,26 +1881,22 @@ void VerilogHandler::handleNormalGraphDrawLayout()
         tr("Verilog files (*.v);;All file (*)"));
 
     if (filePath.isEmpty()) {
-        mainWindow->printToStatusBar(tr("2DDWave fixed-clock placement and routing cancelled."));
+        mainWindow->printToStatusBar(tr("Normal graph draw placement and routing cancelled."));
         return;
     }
     runNormalGraphDrawLayoutForFile(filePath,
                                     false,
                                     settings.generateVisualizations,
-                                    settings.generateStageSnapshots,
-                                    settings.generatePhaseLatex,
-                                    settings.crossingOrderer);
+                                    settings.generateStageSnapshots);
 }
 
 void VerilogHandler::runNormalGraphDrawLayoutForFile(const QString &filePath,
                                                      bool quietStatusMessages,
                                                      bool generateVisualizations,
-                                                     bool generateStageSnapshots,
-                                                     bool generatePhaseLatex,
-                                                     const QString &crossingOrderer)
+                                                     bool generateStageSnapshots)
 {
     if (filePath.isEmpty()) {
-        mainWindow->printToStatusBar(tr("2DDWave fixed-clock placement and routing cancelled."));
+        mainWindow->printToStatusBar(tr("Normal graph draw placement and routing cancelled."));
         return;
     }
     mainWindow->updateVerilogSourceFile(filePath);
@@ -2637,33 +1931,22 @@ void VerilogHandler::runNormalGraphDrawLayoutForFile(const QString &filePath,
     }
 
     const QString scriptPath = QDir(rootPath).filePath("src/algorithm/main/test_normal_graph_draw.py");
-    const QString normalizedOrderer = QStringLiteral("ogdf");
-    const QString orderingLabel = tr("OGDF Sugiyama");
-    const QString routerMode = QStringLiteral("auto");
     QStringList arguments;
     arguments << scriptPath
               << QStringLiteral("--benchmark") << filePath
-              << QStringLiteral("--output-dir") << outputDirPath
-              << QStringLiteral("--crossing-orderer")
-              << normalizedOrderer
-              << QStringLiteral("--router")
-              << routerMode;
+              << QStringLiteral("--output-dir") << outputDirPath;
     if (!generateVisualizations) {
         arguments << QStringLiteral("--skip-figures")
                   << QStringLiteral("--skip-training-curve");
     }
-    if (!generatePhaseLatex) {
-        arguments << QStringLiteral("--skip-latex");
-    }
+    arguments << QStringLiteral("--skip-latex");
     if (!generateStageSnapshots) {
         arguments << QStringLiteral("--skip-stage-snapshots");
     }
 
-    emit operationStarted(tr("2DDWave fixed-clock placement and routing"),
-                          tr("Running %1 ordering and adaptive Manhattan routing with the fixed 2DDWave clock for %2")
-                              .arg(orderingLabel,
-                                   QDir::toNativeSeparators(filePath)));
-    emit operationProgress(tr("Starting fixed-clock 2DDWave backend"), 1, 100);
+    emit operationStarted(tr("Normal graph draw placement and routing"),
+                          tr("Running normal graph draw for %1").arg(QDir::toNativeSeparators(filePath)));
+    emit operationProgress(tr("Normal graph draw backend is running"), 0, 0);
     QCoreApplication::processEvents();
 
     QProcess process;
@@ -2673,53 +1956,27 @@ void VerilogHandler::runNormalGraphDrawLayoutForFile(const QString &filePath,
 
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     prependPythonPath(environment, QDir(rootPath).filePath("src/algorithm"));
-    if (environment.value(QStringLiteral("IFCN_GCN_EPOCHS")).isEmpty()) {
-        environment.insert(QStringLiteral("IFCN_GCN_EPOCHS"), QStringLiteral("60"));
+    if (environment.value(QStringLiteral("IFCN_GRAPHVIZ_TIMEOUT")).isEmpty()) {
+        environment.insert(QStringLiteral("IFCN_GRAPHVIZ_TIMEOUT"), QStringLiteral("60"));
+    }
+    if (environment.value(QStringLiteral("IFCN_SIFT_TIMEOUT")).isEmpty()) {
+        environment.insert(QStringLiteral("IFCN_SIFT_TIMEOUT"), QStringLiteral("20"));
+    }
+    if (environment.value(QStringLiteral("IFCN_SIFT_EVALUATIONS")).isEmpty()) {
+        environment.insert(QStringLiteral("IFCN_SIFT_EVALUATIONS"), QStringLiteral("200000"));
     }
     environment.insert(QStringLiteral("MPLBACKEND"), QStringLiteral("Agg"));
-    environment.insert(QStringLiteral("PYTHONUNBUFFERED"), QStringLiteral("1"));
     process.setProcessEnvironment(environment);
 
     QString combinedOutput;
-    QString progressOutputBuffer;
-    const QRegularExpression progressRecord(
-        QStringLiteral("^\\[IFCN-PROGRESS\\]\\s+(\\d{1,3})\\|(.*)$"));
-    auto consumeProgressRecords = [&](const QString &chunk, bool flushRemainder = false) {
-        progressOutputBuffer += chunk;
-        while (true) {
-            const int lineEnd = progressOutputBuffer.indexOf(QLatin1Char('\n'));
-            if (lineEnd < 0 && !flushRemainder) {
-                break;
-            }
-            QString line;
-            if (lineEnd < 0) {
-                line = progressOutputBuffer;
-                progressOutputBuffer.clear();
-            } else {
-                line = progressOutputBuffer.left(lineEnd);
-                progressOutputBuffer.remove(0, lineEnd + 1);
-            }
-            line = line.trimmed();
-            const QRegularExpressionMatch match = progressRecord.match(line);
-            if (match.hasMatch()) {
-                const int value = qBound(0, match.captured(1).toInt(), 100);
-                emit operationProgress(match.captured(2).trimmed(), value, 100);
-            }
-            if (lineEnd < 0) {
-                break;
-            }
-        }
-    };
     auto drainOutput = [&]() {
         const QString stdOut = QString::fromLocal8Bit(process.readAllStandardOutput());
         const QString stdErr = QString::fromLocal8Bit(process.readAllStandardError());
         if (!stdOut.isEmpty()) {
             combinedOutput += stdOut;
-            consumeProgressRecords(stdOut);
         }
         if (!stdErr.isEmpty()) {
             combinedOutput += stdErr;
-            consumeProgressRecords(stdErr);
         }
         if (combinedOutput.size() > 20000) {
             combinedOutput = combinedOutput.right(12000);
@@ -2739,11 +1996,10 @@ void VerilogHandler::runNormalGraphDrawLayoutForFile(const QString &filePath,
         drainOutput();
     }
     drainOutput();
-    consumeProgressRecords(QString(), true);
 
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         const QString detail = processTail(combinedOutput);
-        emit operationFailed(tr("2DDWave fixed-clock placement and routing failed with exit code %1.%2%3")
+        emit operationFailed(tr("Normal graph draw placement and routing failed with exit code %1.%2%3")
                                  .arg(process.exitCode())
                                  .arg(detail.isEmpty() ? QString() : QStringLiteral("\n"))
                                  .arg(detail));
@@ -2770,19 +2026,10 @@ void VerilogHandler::runNormalGraphDrawLayoutForFile(const QString &filePath,
         svgPath = outputDir.filePath(sourceInfo.completeBaseName() + QStringLiteral(".svg"));
     }
     QString message = quietStatusMessages
-        ? tr("2DDWave fixed-clock layout loaded.")
-        : tr("2DDWave fixed-clock layout loaded (%1 ordering): %2")
-              .arg(orderingLabel,
-                   QDir::toNativeSeparators(ifcnPath));
+        ? tr("Normal graph draw layout loaded.")
+        : tr("Normal graph draw layout loaded: %1").arg(QDir::toNativeSeparators(ifcnPath));
     if (!quietStatusMessages && QFileInfo(svgPath).isFile()) {
         message += tr("; SVG: %1").arg(QDir::toNativeSeparators(svgPath));
-    }
-    if (!quietStatusMessages && generatePhaseLatex) {
-        const QString latexPath = locateNormalGraphDrawLatex(outputDirPath);
-        if (!latexPath.isEmpty()) {
-            message += tr("; full-layout phase TeX: %1")
-                           .arg(QDir::toNativeSeparators(latexPath));
-        }
     }
     emit operationFinished(message);
 }
@@ -3008,7 +2255,9 @@ void VerilogHandler::runGcnRlLayoutForFile(const QString &filePath,
 
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     prependPythonPath(environment, QDir(rootPath).filePath("src/algorithm"));
-    environment.insert(QStringLiteral("IFCN_GCN_EPOCHS"), QString::number(settings.gcnEpochs));
+    environment.insert(QStringLiteral("IFCN_GRAPHVIZ_TIMEOUT"), QString::number(settings.graphvizTimeoutSeconds));
+    environment.insert(QStringLiteral("IFCN_SIFT_TIMEOUT"), QString::number(settings.siftTimeoutSeconds));
+    environment.insert(QStringLiteral("IFCN_SIFT_EVALUATIONS"), QString::number(settings.siftEvaluationBudget));
     environment.insert(QStringLiteral("IFCN_GCN_RL_LAYOUT_MEMORY_DIR"), layoutMemoryDir);
     environment.insert(QStringLiteral("PYTHONHASHSEED"), QStringLiteral("0"));
     environment.insert(QStringLiteral("PYTHONUNBUFFERED"), QStringLiteral("1"));
@@ -3189,7 +2438,7 @@ void VerilogHandler::handleParseVerilogFile()
     }
 
     //选择加载文件
-    QString filePath = QFileDialog::getOpenFileName(mainWindow, tr("打开文件"), "/home/lys/projects/github/iFCN", 
+    QString filePath = QFileDialog::getOpenFileName(mainWindow, tr("打开文件"), "/home/lys/projects/github/iFCN",
                                                           tr("Verilog files (*.v);;All file (*)"));
 
     if(filePath.isEmpty()) {
@@ -3354,7 +2603,7 @@ void VerilogHandler::handleGraphRender()
 {
 
     // 选择加载文件
-    QString filePath = QFileDialog::getOpenFileName(mainWindow, tr("打开文件"), "/home/lys/projects/github/iFCN", 
+    QString filePath = QFileDialog::getOpenFileName(mainWindow, tr("打开文件"), "/home/lys/projects/github/iFCN",
                                                           tr("Verilog files (*.v);;All file (*)"));
     if(filePath.isEmpty()) {
         QString message = "FilePath is empty!";
@@ -3369,323 +2618,6 @@ void VerilogHandler::handleGraphRender()
     runGraphRenderForFile(filePath);
 }
 
-void VerilogHandler::handleJuneRandomClockGraphLayout()
-{
-    const QString filePath = QFileDialog::getOpenFileName(
-        mainWindow,
-        tr("Open Verilog for June Random-Clock Graph P&R"),
-        QDir::currentPath(),
-        tr("Verilog files (*.v);;All files (*)"));
-    if (filePath.isEmpty()) {
-        mainWindow->customStatusBar->addMessage(
-            tr("June random-clock Graph P&R was cancelled."));
-        return;
-    }
-    runJuneRandomClockGraphLayoutForFile(filePath);
-}
-
-void VerilogHandler::handleLegacyGraphvizGraphDraw()
-{
-    const QString filePath = QFileDialog::getOpenFileName(
-        mainWindow,
-        tr("Open Verilog for Legacy Graphviz Graph Draw"),
-        QDir::currentPath(),
-        tr("Verilog files (*.v);;All files (*)"));
-    if (filePath.isEmpty()) {
-        mainWindow->customStatusBar->addMessage(
-            tr("Legacy Graphviz Graph Draw was cancelled."));
-        return;
-    }
-    runLegacyGraphvizGraphDrawForFile(filePath);
-}
-
-void VerilogHandler::runLegacyGraphvizGraphDrawForFile(const QString &filePath)
-{
-    if (legacyGraphvizDrawRunning) {
-        mainWindow->customStatusBar->addMessage(
-            tr("A Legacy Graphviz Graph Draw request is already running."));
-        return;
-    }
-
-    const QFileInfo sourceInfo(filePath);
-    if (filePath.isEmpty() || !sourceInfo.isFile() || !sourceInfo.isReadable()) {
-        const QString message = tr("Cannot read the Verilog file for Legacy Graphviz Graph Draw: %1")
-            .arg(QDir::toNativeSeparators(filePath));
-        emit operationFailed(message);
-        return;
-    }
-
-    mainWindow->updateVerilogSourceFile(filePath);
-    legacyGraphvizDrawRunning = true;
-    emit operationStarted(
-        tr("Legacy Graphviz Graph Draw"),
-        tr("Recreating the June 2025 DOT topology preview for %1")
-            .arg(QDir::toNativeSeparators(filePath)));
-    emit operationProgress(tr("Parsing and optimizing the legacy logical graph"), 10, 100);
-
-    QPointer<VerilogHandler> self(this);
-    QThread *thread = QThread::create([self, filePath]() {
-        auto taskResult = std::make_shared<LegacyGraphvizPreviewTaskResult>();
-        QElapsedTimer timer;
-        timer.start();
-
-        try {
-            fcngraph::Parse parse;
-            parse.parseVerilog(filePath.toStdString());
-            if (parse.getm_numVertices() == 0) {
-                throw std::runtime_error("The Verilog file contains no drawable circuit nodes.");
-            }
-            parse.optimizeAIOG_DRC(2, 2, 2, 2, 2, 2);
-            parse.optimizeBufferNode();
-            parse.addLayerRedundancyNode();
-            parse.caculateSameLayerNodeRoutePair();
-
-            fcngraph::LegacyGraphvizOptions options;
-            options.showCircuitLabels = true;
-            options.boxNodes = true;
-            options.orthogonalEdges = true;
-            const fcngraph::LegacyGraphvizResult rendered =
-                fcngraph::renderLegacyGraphviz(parse, options);
-
-            taskResult->success = rendered.success;
-            taskResult->error = QString::fromStdString(rendered.error);
-            taskResult->svg = QByteArray(rendered.svg.data(),
-                                         static_cast<int>(rendered.svg.size()));
-            taskResult->nodeCount = rendered.nodeCount;
-            taskResult->edgeCount = rendered.edgeCount;
-        } catch (const std::exception &ex) {
-            taskResult->error = QString::fromLocal8Bit(ex.what());
-        } catch (...) {
-            taskResult->error = QObject::tr(
-                "Legacy Graphviz Graph Draw failed with an unknown error.");
-        }
-        taskResult->elapsedMilliseconds = static_cast<double>(timer.nsecsElapsed()) / 1000000.0;
-
-        if (self.isNull()) {
-            return;
-        }
-        QMetaObject::invokeMethod(self, [self, filePath, taskResult]() {
-            if (self.isNull()) {
-                return;
-            }
-
-            if (!taskResult->success || taskResult->svg.isEmpty()) {
-                self->legacyGraphvizDrawRunning = false;
-                const QString message = taskResult->error.isEmpty()
-                    ? QObject::tr("Legacy Graphviz returned no SVG data.")
-                    : taskResult->error;
-                emit self->operationFailed(message);
-                return;
-            }
-
-            QSvgRenderer validator(taskResult->svg);
-            if (!validator.isValid()) {
-                self->legacyGraphvizDrawRunning = false;
-                emit self->operationFailed(
-                    QObject::tr("Graphviz returned an invalid SVG document."));
-                return;
-            }
-
-            emit self->operationProgress(
-                QObject::tr("DOT layout complete; opening the interactive preview"), 100, 100);
-            const QString readyMessage = QObject::tr(
-                "Legacy Graphviz preview ready: %1 nodes, %2 edges, %3 ms (view only)")
-                .arg(taskResult->nodeCount)
-                .arg(taskResult->edgeCount)
-                .arg(taskResult->elapsedMilliseconds, 0, 'f', 1);
-            showLegacyGraphvizPreviewDialog(self->mainWindow, filePath, *taskResult);
-            if (self.isNull()) {
-                return;
-            }
-            self->legacyGraphvizDrawRunning = false;
-            emit self->operationFinished(readyMessage);
-        }, Qt::QueuedConnection);
-    });
-
-    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-    thread->start();
-}
-
-void VerilogHandler::runJuneRandomClockGraphLayoutForFile(const QString &filePath)
-{
-    if (juneRandomClockGraphLayoutRunning) {
-        mainWindow->customStatusBar->addMessage(
-            tr("A June random-clock Graph P&R request is already running."));
-        return;
-    }
-
-    const QFileInfo sourceInfo(filePath);
-    if (filePath.isEmpty() || !sourceInfo.isFile() || !sourceInfo.isReadable()) {
-        const QString message = tr("Cannot read the Verilog file for June random-clock Graph P&R: %1")
-            .arg(QDir::toNativeSeparators(filePath));
-        emit operationFailed(message);
-        return;
-    }
-
-    JuneRandomClockGraphSettings settings;
-    if (!readJuneRandomClockGraphSettings(mainWindow, settings)) {
-        mainWindow->customStatusBar->addMessage(
-            tr("June random-clock Graph P&R was cancelled."));
-        return;
-    }
-
-    juneRandomClockGraphLayoutRunning = true;
-    mainWindow->updateVerilogSourceFile(filePath);
-    emit operationStarted(
-        tr("June 2025 random-clock Graph placement and routing"),
-        tr("Running the hardened Graphviz placement, source-aware four-direction A*, and post-route 4-phase assignment for %1")
-            .arg(QDir::toNativeSeparators(filePath)));
-
-    QPointer<VerilogHandler> self(this);
-    QThread *thread = QThread::create([self, filePath, settings]() {
-        const auto progress = [self](const QString &detail, int value, int maximum) {
-            if (self.isNull()) {
-                return;
-            }
-            QMetaObject::invokeMethod(self, [self, detail, value, maximum]() {
-                if (!self.isNull()) {
-                    emit self->operationProgress(detail, value, maximum);
-                }
-            }, Qt::QueuedConnection);
-        };
-        auto taskResult = std::make_shared<JuneRandomClockGraphTaskResult>(
-            runJuneRandomClockGraphSearch(filePath, progress));
-
-        if (self.isNull()) {
-            return;
-        }
-        QMetaObject::invokeMethod(self, [self, filePath, settings, taskResult]() {
-            if (self.isNull()) {
-                return;
-            }
-
-            const auto fail = [self](const QString &detail) {
-                if (self.isNull()) {
-                    return;
-                }
-                self->juneRandomClockGraphLayoutRunning = false;
-                emit self->operationFailed(
-                    QObject::tr("June random-clock Graph P&R failed: %1").arg(detail));
-            };
-
-            if (!taskResult->success) {
-                fail(taskResult->error.isEmpty()
-                         ? QObject::tr("the background search returned no legal layout")
-                         : taskResult->error);
-                return;
-            }
-
-            try {
-                Parse &parse = taskResult->parse;
-                LayoutSearchResult &selectedLayout = taskResult->layout;
-                emit self->operationProgress(
-                    QObject::tr("A* routes and random-clock phases are legal; writing IFCN"),
-                    76,
-                    100);
-
-                std::map<unsigned int, position> nodePositions;
-                for (const auto &node : selectedLayout.nodePositions) {
-                    nodePositions[static_cast<unsigned int>(node.first)] = node.second;
-                }
-                const auto routes = selectedLayout.routes;
-                std::map<position, int> positionPhases;
-                for (const auto &cell : selectedLayout.gridCells) {
-                    const int phase = cell.second.getPhase();
-                    if (phase >= 1 && phase <= 4) {
-                        positionPhases[cell.first] = phase - 1;
-                    }
-                }
-
-                const QString outputDirSuffix =
-                    QStringLiteral("_june_random_clock_graph_pr");
-                const QString ifcnPath = self->saveGateLevelIfcn(
-                    filePath,
-                    parse,
-                    nodePositions,
-                    routes,
-                    positionPhases,
-                    4,
-                    taskResult->gateNum,
-                    taskResult->inputNum,
-                    taskResult->outputNum,
-                    taskResult->wireNum,
-                    selectedLayout.bounds.width,
-                    selectedLayout.bounds.height,
-                    taskResult->elapsedSeconds,
-                    QStringLiteral("hardened restoration of the June 2025 random-clock Graphviz/A* P&R"),
-                    outputDirSuffix,
-                    QStringLiteral("_june_random_clock_graph_pr.ifcn"));
-                if (ifcnPath.isEmpty()) {
-                    throw std::runtime_error(
-                        "The legal June random-clock layout could not be saved as IFCN.");
-                }
-
-                QStringList generatedArtifacts;
-                generatedArtifacts << QObject::tr("IFCN: %1")
-                    .arg(QDir::toNativeSeparators(ifcnPath));
-                if (settings.generateLatex) {
-                    const QString latexPath = self->saveGraphRenderLatex(
-                        filePath,
-                        parse,
-                        nodePositions,
-                        routes,
-                        positionPhases,
-                        4,
-                        selectedLayout.bounds.width,
-                        selectedLayout.bounds.height,
-                        outputDirSuffix,
-                        QStringLiteral("_june_random_clock_graph_pr.tex"));
-                    if (!latexPath.isEmpty()) {
-                        generatedArtifacts << QObject::tr("LaTeX: %1")
-                            .arg(QDir::toNativeSeparators(latexPath));
-                    }
-                }
-
-                emit self->operationProgress(
-                    QObject::tr("Loading the hardened June layout into the cell-level view"),
-                    90,
-                    100);
-                if (!self->mainWindow->mapIfcnFile(ifcnPath, false)) {
-                    throw std::runtime_error(
-                        "The generated IFCN failed cell-level mapping validation.");
-                }
-
-                if (settings.generateSvg) {
-                    const QString svgPath = QFileInfo(ifcnPath).dir().filePath(
-                        QFileInfo(ifcnPath).completeBaseName() + QStringLiteral(".svg"));
-                    if (self->exportCellLevelLayout(svgPath)) {
-                        generatedArtifacts << QObject::tr("SVG: %1")
-                            .arg(QDir::toNativeSeparators(svgPath));
-                    }
-                }
-
-                const QString summary = QObject::tr(
-                    "June random-clock Graph P&R complete: %1x%2=%3, %4 routes, %5 s")
-                    .arg(selectedLayout.bounds.width)
-                    .arg(selectedLayout.bounds.height)
-                    .arg(selectedLayout.bounds.area)
-                    .arg(selectedLayout.routes.size())
-                    .arg(taskResult->elapsedSeconds, 0, 'f', 3);
-                emit self->operationProgress(
-                    QObject::tr("June random-clock layout is ready"), 100, 100);
-                self->juneRandomClockGraphLayoutRunning = false;
-                emit self->operationFinished(summary);
-                QMessageBox::information(
-                    self->mainWindow,
-                    QObject::tr("June 2025 Random-Clock Graph P&R complete"),
-                    QObject::tr("The hardened June-derived physical layout is loaded and ready.\n\n%1")
-                        .arg(generatedArtifacts.join(QLatin1Char('\n'))));
-            } catch (const std::exception &ex) {
-                fail(QString::fromLocal8Bit(ex.what()));
-            } catch (...) {
-                fail(QObject::tr("unknown IFCN save or load failure"));
-            }
-        }, Qt::QueuedConnection);
-    });
-
-    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-    thread->start();
-}
 void VerilogHandler::runGraphRenderForFile(const QString &filePath)
 {
     if (filePath.isEmpty()) {
@@ -3718,411 +2650,72 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
         auto wireNum = parse.getm_numEdges();
 
         parse.optimizeBufferNode();
+        // parse.addLayerRedundancyNode();
         parse.caculateSameLayerNodeRoutePair();
 
-        // Include crossing minimization in the reported algorithm runtime.
+        emit operationStarted(tr("Graph placement and routing"),
+                              tr("Preparing compact layout search for %1-phase assignment")
+                                  .arg(settings.phaseCount));
+        QCoreApplication::processEvents();
+
+        //测试时间
         QElapsedTimer timer;
-        timer.start();
-
-        emit operationStarted(
-            tr("Stochastic compact graph placement and routing"),
-            tr("Preparing crossing-minimized layer order for compact-first routing and %1-phase closure")
-                .arg(settings.phaseCount));
-        QCoreApplication::processEvents();
-
-        const FixedLayerOrderResult fixedOrder = fixedLayerCrossingOrder(parse);
-        emit operationProgress(
-            tr("%1: %2 crossings; placing the ordered layers at minimum spacing before routing")
-                .arg(fixedOrder.engine)
-                .arg(fixedOrder.crossings),
-            5,
-            100);
-        QCoreApplication::processEvents();
+        timer.start();  // 开始计时
 
         std::optional<LayoutSearchResult> bestLayout;
+        int bestUpdateCount = 0;
         std::string lastFailure;
         const auto attempts = buildLayoutAttempts();
-        const std::size_t effectiveEdgeCount = parse.getEffectiveEdges().size();
-        const int complexityCap = effectiveEdgeCount > 300 ? 2 : static_cast<int>(attempts.size());
-        const int attemptLimit = std::min({settings.maxAttempts,
-                                           static_cast<int>(attempts.size()),
-                                           complexityCap});
-        const qint64 candidateBudgetMilliseconds =
-            static_cast<qint64>(settings.timeBudgetSeconds) * 1000;
-        bool candidateBudgetReached = false;
-        bool usedGraphvizFallback = false;
-        bool usedAdaptiveCompact = false;
-        constexpr int kCandidateProgressStart = 6;
-        constexpr int kCandidateProgressEnd = 68;
-        const auto candidateProgress = [attemptLimit](int completedAttempts) {
-            if (attemptLimit <= 0) {
-                return kCandidateProgressEnd;
-            }
-            const int completed = std::clamp(completedAttempts, 0, attemptLimit);
-            return kCandidateProgressStart +
-                   (kCandidateProgressEnd - kCandidateProgressStart) * completed /
-                       attemptLimit;
-        };
-        const auto &layerNodes = parse.getlayerNodeDivVec();
-        std::size_t maxLayerWidth = 0;
-        for (const auto &layer : layerNodes) {
-            maxLayerWidth = std::max(maxLayerWidth, layer.size());
-        }
-        const auto placementAreaLowerBound = [maxLayerWidth, layerCount = layerNodes.size()](const LayoutAttempt &attempt) -> int {
-            if (maxLayerWidth == 0 || layerCount == 0) {
-                return 0;
-            }
-            const int width = static_cast<int>((maxLayerWidth - 1) * attempt.xSpacing + 1);
-            const int height = static_cast<int>((layerCount - 1) * attempt.ySpacing + 1);
-            return width * height;
-        };
+        const int attemptLimit = std::min(settings.maxAttempts, static_cast<int>(attempts.size()));
 
-        struct GraphvizFallbackAttempt {
-            double gridSizeX;
-            double gridSizeY;
-            double searchCost;
-            int routeOrderRetries;
-        };
-        // Graphviz coordinates are divided by the quantisation value.  The old
-        // sparse schedule searched from /64 down to /40, which actually makes
-        // a small graph progressively larger.  Very small graphs get their own
-        // compact-first schedule.  Deep MAJ graphs keep enough X port capacity
-        // and contract Y in four-phase-period increments; shallow graphs may
-        // safely compact both axes together.
-        const bool compactSmallGraphvizSearch = effectiveEdgeCount <= 24;
-        const bool compactNarrowDeepGraphvizSearch =
-            compactSmallGraphvizSearch && maxLayerWidth <= 2 && layerNodes.size() >= 6;
-        const bool compactVeryDeepGraphvizSearch =
-            compactSmallGraphvizSearch && !compactNarrowDeepGraphvizSearch &&
-            layerNodes.size() >= 9;
-        const bool exploreFineGraphvizScales = effectiveEdgeCount <= 70;
-        const std::vector<GraphvizFallbackAttempt> graphvizAttempts =
-            compactNarrowDeepGraphvizSearch
-            ? std::vector<GraphvizFallbackAttempt>{
-                  {40.0, 68.0, 420.0, 8}, {44.0, 68.0, 420.0, 8},
-                  {36.0, 68.0, 420.0, 8}, {52.0, 64.0, 360.0, 10},
-                  {48.0, 64.0, 360.0, 10}, {52.0, 52.0, 300.0, 10}}
-            : compactSmallGraphvizSearch && layerNodes.size() <= 5
-            ? std::vector<GraphvizFallbackAttempt>{
-                  {96.0, 96.0, 240.0, 8}, {88.0, 88.0, 300.0, 12},
-                  {80.0, 80.0, 240.0, 8}, {72.0, 72.0, 240.0, 8},
-                  {64.0, 64.0, 240.0, 12}, {60.0, 64.0, 300.0, 10},
-                  {56.0, 68.0, 420.0, 10}, {56.0, 72.0, 420.0, 10},
-                  {40.0, 68.0, 420.0, 8}, {52.0, 52.0, 300.0, 10},
-                  {48.0, 48.0, 300.0, 10}}
-            : compactVeryDeepGraphvizSearch
-            ? std::vector<GraphvizFallbackAttempt>{
-                  {64.0, 64.0, 240.0, 8}, {60.0, 64.0, 300.0, 8},
-                  {56.0, 72.0, 420.0, 8}, {52.0, 68.0, 420.0, 8},
-                  {52.0, 72.0, 480.0, 10}, {48.0, 64.0, 420.0, 8}}
-            : compactSmallGraphvizSearch
-            ? std::vector<GraphvizFallbackAttempt>{
-                  {64.0, 64.0, 240.0, 8}, {60.0, 64.0, 300.0, 8},
-                  {56.0, 68.0, 420.0, 8}, {52.0, 72.0, 480.0, 10},
-                  {52.0, 68.0, 420.0, 8}, {56.0, 72.0, 420.0, 8},
-                  {56.0, 76.0, 420.0, 8},
-                  {52.0, 64.0, 360.0, 10}, {40.0, 68.0, 420.0, 8},
-                  {52.0, 52.0, 300.0, 10}, {48.0, 60.0, 360.0, 10},
-                  {48.0, 48.0, 300.0, 10}, {44.0, 48.0, 360.0, 10}}
-            : exploreFineGraphvizScales
-            ? std::vector<GraphvizFallbackAttempt>{
-                  {64.0, 64.0, 100.0, 6}, {60.0, 60.0, 100.0, 6},
-                  {58.0, 58.0, 100.0, 6}, {56.0, 56.0, 100.0, 6},
-                  {54.0, 54.0, 100.0, 6}, {52.0, 52.0, 100.0, 6},
-                  {48.0, 48.0, 100.0, 6}, {46.0, 46.0, 100.0, 6},
-                  {44.0, 44.0, 100.0, 6}, {42.0, 42.0, 100.0, 6},
-                  {40.0, 40.0, 100.0, 6}, {37.0, 37.0, 140.0, 6},
-                  {32.0, 32.0, 180.0, 6}, {20.0, 20.0, 360.0, 6}}
-            : std::vector<GraphvizFallbackAttempt>{
-                  // Dense circuits start with a measured phase-cycle squeeze:
-                  // X/44 removes the excess horizontal spread while Y/36 is
-                  // one four-phase period tighter than the routable /32 base.
-                  // The remaining entries are transactional safety fallbacks.
-                  {44.0, 36.0, 420.0, 24}, {44.0, 32.0, 360.0, 24},
-                  {32.0, 32.0, 180.0, 6}, {40.0, 40.0, 100.0, 6},
-                  {37.0, 37.0, 140.0, 6}, {20.0, 20.0, 360.0, 6}};
-        double bestGraphvizGridX = 0.0;
-        double bestGraphvizGridY = 0.0;
-        const auto evaluateGraphvizAttempt = [&](const GraphvizFallbackAttempt &fallback,
-                                                  int progressIndex,
-                                                  int progressTotal) {
-            const bool anisotropic = std::abs(fallback.gridSizeX - fallback.gridSizeY) > 1e-9;
-            const QString quantisation = anisotropic
-                ? tr("X/%1, Y/%2")
-                      .arg(fallback.gridSizeX, 0, 'f', 0)
-                      .arg(fallback.gridSizeY, 0, 'f', 0)
-                : tr("/%1").arg(fallback.gridSizeX, 0, 'f', 0);
-            emit operationProgress(
-                tr("Graphviz compact seed %1/%2: quantisation %3")
-                    .arg(progressIndex + 1)
-                    .arg(progressTotal)
-                    .arg(quantisation),
-                6 + progressIndex * 3,
-                100);
-            QCoreApplication::processEvents();
-
-            GridChessboard fallbackBoard;
-            Astar fallbackRouter(fallbackBoard, false, fallback.searchCost);
-            fallbackRouter.setAllowInterSourceWireOverlap(false);
-            // Crossings remain source-aware and DRC-checked; a zero legal
-            // crossing penalty keeps compact seeds from detouring outside
-            // their placement solely because maxSearchCost exceeds 100.
-            fallbackRouter.setOccupiedWirePenalty(0.0);
-            CircuitGraph fallbackGraph(parse, file, fallbackBoard, fallbackRouter);
-            fallbackGraph.setFitnessCallback([&lastFailure](const std::string &detail) {
-                lastFailure = detail;
-            });
-            const bool routed = anisotropic
-                ? fallbackGraph.placeAndRouteJuneRandomClockAnisotropic(
-                      settings.phaseCount,
-                      fallback.gridSizeX,
-                      fallback.gridSizeY,
-                      fallback.routeOrderRetries)
-                : fallbackGraph.placeAndRouteJuneRandomClock(
-                      settings.phaseCount,
-                      fallback.gridSizeX,
-                      fallback.routeOrderRetries);
-            if (!routed) {
-                return std::make_pair(false, false);
-            }
-            const auto bounds = calculateGridBounds(fallbackBoard.getGridMap());
-            if (!bounds.has_value()) {
-                lastFailure = "Graphviz seed produced an empty layout";
-                return std::make_pair(false, false);
-            }
-            LayoutSearchResult result;
-            result.bounds = bounds.value();
-            result.routeLength = totalRouteLength(fallbackGraph.routes);
-            result.phaseRepeats = calculatePhaseRepeatStats(
-                fallbackGraph.routes, fallbackBoard.getGridMap());
-            result.placementEngine = anisotropic
-                ? QStringLiteral("Graphviz DOT source-aware compact seed X/%1 Y/%2")
-                      .arg(fallback.gridSizeX, 0, 'f', 0)
-                      .arg(fallback.gridSizeY, 0, 'f', 0)
-                : QStringLiteral("Graphviz DOT source-aware compact seed /%1")
-                      .arg(fallback.gridSizeX, 0, 'f', 0);
-            result.searchCost = fallback.searchCost;
-            result.nodePositions = fallbackGraph.nodeIndex_pos;
-            result.routes = fallbackGraph.routes;
-            result.gridCells = fallbackBoard.getGridMap();
-            const bool improved = !bestLayout.has_value() ||
-                isBetterLayout(result, bestLayout.value(), settings.phaseCount);
-            if (improved) {
-                bestLayout = std::move(result);
-                bestGraphvizGridX = fallback.gridSizeX;
-                bestGraphvizGridY = fallback.gridSizeY;
-            }
-            usedGraphvizFallback = true;
-            return std::make_pair(true, improved);
-        };
-        const auto tryCompactGraphvizSeed = [&]() {
-            bool foundLegalSeed = false;
-            int nonImprovingLegalSeeds = 0;
-            for (std::size_t fallbackIndex = 0;
-                 fallbackIndex < graphvizAttempts.size();
-                 ++fallbackIndex) {
-                if (fallbackIndex > 0 && timer.elapsed() >= candidateBudgetMilliseconds) {
-                    candidateBudgetReached = true;
-                    break;
-                }
-                const GraphvizFallbackAttempt &fallback = graphvizAttempts[fallbackIndex];
-                const auto evaluated = evaluateGraphvizAttempt(
-                    fallback,
-                    static_cast<int>(fallbackIndex),
-                    static_cast<int>(graphvizAttempts.size()) + 1);
-                if (!evaluated.first) {
-                    continue;
-                }
-                if (evaluated.second) {
-                    nonImprovingLegalSeeds = 0;
-                } else {
-                    ++nonImprovingLegalSeeds;
-                }
-                foundLegalSeed = true;
-                const int nonImprovingLimit = compactSmallGraphvizSearch ? 1 : 2;
-                if (!exploreFineGraphvizScales ||
-                    nonImprovingLegalSeeds >= nonImprovingLimit) {
-                    break;
-                }
-            }
-            if (foundLegalSeed && exploreFineGraphvizScales &&
-                !compactSmallGraphvizSearch &&
-                bestGraphvizGridY > 0.0 &&
-                timer.elapsed() < candidateBudgetMilliseconds) {
-                const double horizontalBoost = maxLayerWidth >= 10 ? 10.0
-                    : (maxLayerWidth >= 6 ? 6.0 : 4.0);
-                const GraphvizFallbackAttempt horizontalSqueeze{
-                    bestGraphvizGridX + horizontalBoost,
-                    bestGraphvizGridY,
-                    std::max(160.0, bestLayout->searchCost),
-                    12};
-                evaluateGraphvizAttempt(
-                    horizontalSqueeze,
-                    static_cast<int>(graphvizAttempts.size()),
-                    static_cast<int>(graphvizAttempts.size()) + 2);
-                if (timer.elapsed() < candidateBudgetMilliseconds) {
-                    // A full clock period can be contracted without changing
-                    // endpoint phase equivalence. Generate a Y-compressed
-                    // candidate one phase cycle tighter, then reroute and
-                    // reassign every phase before it may replace the baseline.
-                    const GraphvizFallbackAttempt phaseCycleSqueeze{
-                        bestGraphvizGridX,
-                        bestGraphvizGridY + static_cast<double>(settings.phaseCount),
-                        std::max(180.0, bestLayout->searchCost),
-                        18};
-                    evaluateGraphvizAttempt(
-                        phaseCycleSqueeze,
-                        static_cast<int>(graphvizAttempts.size()) + 1,
-                        static_cast<int>(graphvizAttempts.size()) + 2);
-                }
-            }
-            return foundLegalSeed;
-        };
-
-        // Primary strategy: OGDF/barycenter supplies only the crossing-aware
-        // order.  Coordinates start at the minimum integer spacing and gain
-        // sparse row/column capacity only where structured routing failures
-        // prove it is necessary.  Graphviz scaling remains a safety fallback,
-        // not the source of unconditional whitespace.
-        {
-            const int adaptiveExpansionRounds =
-                effectiveEdgeCount <= 24 ? 8
-                : (effectiveEdgeCount <= 70 ? 5
-                   : (effectiveEdgeCount <= 128 ? 3 : 0));
-            const int adaptiveRouteRetries =
-                effectiveEdgeCount <= 70 ? 2 : 0;
-            const double adaptiveSearchCost =
-                effectiveEdgeCount <= 24 ? 120.0
-                : (effectiveEdgeCount <= 70 ? 180.0 : 240.0);
-
-            emit operationProgress(
-                tr("Compact-first seed: %1 order at unit spacing; routing conflicts insert sparse capacity")
-                    .arg(fixedOrder.engine),
-                6,
-                100);
-            QCoreApplication::processEvents();
-
-            GridChessboard compactBoard;
-            Astar compactRouter(compactBoard, false, adaptiveSearchCost);
-            compactRouter.setAllowInterSourceWireOverlap(false);
-            compactRouter.setOccupiedWirePenalty(0.0);
-            CircuitGraph compactGraph(parse, file, compactBoard, compactRouter);
-            compactGraph.setFitnessCallback([&lastFailure](const std::string &detail) {
-                lastFailure = detail;
-            });
-            compactGraph.sortNodesByFixedLayerOrder(
-                fixedOrder.layers, 1, 1);
-
-            if (compactGraph.routeCompactRandomClockWithExpansion(
-                    settings.phaseCount,
-                    adaptiveRouteRetries,
-                    adaptiveExpansionRounds,
-                    adaptiveSearchCost,
-                    settings.maxSamePhase)) {
-                const auto bounds = calculateGridBounds(
-                    compactBoard.getGridMap());
-                if (bounds.has_value()) {
-                    const auto &expansion =
-                        compactGraph.getAdaptiveExpansionStats();
-                    LayoutSearchResult result;
-                    result.bounds = bounds.value();
-                    result.routeLength =
-                        totalRouteLength(compactGraph.routes);
-                    result.phaseRepeats = calculatePhaseRepeatStats(
-                        compactGraph.routes,
-                        compactBoard.getGridMap());
-                    result.placementEngine =
-                        QStringLiteral("%1 compact-first (+%2R,+%3C,-%4R,-%5C)")
-                            .arg(fixedOrder.engine)
-                            .arg(expansion.insertedRows)
-                            .arg(expansion.insertedColumns)
-                            .arg(expansion.removedRows)
-                            .arg(expansion.removedColumns);
-                    result.xSpacing = 1;
-                    result.ySpacing = 1;
-                    result.searchCost = adaptiveSearchCost;
-                    result.nodePositions = compactGraph.nodeIndex_pos;
-                    result.routes = compactGraph.routes;
-                    result.gridCells = compactBoard.getGridMap();
-                    bestLayout = std::move(result);
-                    usedAdaptiveCompact = true;
-                    usedGraphvizFallback = false;
-                    emit operationProgress(
-                        tr("Compact-first routing complete: %1x%2=%3, inserted %4 row(s) and %5 column(s)")
-                            .arg(bestLayout->bounds.width)
-                            .arg(bestLayout->bounds.height)
-                            .arg(bestLayout->bounds.area)
-                            .arg(expansion.insertedRows)
-                            .arg(expansion.insertedColumns),
-                        68,
-                        100);
-                    QCoreApplication::processEvents();
-                }
-            }
-        }
-
-        if (!bestLayout.has_value()) {
-            tryCompactGraphvizSeed();
-        }
-
-        for (int attemptIndex = 0;
-             !usedAdaptiveCompact && attemptIndex < attemptLimit;
-             ++attemptIndex) {
-            if (attemptIndex > 0 && !bestLayout.has_value()) {
-                // The 8x8 feasibility anchor failed.  Smaller fixed-layer
-                // placements cannot improve port capacity, so switch to the
-                // Graphviz geometry fallback instead of burning every compact
-                // candidate on the same routing deadlock.
-                break;
-            }
-            if (attemptIndex > 0 && timer.elapsed() >= candidateBudgetMilliseconds) {
-                candidateBudgetReached = true;
-                break;
-            }
+        for (int attemptIndex = 0; attemptIndex < attemptLimit; ++attemptIndex) {
             const auto &attempt = attempts[attemptIndex];
-            const bool bestPhaseOk = bestLayout.has_value()
-                && hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
-            if (bestPhaseOk && placementAreaLowerBound(attempt) > bestLayout->bounds.area) {
-                continue;
-            }
             GridChessboard chessboard;
             Astar astar(chessboard, false, attempt.searchCost);
             CircuitGraph graph(parse, file, chessboard, astar);
-            graph.setFitnessCallback([&lastFailure](const std::string &detail) {
-                lastFailure = detail;
-            });
 
             {
-                QString progress = QString("Candidate %1/%2: spacing=(%3,%4), search cost=%5, phase-aware=%6")
+                QString progress = QString("Candidate %1/%2: spacing=(%3,%4), search cost=%5, phase=%6")
                     .arg(attemptIndex + 1)
                     .arg(attemptLimit)
                     .arg(attempt.xSpacing)
                     .arg(attempt.ySpacing)
                     .arg(attempt.searchCost)
                     .arg(settings.phaseCount);
+                progress += attempt.elasticPlacement
+                    ? QStringLiteral("; placement=elastic")
+                    : QStringLiteral("; placement=regular");
                 if (bestLayout.has_value()) {
-                    progress += QString("; best=%1x%2 area=%3 route=%4 max repeat=%5")
+                    progress += QString("; best=%1x%2 area=%3 route=%4 max same-phase run=%5")
                                     .arg(bestLayout->bounds.width)
                                     .arg(bestLayout->bounds.height)
                                     .arg(bestLayout->bounds.area)
                                     .arg(bestLayout->routeLength)
-                                    .arg(bestLayout->phaseRepeats.maxRun);
+                                    .arg(bestLayout->phaseRuns.maxRun);
                 }
-                emit operationProgress(progress, candidateProgress(attemptIndex), 100);
+                emit operationProgress(progress, attemptIndex + 1, attemptLimit);
                 QCoreApplication::processEvents();
             }
 
             try {
-                graph.sortNodesByFixedLayerOrder(fixedOrder.layers,
-                                                 attempt.xSpacing,
-                                                 attempt.ySpacing);
+                graph.processAndGenerateGraph(attemptIndex == 0, true, true, true);
+                if (attempt.elasticPlacement) {
+                    graph.sortNodesByElasticLayeredGrid(
+                        attempt.xSpacing, attempt.ySpacing, 4, 4,
+                        attempt.reverseWithinLayer);
+                } else {
+                    graph.sortNodesByLayeredGrid(
+                        attempt.xSpacing, attempt.ySpacing, 4, 4,
+                        attempt.reverseWithinLayer);
+                }
 
-                if (!graph.placeAndRoutePhaseAware(settings.phaseCount,
-                                                   settings.maxSamePhase,
-                                                   attempt.searchCost)) {
-                    if (lastFailure.empty()) {
-                        lastFailure = "phase-aware route failed";
-                    }
+                if (!graph.placeAndRouteLegacyFast()) {
+                    lastFailure = "route failed";
+                    continue;
+                }
+
+                if (!graph.assignPhases(settings.phaseCount)) {
+                    lastFailure = "phase assignment failed";
                     continue;
                 }
 
@@ -4135,25 +2728,48 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                 LayoutSearchResult result;
                 result.bounds = bounds.value();
                 result.routeLength = totalRouteLength(graph.routes);
-                result.phaseRepeats = calculatePhaseRepeatStats(graph.routes, chessboard.getGridMap());
-                result.placementEngine = fixedOrder.engine;
+                result.phaseRuns = calculatePhaseRunStats(graph.routes, chessboard.getGridMap());
                 result.xSpacing = attempt.xSpacing;
                 result.ySpacing = attempt.ySpacing;
                 result.searchCost = attempt.searchCost;
+                result.elasticPlacement = attempt.elasticPlacement;
                 result.nodePositions = graph.nodeIndex_pos;
                 result.routes = graph.routes;
                 result.gridCells = chessboard.getGridMap();
 
                 const bool isBetter = !bestLayout.has_value()
-                    || isBetterLayout(result, bestLayout.value(), settings.phaseCount);
+                    || isBetterLayout(result, bestLayout.value());
                 if (isBetter) {
                     bestLayout = std::move(result);
-                    usedGraphvizFallback = false;
-                    const bool phaseOk = hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
-                    const double repeatRatio = bestLayout->phaseRepeats.totalAdjacent > 0
-                        ? static_cast<double>(bestLayout->phaseRepeats.repeatedAdjacent) / bestLayout->phaseRepeats.totalAdjacent
-                        : 0.0;
-                    QString message = QString("Candidate %1/%2 success: %3x%4=%5, phase=%6, spacing=(%7,%8), max repeat=%9, repeat ratio=%10% (%11)")
+                    ++bestUpdateCount;
+
+                    std::map<unsigned int, position> snapshotNodes;
+                    for (const auto &entry : bestLayout->nodePositions) {
+                        snapshotNodes[static_cast<unsigned int>(entry.first)] = entry.second;
+                    }
+                    std::map<position, int> snapshotPhases;
+                    for (const auto &entry : bestLayout->gridCells) {
+                        if (entry.second.getPhase() > 0) {
+                            snapshotPhases[entry.first] = entry.second.getPhase() - 1;
+                        }
+                    }
+                    saveGraphRenderLatex(
+                        filePath,
+                        parse,
+                        snapshotNodes,
+                        bestLayout->routes,
+                        snapshotPhases,
+                        settings.phaseCount,
+                        bestLayout->bounds.width,
+                        bestLayout->bounds.height,
+                        QStringLiteral("_graph_pr_stages"),
+                        QStringLiteral("_04_best_update_%1_area_%2.tex")
+                            .arg(bestUpdateCount, 2, 10, QLatin1Char('0'))
+                            .arg(bestLayout->bounds.area),
+                        false);
+
+                    const bool phaseOk = hasAcceptablePhaseRun(bestLayout->phaseRuns);
+                    QString message = QString("Candidate %1/%2 success: %3x%4=%5, phase=%6, seed=(%7,%8,%9), max same-phase run=%10/%11 (%12)")
                         .arg(attemptIndex + 1)
                         .arg(attemptLimit)
                         .arg(bestLayout->bounds.width)
@@ -4162,10 +2778,11 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                         .arg(settings.phaseCount)
                         .arg(bestLayout->xSpacing)
                         .arg(bestLayout->ySpacing)
-                        .arg(bestLayout->phaseRepeats.maxRun)
-                        .arg(repeatRatio * 100.0, 0, 'f', 1)
-                        .arg(phaseOk ? "phase-ok" : "phase-repeat-high");
-                    emit operationProgress(message, candidateProgress(attemptIndex + 1), 100);
+                        .arg(bestLayout->elasticPlacement ? "elastic" : "regular")
+                        .arg(bestLayout->phaseRuns.maxRun)
+                        .arg(phaseRunLimit())
+                        .arg(phaseOk ? "phase-ok" : "phase-run-too-long");
+                    emit operationProgress(message, attemptIndex + 1, attemptLimit);
                     QCoreApplication::processEvents();
                 }
             } catch (const std::exception &ex) {
@@ -4175,133 +2792,82 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
         }
 
         if (!bestLayout.has_value()) {
-            emit operationProgress(
-                tr("Compact Graphviz and fixed-layer routing were blocked; checking the buffered safety topology"),
-                69,
-                100);
+            QString message = QString("Place, route, and phase assignment failed after %1 attempts. Last failure: %2")
+                .arg(attemptLimit)
+                .arg(QString::fromStdString(lastFailure));
+            emit operationFailed(message);
             QCoreApplication::processEvents();
-            const bool preferBufferedTopology =
-                layerNodes.size() >= 18 && maxLayerWidth >= 10;
-            if (!bestLayout.has_value() && preferBufferedTopology) {
-                emit operationProgress(
-                    tr("Compact topology remained blocked; restoring July layer buffers for a legal fallback"),
-                    70,
-                    100);
-                QCoreApplication::processEvents();
-
-                Parse bufferedParse;
-                bufferedParse.parseVerilog(file);
-                bufferedParse.optimizeAIOG_DRC(2, 2, 2, 2, 2, 2);
-                bufferedParse.addLayerRedundancyNode();
-                bufferedParse.caculateSameLayerNodeRoutePair();
-
-                GridChessboard bufferedBoard;
-                Astar bufferedRouter(bufferedBoard, false, 360.0);
-                bufferedRouter.setAllowInterSourceWireOverlap(false);
-                CircuitGraph bufferedGraph(
-                    bufferedParse, file, bufferedBoard, bufferedRouter);
-                bufferedGraph.setFitnessCallback([&lastFailure](const std::string &detail) {
-                    lastFailure = detail;
-                });
-                if (bufferedGraph.placeAndRouteJuneRandomClock(
-                        settings.phaseCount,
-                        20.0,
-                        24)) {
-                    const auto bounds = calculateGridBounds(bufferedBoard.getGridMap());
-                    if (bounds.has_value()) {
-                        LayoutSearchResult result;
-                        result.bounds = bounds.value();
-                        result.routeLength = totalRouteLength(bufferedGraph.routes);
-                        result.phaseRepeats = calculatePhaseRepeatStats(
-                            bufferedGraph.routes, bufferedBoard.getGridMap());
-                        result.placementEngine = QStringLiteral(
-                            "Graphviz DOT buffered-topology fallback");
-                        result.searchCost = 360.0;
-                        result.nodePositions = bufferedGraph.nodeIndex_pos;
-                        result.routes = bufferedGraph.routes;
-                        result.gridCells = bufferedBoard.getGridMap();
-                        bestLayout = std::move(result);
-                        usedGraphvizFallback = true;
-                        parse = std::move(bufferedParse);
-                        gateNum = parse.getm_numVertices();
-                        wireNum = parse.getm_numEdges();
-                    }
-                }
-            }
-            if (!bestLayout.has_value()) {
-                QString message = QString(
-                    "Compact Graph Draw failed in both fixed-layer and Graphviz fallback routing. Last failure: %1")
-                    .arg(QString::fromStdString(lastFailure));
-                emit operationFailed(message);
-                QCoreApplication::processEvents();
-                return;
-            }
+            return;
         }
 
-        if (candidateBudgetReached) {
+        // The regular x/y spacing above is only a seed.  Refine the winning
+        // legal layout transactionally so gates outside the primary-input
+        // layer may take independent Y coordinates and non-uniform X gaps.
+        // Every accepted move is fully rerouted, phase checked, and validated
+        // by the unchanged version1.1 mapping/crossover implementation.
+        try {
             emit operationProgress(
-                tr("Candidate budget reached; keeping the best legal layout found"),
-                69,
-                100);
-        }
-
-        const int effectiveCompactionRounds =
-            effectiveEdgeCount > 300 || usedGraphvizFallback || usedAdaptiveCompact
-            ? 0 : settings.compactionRounds;
-        emit operationProgress(
-            effectiveCompactionRounds > 0
-                ? tr("Candidate search complete; preparing phase-aware compaction")
-                : tr("Legal compact layout selected; preparing output data"),
-            70,
-            100);
-        QCoreApplication::processEvents();
-        if (effectiveCompactionRounds > 0) {
-            emit operationProgress(
-                tr("Phase-aware compaction: rerouting each accepted geometric cut"),
-                72,
-                100);
+                tr("Refining individual gate coordinates and compacting routed rows/columns"),
+                attemptLimit,
+                attemptLimit);
             QCoreApplication::processEvents();
 
-            GridChessboard compactBoard;
-            Astar legacyRouter(compactBoard, false,
-                               std::max(240.0, bestLayout->searchCost));
-            CircuitGraph compactGraph(parse, file, compactBoard, legacyRouter);
-            compactGraph.nodeIndex_pos = bestLayout->nodePositions;
-            if (compactGraph.placeAndRoutePhaseAware(settings.phaseCount,
-                                                     settings.maxSamePhase,
-                                                     std::max(240.0, bestLayout->searchCost))) {
-                const int acceptedCuts = compactGraph.compactPhaseAware(
+            GridChessboard refinementChessboard;
+            Astar refinementAstar(
+                refinementChessboard, false,
+                std::max(240.0, bestLayout->searchCost));
+            CircuitGraph refinementGraph(
+                parse, file, refinementChessboard, refinementAstar);
+            refinementGraph.nodeIndex_pos = bestLayout->nodePositions;
+            refinementGraph.routes = bestLayout->routes;
+            refinementChessboard.gridMap = bestLayout->gridCells;
+
+            const std::size_t edgeCount = parse.getEffectiveEdges().size();
+            int refinementRounds = edgeCount <= 24 ? 10 : 5;
+            int refinementEvaluations = edgeCount <= 24 ? 48 : 20;
+            int refinementRouteRetries = edgeCount <= 24 ? 8 : 4;
+            bool envOk = false;
+            const int envRounds = qEnvironmentVariableIntValue(
+                "IFCN_ELASTIC_REFINEMENT_ROUNDS", &envOk);
+            if (envOk && envRounds >= 0) {
+                refinementRounds = envRounds;
+            }
+            const int envEvaluations = qEnvironmentVariableIntValue(
+                "IFCN_ELASTIC_REFINEMENT_EVALUATIONS", &envOk);
+            if (envOk && envEvaluations >= 0) {
+                refinementEvaluations = envEvaluations;
+            }
+            const int envRetries = qEnvironmentVariableIntValue(
+                "IFCN_ELASTIC_REFINEMENT_ROUTE_RETRIES", &envOk);
+            if (envOk && envRetries >= 0) {
+                refinementRouteRetries = envRetries;
+            }
+            if (refinementGraph.refineLegacyMappedLayout(
                     settings.phaseCount,
-                    settings.maxSamePhase,
-                    std::max(300.0, bestLayout->searchCost),
-                    effectiveCompactionRounds);
-                const auto compactBounds = calculateGridBounds(compactBoard.getGridMap());
-                if (compactBounds.has_value()) {
-                    LayoutSearchResult compactResult;
-                    compactResult.bounds = compactBounds.value();
-                    compactResult.routeLength = totalRouteLength(compactGraph.routes);
-                    compactResult.phaseRepeats = calculatePhaseRepeatStats(
-                        compactGraph.routes, compactBoard.getGridMap());
-                    compactResult.placementEngine = bestLayout->placementEngine;
-                    compactResult.xSpacing = bestLayout->xSpacing;
-                    compactResult.ySpacing = bestLayout->ySpacing;
-                    compactResult.searchCost = std::max(300.0, bestLayout->searchCost);
-                    compactResult.compactionCuts = acceptedCuts;
-                    compactResult.nodePositions = compactGraph.nodeIndex_pos;
-                    compactResult.routes = compactGraph.routes;
-                    compactResult.gridCells = compactBoard.getGridMap();
-                    if (isBetterLayout(compactResult, bestLayout.value(), settings.phaseCount)) {
-                        bestLayout = std::move(compactResult);
+                    refinementRounds,
+                    refinementEvaluations,
+                    refinementRouteRetries)) {
+                const auto refinedBounds =
+                    calculateGridBounds(refinementChessboard.getGridMap());
+                if (refinedBounds.has_value()) {
+                    LayoutSearchResult refined = bestLayout.value();
+                    refined.bounds = refinedBounds.value();
+                    refined.routeLength = totalRouteLength(refinementGraph.routes);
+                    refined.phaseRuns = calculatePhaseRunStats(
+                        refinementGraph.routes,
+                        refinementChessboard.getGridMap());
+                    refined.nodePositions = refinementGraph.nodeIndex_pos;
+                    refined.routes = refinementGraph.routes;
+                    refined.gridCells = refinementChessboard.getGridMap();
+                    if (isBetterLayout(refined, bestLayout.value())) {
+                        bestLayout = std::move(refined);
                     }
                 }
             }
+        } catch (const std::exception &ex) {
+            // The winning regular seed remains a complete legal fallback.
+            lastFailure = std::string("non-uniform refinement: ") + ex.what();
         }
-
-        emit operationProgress(
-            tr("Placement, routing, and compaction complete; preparing output data"),
-            82,
-            100);
-        QCoreApplication::processEvents();
 
         double elapsedSeconds = timer.elapsed() / 1000.0;
         int width = bestLayout->bounds.width;
@@ -4309,93 +2875,134 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
 
         QString elapsedStr = filePath + " \& " + QString::number(gateNum) +
                                         " \& " + QString::number(inputNum) + " / " + QString::number(outputNum) +
-                                        " \& " + QString::number(wireNum) + 
+                                        " \& " + QString::number(wireNum) +
                                         " \& " + QString::number(width)+ " $\\times$ " + QString::number(height) + " = " + QString::number(width*height) +
                                         " \& phase " + QString::number(settings.phaseCount) +
                                         " \& " + QString::number(elapsedSeconds, 'f', 1) ;
         //测试时间
 
-        const bool phaseQualityOk = hasAcceptablePhaseRepeats(bestLayout->phaseRepeats, settings.phaseCount);
-        const double repeatRatio = bestLayout->phaseRepeats.totalAdjacent > 0
-            ? static_cast<double>(bestLayout->phaseRepeats.repeatedAdjacent) / bestLayout->phaseRepeats.totalAdjacent
-            : 0.0;
-        QString placementSummary = QString(" ; placement=%1")
-            .arg(bestLayout->placementEngine);
-        if (!usedGraphvizFallback) {
-            placementSummary += QString(" (%1 fixed-layer crossings)")
-                .arg(fixedOrder.crossings);
-        }
-        const QString geometrySummary = usedAdaptiveCompact
-            ? QString(" ; unit-spacing seed with adaptive capacity, route length=%1")
-                  .arg(bestLayout->routeLength)
-            : (usedGraphvizFallback
-                   ? QString(" ; route length=%1").arg(bestLayout->routeLength)
-                   : QString(" ; candidate spacing=(%1,%2), route length=%3")
-                         .arg(bestLayout->xSpacing)
-                         .arg(bestLayout->ySpacing)
-                         .arg(bestLayout->routeLength));
-        QString message =  "Stochastic compact graph layout success! " + elapsedStr +
-                           placementSummary + geometrySummary +
-                           QString(" ; max phase repeat=%1 ; repeat ratio=%2% ; phase quality=%3")
-                               .arg(bestLayout->phaseRepeats.maxRun)
-                               .arg(repeatRatio * 100.0, 0, 'f', 1)
-                               .arg(phaseQualityOk ? "ok" : "high-repeat-warning") +
-                           QString(" ; accepted phase-aware cuts=%1")
-                               .arg(bestLayout->compactionCuts);
+        const bool phaseQualityOk = hasAcceptablePhaseRun(bestLayout->phaseRuns);
+        QString message =  "Graph layout success! " + elapsedStr +
+                           QString(" ; best seed=(%1,%2,%3), route length=%4")
+                               .arg(bestLayout->xSpacing)
+                               .arg(bestLayout->ySpacing)
+                               .arg(bestLayout->elasticPlacement ? "elastic" : "regular")
+                               .arg(bestLayout->routeLength) +
+                           QString(" ; max same-phase run=%1/%2 ; phase quality=%3")
+                               .arg(bestLayout->phaseRuns.maxRun)
+                               .arg(phaseRunLimit())
+                               .arg(phaseQualityOk ? "ok" : "run-too-long-warning");
 
         std::map<unsigned int, position> node_pos;
         for (auto& pair : bestLayout->nodePositions) {
-            node_pos[static_cast<unsigned int>(pair.first)] = pair.second;  
-        } 
-        
+            node_pos[static_cast<unsigned int>(pair.first)] = pair.second;
+        }
+
         std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> routes = bestLayout->routes;
         std::unordered_map<position, GridCell, PositionHash> gridCells = bestLayout->gridCells;
 
-        if (node_pos.empty()) {
+        unsigned int scale = 0;
+        if(!node_pos.empty()) {
+            position max = node_pos.begin()->second;
+            for(auto &v : node_pos) {
+                unsigned int y = v.second.second;
+                unsigned int ymax = max.second;
+                if(y > ymax) {
+                    max = v.second;
+                }
+            }
+            scale = max.second + 1;
+        } else {
             throw std::runtime_error("No node positions generated");
         }
 
-        // Keep the routed coordinate system unchanged in every exported
-        // artifact.  The save routines may translate the minimum coordinate
-        // to the origin, but must not rotate or reflect the final layout.
-        std::unordered_set<position, PositionHash> occupiedPositions;
-        occupiedPositions.reserve(node_pos.size() + gridCells.size());
-        for (const auto &node : node_pos) {
-            occupiedPositions.insert(node.second);
+        std::map<unsigned int, position> node_pos_trans;
+        std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> routes_trans;
+        std::vector<std::pair<position, position>> pos_trans; // 坐标转换前后对应
+
+        for(auto &v : node_pos) {
+            node_pos_trans[v.first] = coordtrans(v.second, scale);
+            pos_trans.push_back(std::make_pair(v.second, node_pos_trans[v.first]));
         }
-        for(const auto &v : routes) {
-            for(const position &route : v.second) {
-                occupiedPositions.insert(route);
+
+        for(auto &v : routes) {
+            std::vector<position> temp = v.second;
+            std::vector<position> temp_trans;
+            for(auto & route : temp) {
+                temp_trans.push_back(coordtrans(route, scale));
+                pos_trans.push_back(std::make_pair(route, coordtrans(route, scale)));
             }
+            routes_trans[v.first] = temp_trans;
         }
 
         std::map<position, int> pos_phase;
-        for (const auto &v : gridCells) {
+        for(auto &v : gridCells) {
             if (v.second.getPhase() < 1) {
                 continue;
             }
-            if (occupiedPositions.find(v.first) != occupiedPositions.end()) {
-                pos_phase[v.first] = v.second.getPhase() - 1;
+            for(auto &pair : pos_trans) {
+                if(v.first == pair.first) {
+                    pos_phase[pair.second] = v.second.getPhase()-1;
+                    break;
+                }
             }
         }
 
-        emit operationProgress(tr("Saving required .ifcn layout"), 86, 100);
-        QCoreApplication::processEvents();
+        // Export the selected candidate at the meaningful P&R boundaries.
+        // All snapshots use exactly the same winning placement so that
+        // differences between figures reflect routing and phase assignment,
+        // rather than a different candidate's geometry.
+        const std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> noRoutes;
+        const std::map<position, int> noPhases;
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             noRoutes,
+                             noPhases,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_stages"),
+                             QStringLiteral("_01_layered_placement.tex"),
+                             false);
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             routes_trans,
+                             noPhases,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_stages"),
+                             QStringLiteral("_02_astar_routing.tex"),
+                             false);
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             routes_trans,
+                             pos_phase,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_stages"),
+                             QStringLiteral("_03_clock_phase_assignment.tex"),
+                             false);
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             routes_trans,
+                             pos_phase,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_stages"),
+                             QStringLiteral("_05_compact_final.tex"),
+                             false);
 
-        const QString crossingOrderLabel =
-            fixedOrder.engine.startsWith(QStringLiteral("OGDF"))
-                ? QStringLiteral("OGDF crossing minimization")
-                : fixedOrder.engine;
-        const QString algorithmLabel = usedAdaptiveCompact
-            ? QStringLiteral("compact Graph Draw: %1 + unit-spacing placement + conflict-driven row/column expansion + random-phase closure")
-                  .arg(crossingOrderLabel)
-            : (usedGraphvizFallback
-                   ? QStringLiteral("compact Graph Draw: Graphviz safety fallback + four-direction routing + random-phase closure")
-                   : QStringLiteral("compact Graph Draw: crossing-ordered fixed-layer fallback + phase-aware routing"));
         const QString ifcnPath = saveGateLevelIfcn(filePath,
                                                    parse,
-                                                   node_pos,
-                                                   routes,
+                                                   node_pos_trans,
+                                                   routes_trans,
                                                    pos_phase,
                                                    settings.phaseCount,
                                                    static_cast<int>(gateNum),
@@ -4405,69 +3012,26 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
                                                    width,
                                                    height,
                                                    elapsedSeconds,
-                                                   algorithmLabel,
+                                                   QStringLiteral("graph P&R algorithm"),
                                                    QStringLiteral("_graph_pr_layout"),
                                                    QStringLiteral("_graph_pr_layout.ifcn"));
+        saveGraphRenderLatex(filePath,
+                             parse,
+                             node_pos_trans,
+                             routes_trans,
+                             pos_phase,
+                             settings.phaseCount,
+                             width,
+                             height,
+                             QStringLiteral("_graph_pr_layout"),
+                             QStringLiteral("_graph_pr_layout.tex"));
         if (ifcnPath.isEmpty()) {
             throw std::runtime_error("Graph P&R generated a layout, but failed to save .ifcn.");
         }
 
-        QStringList generatedArtifacts;
-        generatedArtifacts << tr("IFCN: %1").arg(QDir::toNativeSeparators(ifcnPath));
-
-        if (settings.generateLatex) {
-            emit operationProgress(tr("Writing optional phase-layout LaTeX"), 90, 100);
-            QCoreApplication::processEvents();
-            const QString latexPath = saveGraphRenderLatex(
-                filePath,
-                parse,
-                node_pos,
-                routes,
-                pos_phase,
-                settings.phaseCount,
-                width,
-                height,
-                QStringLiteral("_graph_pr_layout"),
-                QStringLiteral("_graph_pr_layout.tex"));
-            if (!latexPath.isEmpty()) {
-                generatedArtifacts << tr("LaTeX: %1").arg(
-                    QDir::toNativeSeparators(latexPath));
-            } else {
-                generatedArtifacts << tr("LaTeX export failed (the IFCN layout is still valid)");
-            }
-        }
-
-        emit operationProgress(tr("Loading generated .ifcn into the cell-level view"), 94, 100);
+        mainWindow->mapIfcnFile(ifcnPath);
+        emit operationFinished(message + tr(" ; loaded .ifcn: %1").arg(QDir::toNativeSeparators(ifcnPath)));
         QCoreApplication::processEvents();
-        // Suppress the parser's intermediate success dialog.  The true
-        // completion dialog is shown after mapping and optional exports.
-        mainWindow->mapIfcnFile(ifcnPath, false);
-
-        if (settings.generateSvg) {
-            emit operationProgress(tr("Writing optional final cell-level SVG"), 98, 100);
-            QCoreApplication::processEvents();
-            const QFileInfo ifcnInfo(ifcnPath);
-            const QString svgPath = ifcnInfo.dir().filePath(
-                ifcnInfo.completeBaseName() + QStringLiteral(".svg"));
-            if (exportCellLevelLayout(svgPath)) {
-                generatedArtifacts << tr("SVG: %1").arg(
-                    QDir::toNativeSeparators(svgPath));
-            } else {
-                generatedArtifacts << tr("SVG export failed (the IFCN layout is still valid)");
-            }
-        }
-
-        const QString loadedMessage = message +
-            tr(" ; loaded .ifcn: %1").arg(QDir::toNativeSeparators(ifcnPath));
-        emit operationFinished(loadedMessage);
-        QCoreApplication::processEvents();
-        if (qEnvironmentVariable("IFCN_AUTO_GRAPH_RENDER_FILE").trimmed().isEmpty()) {
-            QMessageBox::information(
-                mainWindow,
-                tr("Stochastic Compact Graph P&R complete"),
-                tr("The layout is loaded and ready.\n\n%1")
-                    .arg(generatedArtifacts.join(QLatin1Char('\n'))));
-        }
     } catch (const std::exception &ex) {
         mainWindow->endSceneBatchUpdate(false);
         QString message = QString("布局布线失败: %1").arg(ex.what());
@@ -4478,9 +3042,9 @@ void VerilogHandler::runGraphRenderForFile(const QString &filePath)
 
 }
 
-void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos, 
-                                    std::map<std::pair<unsigned int, unsigned int>, 
-                                    std::vector<position>>& _nodepair_route, 
+void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos,
+                                    std::map<std::pair<unsigned int, unsigned int>,
+                                    std::vector<position>>& _nodepair_route,
                                     Parse _parse, std::map<position, int>& _pos_phase)
 {
     Mapping mapping;
@@ -4496,7 +3060,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
         }
         circle_line.push_back(unitcell);
     }
-    
+
 
     std::map<std::pair<position, std::string>, std::pair<std::vector<position>, std::vector<position>>> Nodelink;//map<(node,type), (扇入，扇出)>
     Nodelink.clear();
@@ -4547,8 +3111,8 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
     {
         for (auto &v: _parse.hide_not_place_pair){
             QString message = QString("node gate insert position: (%1 , %2)")
-                            .arg(v.second.first)  
-                            .arg(v.second.second); 
+                            .arg(v.second.first)
+                            .arg(v.second.second);
             mainWindow->customStatusBar->addMessage(message);
         }
 
@@ -4570,7 +3134,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
         {
             not_routes[line.second] = _nodepair_route[line.second];
         }
-        
+
         std::vector<std::vector<position>> not_line;//放置not的线路（结构同circle_line）
         //std::map<position, int> startpos_num;
         std::map<position, std::vector<std::vector<position>>> startpos_line;
@@ -4583,16 +3147,16 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
             }
             not_line.push_back(unitcell);
 
-            if (startpos_line.find(unitcell.front()) == startpos_line.end()) 
-            {  
-                startpos_line[unitcell.front()] = {}; 
+            if (startpos_line.find(unitcell.front()) == startpos_line.end())
+            {
+                startpos_line[unitcell.front()] = {};
                 startpos_line[unitcell.front()].push_back(unitcell);
-            } else 
-            {  
+            } else
+            {
                 startpos_line[unitcell.front()].push_back(unitcell);
             }
         }
-        
+
         //std::vector<std::vector<position>> not_line_used;
         for(auto &line : startpos_line)
         {
@@ -4617,7 +3181,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                         i++;
                     }
                 }
-                
+
                 auto single_route = line.second.front();
                 for (auto it = single_route.begin(); it != single_route.end(); it++)
                 {
@@ -4651,14 +3215,14 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                             std::vector<position> back_line;
                             front_line.insert(front_line.end(), single_route.begin(), std::next(it));
                             back_line.insert(back_line.end(), it, single_route.end());
-                            
+
                             auto it1 = std::find(circle_line.begin(), circle_line.end(), single_route);
                             circle_line.insert(it1, front_line);
                             auto it2 = std::find(circle_line.begin(), circle_line.end(), single_route);
                             circle_line.insert(it2, back_line);
                             auto delete_line = std::find(circle_line.begin(), circle_line.end(), single_route);
                             circle_line.erase(delete_line);
-                            
+
                             // circle_line.push_back(front_line);
                             // circle_line.push_back(back_line);
 
@@ -4666,7 +3230,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                         }
                     }
                 }
-                
+
             }
             else//line.second.size() == 2
             {
@@ -4678,7 +3242,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                     ++i;
                 }
                 int fanout = i-1;
-                
+
                 if (fanout == 0)//无复用线路
                 {
                     for (auto it = route1.begin(); it != route1.end(); it++)
@@ -4712,7 +3276,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                                 std::vector<position> back_line;
                                 front_line.insert(front_line.end(), route1.begin(), std::next(it));
                                 back_line.insert(back_line.end(), it, route1.end());
-                                
+
                                 auto it1 = std::find(circle_line.begin(), circle_line.end(), route1);
                                 circle_line.insert(it1, front_line);
                                 auto it2 = std::find(circle_line.begin(), circle_line.end(), route1);
@@ -4756,7 +3320,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                                 std::vector<position> back_line;
                                 front_line.insert(front_line.end(), route2.begin(), std::next(it));
                                 back_line.insert(back_line.end(), it, route2.end());
-                                
+
                                 auto it1 = std::find(circle_line.begin(), circle_line.end(), route2);
                                 circle_line.insert(it1, front_line);
                                 auto it2 = std::find(circle_line.begin(), circle_line.end(), route2);
@@ -4790,7 +3354,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                             std::vector<position> reuse_route = {};
                             std::vector<position> route1_back = {};
                             std::vector<position> route2_back = {};
-                            
+
                             reuse_route.insert(reuse_route.end(), route1.begin(), std::next(fanout1));
                             route1_back.insert(route1_back.end(), fanout1, route1.end());
                             route2_back.insert(route2_back.end(), fanout2, route2.end());
@@ -4821,7 +3385,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                                     Nodelink[std::make_pair(route1[i], "not")].first.push_back(route1[i-1]);
                                     Nodelink[std::make_pair(route1[i], "not")].second.push_back(route1[i+1]);
                                     notcell.push_back(route1[i]);
-                                    
+
                                     std::vector<position> reuse_route = {};
                                     std::vector<position> route1_back = {};
                                     std::vector<position> route2_back = {};
@@ -4852,7 +3416,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                                 std::vector<position> route2_back = {};
                                 route1_back.insert(route1_back.end(), fanout1, route1.end());
                                 route2_back.insert(route2_back.end(), fanout2, route2.end());
-                                
+
                                 for (auto it = route1_back.begin(); it != route1_back.end(); it++)
                                 {
                                     if (*it == route1_back.front())
@@ -4885,7 +3449,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                                             auto itpos = std::find(route1.begin(), route1.end(), *it);
                                             front_line.insert(front_line.end(), route1.begin(), std::next(itpos));
                                             back_line.insert(back_line.end(), itpos, route1.end());
-                                            
+
                                             auto it1 = std::find(circle_line.begin(), circle_line.end(), route1);
                                             circle_line.insert(it1, front_line);
                                             auto it2 = std::find(circle_line.begin(), circle_line.end(), route1);
@@ -4930,7 +3494,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                                             auto itpos = std::find(route2.begin(), route2.end(), *it);
                                             front_line.insert(front_line.end(), route2.begin(), std::next(itpos));
                                             back_line.insert(back_line.end(), itpos, route2.end());
-                                            
+
                                             auto it1 = std::find(circle_line.begin(), circle_line.end(), route2);
                                             circle_line.insert(it1, front_line);
                                             auto it2 = std::find(circle_line.begin(), circle_line.end(), route2);
@@ -4964,15 +3528,6 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
     }
 
     mapping.node_mapping(Nodelink);
-    auto routeexample = mapping.mapping_line(circle_line);
-    std::string crossoverError;
-    if (!mapping.validate_crossovers(&crossoverError)) {
-        const QString message = QStringLiteral("Cell mapping rejected: invalid crossover: %1")
-                                    .arg(QString::fromStdString(crossoverError));
-        qWarning().noquote() << message;
-        mainWindow->customStatusBar->addMessage(message);
-        return;
-    }
     auto nodeexample = mapping.nodecell_list;
     if(nodeexample.empty())
     {
@@ -4987,37 +3542,41 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
         {
             for(auto &cellpos : cellpos_list)
             {
-                position node_pos = {cellpos.first / 5, cellpos.second / 5};
+                unsigned int x_node = cellpos.first / 5;
+                unsigned int y_node = cellpos.second / 5;
+                position node_pos = {x_node, y_node};
                 QString Iname = "default";
                 for (auto &v : _node_pos)
                 {
                     if (node_pos == v.second)
                     {
-                        std::string index = _parse.getVertexName(v.first);  
+                        std::string index = _parse.getVertexName(v.first);
                         Iname = QString::fromStdString(index);
                         break;
                     }
                 }
-                putCellItem(cellpos, 0, CellType::InputCell, _pos_phase, Iname);          
+                putCellItem(cellpos, 0, CellType::InputCell, _pos_phase, Iname);
             }
         }
         else if (cell.first == "output")
         {
             for(auto &cellpos : cellpos_list)
             {
-                position node_pos = {cellpos.first / 5, cellpos.second / 5};
+                unsigned int x_node = cellpos.first / 5;
+                unsigned int y_node = cellpos.second / 5;
+                position node_pos = {x_node, y_node};
                 QString Oname = "default";
                 for (auto &v : _node_pos)
                 {
                     if (node_pos == v.second)
                     {
-                        std::string index = _parse.getVertexName(v.first);  
+                        std::string index = _parse.getVertexName(v.first);
                         Oname = QString::fromStdString(index);
                         break;
                     }
                 }
                 putCellItem(cellpos, 0, CellType::OutputCell, _pos_phase, Oname);
-                
+
             }
         }
         else if (cell.first == "normal")
@@ -5025,7 +3584,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
             for(auto &cellpos : cellpos_list)
             {
                 putCellItem(cellpos, 0, CellType::NormalCell, _pos_phase);
-                
+
             }
         }
         else if (cell.first == "fix0")
@@ -5033,7 +3592,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
             for(auto &cellpos : cellpos_list)
             {
                 putCellItem(cellpos, 0, CellType::FixedCell_0, _pos_phase);
-                
+
             }
         }
         else if (cell.first == "fix1")
@@ -5041,20 +3600,21 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
             for(auto &cellpos : cellpos_list)
             {
                 putCellItem(cellpos, 0, CellType::FixedCell_1, _pos_phase);
-                
+
             }
         }
     }
-    
+
+    auto routeexample = mapping.mapping_line(circle_line);
     auto crossexample = mapping.crossline_list;
-    
+
     std::vector<position> allroutecells;
     for (auto &pair : routeexample)
     {
         for (auto &v : pair.second)
         {
             allroutecells.insert(allroutecells.end(), v.begin(), v.end());
-        }   
+        }
     }
 
     //Cross线路元胞放置
@@ -5077,35 +3637,35 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                 {
                     if((unit == cross.begin()) || (std::next(unit) == cross.end()))
                     {
-                        int count = 0; 
-                        position dir1 = {(*unit).first, (*unit).second + 1}; 
-                        position dir2 = {(*unit).first, (*unit).second - 1}; 
-                        position dir3 = {(*unit).first - 1, (*unit).second}; 
-                        position dir4 = {(*unit).first + 1, (*unit).second}; 
+                        int count = 0;
+                        position dir1 = {(*unit).first, (*unit).second + 1};
+                        position dir2 = {(*unit).first, (*unit).second - 1};
+                        position dir3 = {(*unit).first - 1, (*unit).second};
+                        position dir4 = {(*unit).first + 1, (*unit).second};
                         if(std::find(crosscell.begin(), crosscell.end(), dir1) != crosscell.end())
                         {
-                            ++count;  
+                            ++count;
                         }
                         if(std::find(crosscell.begin(), crosscell.end(), dir2) != crosscell.end())
                         {
-                            ++count;  
+                            ++count;
                         }
                         if(std::find(crosscell.begin(), crosscell.end(), dir3) != crosscell.end())
                         {
-                            ++count;  
+                            ++count;
                         }
                         if(std::find(crosscell.begin(), crosscell.end(), dir4) != crosscell.end())
                         {
-                            ++count;  
+                            ++count;
                         }
-                        if (count >= 2) 
-                        {  
+                        if (count >= 2)
+                        {
                             position cellpos = *unit;
                             putCellItem(cellpos, 2, CellType::CrossoverCell, _pos_phase);
-                            
-                        } 
 
-                        if(count < 2) 
+                        }
+
+                        if(count < 2)
                         {
                             //若端点无法直接放置柱点，则跨时钟延伸两个单位元胞
                             if((std::find(crosscell.begin(), crosscell.end(), dir2) != crosscell.end())
@@ -5165,8 +3725,8 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                     {
                         position cellpos = *unit;
                         putCellItem(cellpos, 2, CellType::CrossoverCell, _pos_phase);
-                        
-                        
+
+
                     }
                 }
             }
@@ -5185,7 +3745,7 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
                     if(std::find(crosscell.begin(), crosscell.end(), pos) == crosscell.end())
                     {
                         putCellItem(pos, 0, CellType::NormalCell, _pos_phase);
-                        
+
                     }
                     else
                     {
@@ -5221,16 +3781,16 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
             }
         }
     }
-    
-    for (auto &vpos : verticalcell) 
+
+    for (auto &vpos : verticalcell)
     {
         int pl = 0;
         int posx_node = vpos.first / 5;
         int posy_node = vpos.second / 5;
         position pos_node = {posx_node, posy_node};
-        std::vector<position> vtemp = {{vpos.first, vpos.second + 1},  
-                                    {vpos.first, vpos.second - 1},  
-                                    {vpos.first - 1, vpos.second},  
+        std::vector<position> vtemp = {{vpos.first, vpos.second + 1},
+                                    {vpos.first, vpos.second - 1},
+                                    {vpos.first - 1, vpos.second},
                                     {vpos.first + 1, vpos.second} };
         for (auto &vcell : vtemp)
         {
@@ -5247,6 +3807,14 @@ void VerilogHandler::mappingCellItem(std::map<unsigned int, position>& _node_pos
     }
 
     isOptimizeNOTNode = true;
+}
+
+position VerilogHandler::coordtrans(const position& pos, unsigned int scale)
+{
+    (void)scale;
+    unsigned int x = pos.first;
+    unsigned int y = pos.second;
+    return {x, y};
 }
 
 QString VerilogHandler::saveGateLevelIfcn(
@@ -5287,27 +3855,6 @@ QString VerilogHandler::saveGateLevelIfcn(
         ? QStringLiteral("placement and routing algorithm")
         : algorithmLabel.trimmed();
     const GateLevelIfcnLayout restoredLayout = restoreHiddenNotNodesForIfcn(parse, nodePositions, routes);
-    if (restoredLayout.skippedHiddenNotRoutes > 0) {
-        mainWindow->printToStatusBar(
-            tr("Refusing to save a layout with %1 unrestored hidden-NOT route(s).")
-                .arg(restoredLayout.skippedHiddenNotRoutes));
-        return QString();
-    }
-
-    std::vector<std::vector<position>> restoredRouteGeometry;
-    restoredRouteGeometry.reserve(restoredLayout.routes.size());
-    for (const auto &route : restoredLayout.routes) {
-        restoredRouteGeometry.push_back(route.second);
-    }
-    Mapping restoredMapping;
-    restoredMapping.mapping_line(restoredRouteGeometry);
-    std::string restoredCrossoverError;
-    if (!restoredMapping.validate_crossovers(&restoredCrossoverError)) {
-        mainWindow->printToStatusBar(
-            tr("Refusing to save an invalid crossover mapping: %1")
-                .arg(QString::fromStdString(restoredCrossoverError)));
-        return QString();
-    }
 
     bool hasCoord = false;
     unsigned int originX = 0;
@@ -5374,7 +3921,7 @@ QString VerilogHandler::saveGateLevelIfcn(
         normalizedPosPhase[normalizePos(entry.first)] = entry.second;
     }
 
-    QSaveFile file(outputPath);
+    QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         mainWindow->printToStatusBar("Failed to save .ifcn: " + QDir::toNativeSeparators(outputPath));
         return QString();
@@ -5456,22 +4003,18 @@ QString VerilogHandler::saveGateLevelIfcn(
         }
     } catch (const std::exception &ex) {
         mainWindow->printToStatusBar(QString("Failed to encode phase map: %1").arg(ex.what()));
-        file.cancelWriting();
+        file.close();
+        QFile::remove(outputPath);
         return QString();
     }
     out << "#phase map\n";
-    out.flush();
-    if (out.status() != QTextStream::Ok || !file.commit()) {
-        mainWindow->printToStatusBar(
-            "Failed to commit .ifcn: " + QDir::toNativeSeparators(outputPath));
-        return QString();
-    }
+    file.close();
 
     mainWindow->printToStatusBar(label + " .ifcn saved: " + QDir::toNativeSeparators(outputPath));
     return outputPath;
 }
 
-QString VerilogHandler::saveGraphRenderLatex(
+void VerilogHandler::saveGraphRenderLatex(
     const QString &sourceFilePath,
     Parse &parse,
     const std::map<unsigned int, position> &nodePositions,
@@ -5481,7 +4024,8 @@ QString VerilogHandler::saveGraphRenderLatex(
     int width,
     int height,
     const QString &outputDirSuffix,
-    const QString &outputFileSuffix)
+    const QString &outputFileSuffix,
+    bool showNullLabels)
 {
     const QFileInfo sourceInfo(sourceFilePath);
     const QString outputStem = layoutOutputStem(sourceInfo, parse);
@@ -5491,7 +4035,7 @@ QString VerilogHandler::saveGraphRenderLatex(
     if (!QDir().mkpath(outputDirPath)) {
         mainWindow->printToStatusBar("Failed to create layout LaTeX directory: " +
                                      QDir::toNativeSeparators(outputDirPath));
-        return QString();
+        return;
     }
     const QString fileSuffix = outputFileSuffix.trimmed().isEmpty()
         ? QStringLiteral("_layout.tex")
@@ -5532,7 +4076,7 @@ QString VerilogHandler::saveGraphRenderLatex(
 
     if (!hasCoord) {
         mainWindow->printToStatusBar("No layout coordinates to save as LaTeX.");
-        return QString();
+        return;
     }
 
     Q_UNUSED(width);
@@ -5579,7 +4123,7 @@ QString VerilogHandler::saveGraphRenderLatex(
     QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         mainWindow->printToStatusBar("Failed to save layout LaTeX: " + QDir::toNativeSeparators(outputPath));
-        return QString();
+        return;
     }
 
     QTextStream out(&file);
@@ -5604,15 +4148,20 @@ QString VerilogHandler::saveGraphRenderLatex(
     for (int y = 0; y < normalizedHeight; ++y) {
         for (int x = 0; x < normalizedWidth; ++x) {
             const position pos{static_cast<unsigned int>(x), static_cast<unsigned int>(y)};
-            const QString coord = rlStyleCoord(pos, normalizedHeight);
+            const QString coord = rlStyleCoord(pos);
             if (usedPositions.find(pos) == usedPositions.end()) {
-                out << "\\node[c-1] at " << coord << "{\\phasecell{null}};\n";
+                out << "\\node[c-1] at " << coord
+                    << (showNullLabels ? "{\\phasecell{null}};\n" : "{};\n");
                 continue;
             }
 
             const auto phaseIt = normalizedPosPhase.find(pos);
-            const int phase = rlStylePhase(phaseIt != normalizedPosPhase.end() ? phaseIt->second : 0,
-                                           phaseCount);
+            if (phaseIt == normalizedPosPhase.end()) {
+                out << "\\node[c-1] at " << coord
+                    << (showNullLabels ? "{\\phasecell{null}};\n" : "{};\n");
+                continue;
+            }
+            const int phase = rlStylePhase(phaseIt->second, phaseCount);
             out << "\\node[c" << phase << "] at " << coord
                 << "{\\phasecell{" << phase << "}};\n";
         }
@@ -5620,7 +4169,7 @@ QString VerilogHandler::saveGraphRenderLatex(
 
     for (const auto &entry : normalizedNodePositions) {
         out << "\\node[v] (" << entry.first << ") at "
-            << rlStyleCoord(entry.second, normalizedHeight)
+            << rlStyleCoord(entry.second)
             << "{" << entry.first << "};\n";
     }
 
@@ -5630,7 +4179,7 @@ QString VerilogHandler::saveGraphRenderLatex(
         }
         out << "\\draw[route](" << route.first.first << ")--";
         for (std::size_t i = 1; i + 1 < route.second.size(); ++i) {
-            out << rlStyleCoord(route.second[i], normalizedHeight) << "--";
+            out << rlStyleCoord(route.second[i]) << "--";
         }
         out << "(" << route.first.second << ");\n";
     }
@@ -5639,7 +4188,6 @@ QString VerilogHandler::saveGraphRenderLatex(
     file.close();
 
     mainWindow->printToStatusBar("Layout LaTeX saved: " + QDir::toNativeSeparators(outputPath));
-    return outputPath;
 }
 
 void VerilogHandler::putCellItem(position _cellpos, int _celllayer, CellType _cellType,  std::map<position, int>& _pos_phase, QString _name)
@@ -5656,7 +4204,7 @@ void VerilogHandler::putCellItem(position _cellpos, int _celllayer, CellType _ce
     position node_pos = {_cellpos.first / 5, _cellpos.second / 5};
     auto phase_it = _pos_phase.find(node_pos);
     int phase = (phase_it != _pos_phase.end()) ? phase_it->second : -1;
-    
+
     QCADCellItem *cellItem = new QCADCellItem(x_coord, y_coord, cell_layer, phase, _cellType, _name);
     mainWindow->checkCellInserted(mainWindow->layers, cellItem, cell_layer, x_coord, y_coord);
 }
@@ -5666,7 +4214,7 @@ void VerilogHandler::putClock(std::map<position, int>& _pos_phase)
     for(auto &v : _pos_phase)
     {
         auto pos = v.first;
-        int x = ((pos.first*5) + 2) * 20 + 200; 
+        int x = ((pos.first*5) + 2) * 20 + 200;
         int y = ((pos.second*5) + 2) * 20 + 200;
         if((v.second >= 0) && (v.second <= 3))
         {
@@ -5688,6 +4236,8 @@ void VerilogHandler::generateSVG()
         return;
     }
 
+    itemsBoundingRect = itemsBoundingRect.normalized();
+
     const QFileInfo currentFileInfo(mainWindow->currentFilePath());
     const QString circuitName = currentFileInfo.completeBaseName().isEmpty()
         ? QStringLiteral("cell_level_layout")
@@ -5704,27 +4254,6 @@ void VerilogHandler::generateSVG()
     if (outputPath.isEmpty()) {
         return;
     }
-
-    exportCellLevelLayout(outputPath, selectedFilter);
-}
-
-bool VerilogHandler::exportCellLevelLayout(const QString &requestedOutputPath,
-                                           const QString &selectedFilter)
-{
-    QRectF itemsBoundingRect = mainWindow->scene->exportContentBounds();
-
-    if (!itemsBoundingRect.isValid() || itemsBoundingRect.isEmpty()) {
-        const QString message = QStringLiteral("No cell-level layout to save.");
-        mainWindow->printToStatusBar(message);
-        return false;
-    }
-
-    if (requestedOutputPath.trimmed().isEmpty()) {
-        return false;
-    }
-
-    itemsBoundingRect = itemsBoundingRect.normalized();
-    QString outputPath = requestedOutputPath;
 
     QFileInfo outputInfo(outputPath);
     QString suffix = outputInfo.suffix().toLower();
@@ -5765,7 +4294,7 @@ bool VerilogHandler::exportCellLevelLayout(const QString &requestedOutputPath,
         if (!painter.isActive()) {
             QString message = "Failed to save cell-level layout: " + QDir::toNativeSeparators(outputPath);
             mainWindow->printToStatusBar(message);
-            return false;
+            return;
         }
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setRenderHint(QPainter::TextAntialiasing);
@@ -5780,7 +4309,7 @@ bool VerilogHandler::exportCellLevelLayout(const QString &requestedOutputPath,
             .arg(qRound(figureSize.width()))
             .arg(qRound(figureSize.height()));
         mainWindow->printToStatusBar(message);
-        return true;
+        return;
     }
 
     const QSize svgSize = exportSize;
@@ -5796,7 +4325,7 @@ bool VerilogHandler::exportCellLevelLayout(const QString &requestedOutputPath,
     if (!painter.isActive()) {
         QString message = "Failed to save cell-level layout: " + QDir::toNativeSeparators(outputPath);
         mainWindow->printToStatusBar(message);
-        return false;
+        return;
     }
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::TextAntialiasing);
@@ -5813,5 +4342,5 @@ bool VerilogHandler::exportCellLevelLayout(const QString &requestedOutputPath,
         .arg(svgSize.width())
         .arg(svgSize.height());
     mainWindow->printToStatusBar(message);
-    return true;
+
 }

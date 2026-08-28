@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="610" viewBox="0 0 1040 610">
+<style>text{font-family:Helvetica,Arial,sans-serif;fill:#202A33;} .axis{font-size:15px;} .label{font-size:14px;} .tick{font-size:13px;}</style>
+<rect width="1040" height="610" fill="white"/>
+<rect x="720" y="11" width="14" height="14" fill="#526C8A"/><text x="740" y="23" class="label">MNTDesigner GOLD</text>
+<rect x="898" y="11" width="14" height="14" fill="#008C95"/><text x="918" y="23" class="label">Proposed</text>
+<line x1="180.00" y1="42" x2="180.00" y2="562" stroke="#D9E0E7" stroke-width="1"/>
+<text x="180.00" y="587" text-anchor="middle" class="tick">2e−5</text>
+<line x1="341.17" y1="42" x2="341.17" y2="562" stroke="#D9E0E7" stroke-width="1"/>
+<text x="341.17" y="587" text-anchor="middle" class="tick">5e−5</text>
+<line x1="463.08" y1="42" x2="463.08" y2="562" stroke="#D9E0E7" stroke-width="1"/>
+<text x="463.08" y="587" text-anchor="middle" class="tick">1e−4</text>
+<line x1="585.00" y1="42" x2="585.00" y2="562" stroke="#D9E0E7" stroke-width="1"/>
+<text x="585.00" y="587" text-anchor="middle" class="tick">2e−4</text>
+<line x1="746.17" y1="42" x2="746.17" y2="562" stroke="#D9E0E7" stroke-width="1"/>
+<text x="746.17" y="587" text-anchor="middle" class="tick">5e−4</text>
+<line x1="868.08" y1="42" x2="868.08" y2="562" stroke="#D9E0E7" stroke-width="1"/>
+<text x="868.08" y="587" text-anchor="middle" class="tick">1e−3</text>
+<line x1="990.00" y1="42" x2="990.00" y2="562" stroke="#D9E0E7" stroke-width="1"/>
+<text x="990.00" y="587" text-anchor="middle" class="tick">2e−3</text>
+<line x1="180" y1="76.67" x2="990" y2="76.67" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="64.33" text-anchor="end" class="label">00_xor2</text>
+<rect x="180" y="49.33" width="130.50" height="8" fill="#526C8A"/>
+<rect x="180" y="61.33" width="150.28" height="8" fill="#008C95"/>
+<line x1="180" y1="111.33" x2="990" y2="111.33" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="99.00" text-anchor="end" class="label">01_mux21</text>
+<rect x="180" y="84.00" width="161.17" height="8" fill="#526C8A"/>
+<rect x="180" y="96.00" width="126.26" height="8" fill="#008C95"/>
+<line x1="180" y1="146.00" x2="990" y2="146.00" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="133.67" text-anchor="end" class="label">02_xnor2</text>
+<rect x="180" y="118.67" width="126.26" height="8" fill="#526C8A"/>
+<rect x="180" y="130.67" width="93.33" height="8" fill="#008C95"/>
+<line x1="180" y1="180.67" x2="990" y2="180.67" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="168.33" text-anchor="end" class="label">03_par_gen</text>
+<rect x="180" y="153.33" width="307.67" height="8" fill="#526C8A"/>
+<rect x="180" y="165.33" width="272.20" height="8" fill="#008C95"/>
+<line x1="180" y1="215.33" x2="990" y2="215.33" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="203.00" text-anchor="end" class="label">04_c17</text>
+<rect x="180" y="188.00" width="234.81" height="8" fill="#526C8A"/>
+<rect x="180" y="200.00" width="230.12" height="8" fill="#008C95"/>
+<line x1="180" y1="250.00" x2="990" y2="250.00" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="237.67" text-anchor="end" class="label">05_1bitAdderAOIG</text>
+<rect x="180" y="222.67" width="350.85" height="8" fill="#526C8A"/>
+<rect x="180" y="234.67" width="279.53" height="8" fill="#008C95"/>
+<line x1="180" y1="284.67" x2="990" y2="284.67" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="272.33" text-anchor="end" class="label">06_t</text>
+<rect x="180" y="257.33" width="262.59" height="8" fill="#526C8A"/>
+<rect x="180" y="269.33" width="272.20" height="8" fill="#008C95"/>
+<line x1="180" y1="319.33" x2="990" y2="319.33" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="307.00" text-anchor="end" class="label">07_mux41</text>
+<rect x="180" y="292.00" width="327.87" height="8" fill="#526C8A"/>
+<rect x="180" y="304.00" width="335.87" height="8" fill="#008C95"/>
+<line x1="180" y1="354.00" x2="990" y2="354.00" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="341.67" text-anchor="end" class="label">08_par_check</text>
+<rect x="180" y="326.67" width="362.42" height="8" fill="#526C8A"/>
+<rect x="180" y="338.67" width="335.87" height="8" fill="#008C95"/>
+<line x1="180" y1="388.67" x2="990" y2="388.67" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="376.33" text-anchor="end" class="label">09_b1_r2</text>
+<rect x="180" y="361.33" width="333.24" height="8" fill="#526C8A"/>
+<rect x="180" y="373.33" width="320.92" height="8" fill="#008C95"/>
+<line x1="180" y1="423.33" x2="990" y2="423.33" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="411.00" text-anchor="end" class="label">10_newtag</text>
+<rect x="180" y="396.00" width="277.73" height="8" fill="#526C8A"/>
+<rect x="180" y="408.00" width="254.50" height="8" fill="#008C95"/>
+<line x1="180" y1="458.00" x2="990" y2="458.00" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="445.67" text-anchor="end" class="label">11_clpl</text>
+<rect x="180" y="430.67" width="225.30" height="8" fill="#526C8A"/>
+<rect x="180" y="442.67" width="222.84" height="8" fill="#008C95"/>
+<line x1="180" y1="492.67" x2="990" y2="492.67" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="480.33" text-anchor="end" class="label">12_RCA2</text>
+<rect x="180" y="465.33" width="538.41" height="8" fill="#526C8A"/>
+<rect x="180" y="477.33" width="542.48" height="8" fill="#008C95"/>
+<line x1="180" y1="527.33" x2="990" y2="527.33" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="515.00" text-anchor="end" class="label">13_xor5R</text>
+<rect x="180" y="500.00" width="469.75" height="8" fill="#526C8A"/>
+<rect x="180" y="512.00" width="376.41" height="8" fill="#008C95"/>
+<line x1="180" y1="562.00" x2="990" y2="562.00" stroke="#EEF2F5" stroke-width="1"/>
+<text x="170" y="549.67" text-anchor="end" class="label">14_parity</text>
+<rect x="180" y="534.67" width="698.83" height="8" fill="#526C8A"/>
+<rect x="180" y="546.67" width="672.07" height="8" fill="#008C95"/>
+<line x1="180" y1="562" x2="990" y2="562" stroke="#202A33" stroke-width="1.2"/>
+<text x="585.00" y="605" text-anchor="middle" class="axis">Thermal-bath power (µW) (log scale; lower is better)</text>
+</svg>

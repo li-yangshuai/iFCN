@@ -1,0 +1,61 @@
+{
+  "schema": "ifcn.sequential.paper_benchmark.v1",
+  "benchmark_id": "bhowmik2022/sr_nand_latch_active_low_1b",
+  "module": "sr_nand_latch_active_low_1b",
+  "classification": {"domain": "sequential", "state_element": "sr_latch", "trigger_model": "level", "bit_width": 1},
+  "source": {
+    "provenance_status": "primary_source_verified",
+    "citation": {
+      "key": "bhowmik2022",
+      "title": "Regular clocking-based Automated Cell Placement technique in QCA targeting sequential circuit",
+      "authors": ["Dhrubajyoti Bhowmik", "Amit Kumar Pramanik", "Jayanta Pal", "Pinaki Sen", "Ayush Ranjan Singh", "Apu Kumar Saha", "Bibhash Sen"],
+      "venue": "Computers & Electrical Engineering 98, 107668",
+      "year": 2022,
+      "doi": "10.1016/j.compeleceng.2021.107668",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0045790621005905",
+      "accessed": "2026-08-24"
+    },
+    "locator": {"figure": "Fig. 12"},
+    "artifact_url": "https://ars.els-cdn.com/content/image/1-s2.0-S0045790621005905-gr12_lrg.jpg",
+    "redistribution": "reconstruction_only"
+  },
+  "reconstruction": {
+    "kind": "behavioral_equivalent",
+    "source_state_element": "sr_latch",
+    "temporal_relation": "same_model",
+    "faithfulness_scope": ["truth_table", "io_polarity", "gate_topology"],
+    "not_claimed": ["paper cell coordinates", "paper route coordinates", "physical state characterization"],
+    "transformations": ["Canonicalized the cross-coupled NAND pair to a one-bit valid-domain latch model"],
+    "ambiguities": ["The paper labels inputs S/R although the NAND topology makes them active low"],
+    "assumptions": ["S_n=R_n=0 is excluded as forbidden"]
+  },
+  "semantics": {
+    "state_element": "sr_latch",
+    "clock": {"kind": "level", "clock_domains": 1, "level": "active_low", "logical_clock_abstraction": "There is no logical clock pin; level denotes response to stable active-low S/R under one QCA physical clock domain"},
+    "initial_state": "unknown",
+    "next_state_equation": "q_next = ~s_n | (r_n & q), valid only when not(~s_n & ~r_n)",
+    "simultaneous_set_reset": "forbidden",
+    "legal_input_contract": "s_n and r_n are not simultaneously zero",
+    "physical_abstraction": "abstract_state_boundary"
+  },
+  "files": [
+    {"role": "rtl", "path": "sr_nand_latch_active_low_1b.v", "sha256": "508815b2f45eb416b979b410d07daa4c3f98727156d08af3224f211c6ed55bb7"},
+    {"role": "truth_table", "path": "expected_transitions.csv", "sha256": "3f6409a829fef41795e268e821e9a221434cc23e91c19c51eed575ff2762f44a"}
+  ],
+  "reported_metrics": [],
+  "expected_pipeline": {
+    "yosys": {"outcome": "pass", "reason": "Yosys must preserve the inferred latch"},
+    "seqir": {"outcome": "reject", "reason": "SeqIR v0 rejects level-sensitive latch cells"},
+    "legacy_cut": {"outcome": "not_run", "reason": "The native feedback state cannot enter the legacy DAG parser"},
+    "sequential_pnr": {"outcome": "not_run", "reason": "Native two-rail SR-latch P&R is not implemented"},
+    "mapping": {"outcome": "not_run", "reason": "No characterized NAND-SR QCA state macro is available"},
+    "physical_state_signoff": "not_characterized"
+  },
+  "validation": {
+    "status": "partially_validated",
+    "checks": [
+      {"name": "valid_domain_truth_table", "status": "pass", "evidence": "expected_transitions.csv covers all valid q/s_n/r_n states"},
+      {"name": "expected_seqir_rejection", "status": "pass", "evidence": "Yosys 0.33 emits $_DLATCH_N_; importer rejects it explicitly"}
+    ]
+  }
+}

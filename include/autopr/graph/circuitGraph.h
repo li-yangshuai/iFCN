@@ -63,7 +63,13 @@ public:
     void sortNodesByLayeredGrid(unsigned int xSpacing = 4,
                                 unsigned int ySpacing = 4,
                                 unsigned int xPadding = 4,
-                                unsigned int yPadding = 4);
+                                unsigned int yPadding = 4,
+                                bool reverseWithinLayer = false);
+    void sortNodesByElasticLayeredGrid(unsigned int xSpacing = 2,
+                                       unsigned int ySlack = 3,
+                                       unsigned int xPadding = 4,
+                                       unsigned int yPadding = 4,
+                                       bool reverseWithinLayer = false);
     void sortNodesByFixedLayerOrder(const std::vector<std::vector<int>>& orderedLayers,
                                     unsigned int xSpacing = 4,
                                     unsigned int ySpacing = 4,
@@ -72,6 +78,17 @@ public:
 
     //布局布线
         bool placeAndRoute(int shuffledRouteOrderRetries = 24);
+        // Version 1.2 Compact Graph Draw seed router: use bounded route-order
+        // repair, then validate with the version1.1 mapping/crossover code.
+        bool placeAndRouteLegacyFast();
+        // Refine an already routed legacy-compatible layout by moving
+        // individual non-I/O gates. Logical layers keep their topological
+        // order, but gates in the same layer may use independent X/Y
+        // coordinates and non-uniform spacing.
+        bool refineLegacyMappedLayout(int phaseCount = 4,
+                                      int maxRounds = 8,
+                                      int maxEvaluatedMoves = 36,
+                                      int shuffledRouteOrderRetries = 8);
         // Route an already prepared compact placement.  Routing-order repair
         // is attempted first; persistent failed-edge/port pressure then
         // proposes one transactional row or column cut at a time.  Random
@@ -150,6 +167,7 @@ private:
                                bool emitConflictStages,
                                int deterministicPolicyLimit = 6,
                                const std::function<bool()> &acceptRoutedLayout = {});
+    bool validateLegacyMappedLayout();
     bool validateJuneRandomClockRoutedLayout(int phaseCount,
                                              int maxSamePhase = -1);
     bool routeAndValidateJuneRandomClock(int phaseCount,

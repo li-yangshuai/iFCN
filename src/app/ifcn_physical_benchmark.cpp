@@ -292,7 +292,24 @@ TimedResult run_algorithm(const simon::QCADesign &prototype,
     TimedResult timed;
     const auto start = std::chrono::steady_clock::now();
     Algorithm algorithm(option);
-    algorithm.run(design, vectors, timed.result, mode);
+    if (mode == simon::SimulationMode::Selective) {
+        std::vector<std::string> output_names;
+        for (const auto &layer : design) {
+            for (const auto &cell : layer) {
+                if (simon::function(cell) == simon::FCNCellFunction::OUTPUT) {
+                    output_names.push_back(simon::name(cell));
+                }
+            }
+        }
+        algorithm.run(design,
+                      vectors,
+                      timed.result,
+                      mode,
+                      vectors.names,
+                      std::move(output_names));
+    } else {
+        algorithm.run(design, vectors, timed.result, mode);
+    }
     timed.seconds = std::chrono::duration<double>(
                         std::chrono::steady_clock::now() - start).count();
     return timed;
@@ -309,7 +326,24 @@ std::pair<TimedResult, Statistics> run_accelerated(
     TimedResult timed;
     const auto start = std::chrono::steady_clock::now();
     Algorithm algorithm(option);
-    algorithm.run(design, vectors, timed.result, mode);
+    if (mode == simon::SimulationMode::Selective) {
+        std::vector<std::string> output_names;
+        for (const auto &layer : design) {
+            for (const auto &cell : layer) {
+                if (simon::function(cell) == simon::FCNCellFunction::OUTPUT) {
+                    output_names.push_back(simon::name(cell));
+                }
+            }
+        }
+        algorithm.run(design,
+                      vectors,
+                      timed.result,
+                      mode,
+                      vectors.names,
+                      std::move(output_names));
+    } else {
+        algorithm.run(design, vectors, timed.result, mode);
+    }
     timed.seconds = std::chrono::duration<double>(
                         std::chrono::steady_clock::now() - start).count();
     return {std::move(timed), algorithm.statistics()};

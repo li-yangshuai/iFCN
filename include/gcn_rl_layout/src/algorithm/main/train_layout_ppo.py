@@ -117,7 +117,7 @@ def parse_args():
         "--seed",
         type=int,
         default=7,
-        help="Random seed for both GCN warm start and PPO training.",
+        help="Random seed for Graphviz+sifting warm start and PPO training.",
     )
     parser.add_argument(
         "--device",
@@ -128,7 +128,7 @@ def parse_args():
     parser.add_argument(
         "--start-layout-strategy",
         default="auto",
-        choices=("auto", "fixed", "shifted", "adaptive", "gcn"),
+        choices=("auto", "fixed", "shifted", "adaptive", "structural", "gcn"),
         help="Initial layout family used before RL local search begins.",
     )
     parser.add_argument(
@@ -272,7 +272,7 @@ def parse_args():
     parser.add_argument(
         "--disable-gcn-cache",
         action="store_true",
-        help="Disable on-disk GCN embedding/order cache and retrain every run.",
+        help="Disable the legacy-named order cache and recompute Graphviz+sifting every run.",
     )
     parser.add_argument(
         "--disable-layout-memory",
@@ -1189,7 +1189,10 @@ def select_fast_warm_start(
                 **candidate,
                 "routing_embedding_guidance": bool(
                     embedding_scores
-                    and candidate.get("routing_embedding_guidance", candidate["strategy"] == "gcn")
+                    and candidate.get(
+                        "routing_embedding_guidance",
+                        candidate["strategy"] in ("structural", "gcn"),
+                    )
                 ),
             },
             circuit,
@@ -1220,7 +1223,7 @@ def build_single_start_candidate(
     strategy,
     orientation,
 ):
-    strategy = "gcn" if strategy == "auto" else strategy
+    strategy = "structural" if strategy == "auto" else strategy
     orientation = TOP_DOWN if orientation == "auto" else orientation
     if strategy == "fixed":
         positions = build_node_positions_with_fixed_spacing(
@@ -1231,7 +1234,7 @@ def build_single_start_candidate(
             board_margin,
             orientation,
         )
-    elif strategy == "gcn":
+    elif strategy in ("structural", "gcn"):
         positions = build_gcn_guided_node_positions(
             circuit,
             ordered_layers,
@@ -1266,7 +1269,7 @@ def build_single_start_candidate(
         "x_spacing": actual_x_spacing,
         "y_spacing": actual_y_spacing,
         "node_positions": positions,
-        "routing_embedding_guidance": strategy == "gcn",
+        "routing_embedding_guidance": strategy in ("structural", "gcn"),
     }
 
 
@@ -3029,7 +3032,7 @@ def export_layout_artifacts(
         benchmark_label,
         output_dir,
         file_suffix="_reordered_layers",
-        title="GCN + Barycenter Reordered Layering",
+        title="Graphviz + Exact-gain Sifting Layer Order",
         verbose=False,
     )
     visualize_layered_graph_sorted(
@@ -3923,7 +3926,7 @@ def main():
         if memory_candidate is None:
             raise RuntimeError(
                 "No legal stored layout memory was found for this benchmark. "
-                "Run normal GCN+RL once to populate memory first."
+                "Run the normal Graphviz+sifting + RL workflow once to populate memory first."
             )
         ordered_layers = normalize_layers(circuit.layer_nodes)
         embeddings = np.zeros((len(circuit.effective_nodes), 2), dtype=float)
@@ -3931,7 +3934,7 @@ def main():
         crossings_per_layer = {
             int(layer_idx): 0 for layer_idx in range(max(0, len(ordered_layers) - 1))
         }
-        print("[Memory] Memory-only inference enabled; skipping GCN training and PPO updates.")
+        print("[Memory] Memory-only inference enabled; skipping order recomputation and PPO updates.")
     else:
         embeddings, barycenter_opt_layers, crossings_per_layer, _edges = load_or_generate_gcn_layout(
             circuit,
@@ -4700,7 +4703,7 @@ def main():
         if alternate_orientation not in orientations:
             orientations.append(alternate_orientation)
         spacing_multipliers = (2, 3, 4, 5, 6)
-        repair_strategies = ("gcn", "adaptive", "fixed")
+        repair_strategies = ("structural", "adaptive", "fixed")
         for multiplier in spacing_multipliers:
             repair_padding = min(max_padding, max(int(args.padding), int(args.padding) + max(0, multiplier - 2)))
             for orientation in orientations:
@@ -5952,7 +5955,7 @@ def main():
         f"cost={global_best_cost:.1f}"
     )
     print(f"[RL] Area improvement vs warm start: {improvement_ratio * 100:.2f}%")
-    print(f"[RL] Crossings after GCN+barycenter ordering: {sum(crossings_per_layer.values())}")
+    print(f"[RL] Crossings after Graphviz+sifting ordering: {sum(crossings_per_layer.values())}")
     print(f"[RL] Training runtime: {run_time_sec:.4f} s")
     print(f"[RL] Layout SVG written to: {os.path.join(output_dir, f'{stem}_rl_layout.svg')}")
     print(f"[RL] Layout TeX written to: {os.path.join(output_dir, f'{stem}_rl_layout.tex')}")

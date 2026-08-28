@@ -108,7 +108,7 @@ def parse_args():
     parser.add_argument("--y-spacing", type=int, default=2)
     parser.add_argument(
         "--start-layout-strategy",
-        choices=("auto", "fixed", "shifted", "adaptive", "gcn"),
+        choices=("auto", "fixed", "shifted", "adaptive", "structural", "gcn"),
         default="auto",
     )
     parser.add_argument(

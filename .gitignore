@@ -33,6 +33,18 @@
 *.pdf
 *.gz
 *.tex
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.xdv
+
+# Generated multi-run placement dumps.  Paper benchmark fixtures under
+# tests/**/stage_tex are intentionally not covered by these root-specific
+# rules.
+/seed_[0-9]*/
+/include/gcn_rl_layout/seed_[0-9]*/
+/**/train_seed_[0-9]*/
 
 
 

@@ -1,0 +1,98 @@
+{
+  "schema": "ifcn.sequential.paper_benchmark.v1",
+  "benchmark_id": "demo2025/dff_posedge_1b",
+  "module": "paper_dff_posedge_1b",
+  "classification": {
+    "domain": "sequential",
+    "state_element": "dff",
+    "trigger_model": "edge",
+    "bit_width": 1
+  },
+  "source": {
+    "provenance_status": "secondary_only",
+    "citation": {
+      "key": "demo2025",
+      "title": "Synthetic DFF manifest used to test the provenance validator",
+      "authors": [
+        "iFCN test suite"
+      ],
+      "venue": "iFCN repository fixture",
+      "year": 2025,
+      "url": "https://example.org/ifcn/dff-fixture",
+      "accessed": "2026-08-24"
+    },
+    "locator": {
+      "section": "Synthetic validator fixture"
+    },
+    "redistribution": "reconstruction_only"
+  },
+  "reconstruction": {
+    "kind": "behavioral_equivalent",
+    "faithfulness_scope": [
+      "truth_table",
+      "io_polarity",
+      "clock_semantics"
+    ],
+    "not_claimed": [
+      "published gate topology",
+      "published cell coordinates",
+      "physical state characterization"
+    ],
+    "transformations": [
+      "Reduced to one positive-edge-triggered bit for validator testing"
+    ],
+    "ambiguities": [],
+    "assumptions": [
+      "Initial state is unconstrained"
+    ]
+  },
+  "semantics": {
+    "state_element": "dff",
+    "clock": {
+      "kind": "edge",
+      "clock_domains": 1,
+      "edge": "posedge",
+      "logical_clock_abstraction": "One RTL clock edge denotes one state transition"
+    },
+    "initial_state": "unknown",
+    "next_state_equation": "q_next = d",
+    "simultaneous_set_reset": "not_applicable",
+    "legal_input_contract": "d may be zero or one at every sampled edge",
+    "physical_abstraction": "abstract_state_boundary"
+  },
+  "files": [
+    {
+      "role": "rtl",
+      "path": "paper_benchmark_stub.sv",
+      "sha256": "e98c62928c514e8e57421bf1040d78bd92a40fe66b4c730515f8c2480b811b33"
+    }
+  ],
+  "reported_metrics": [],
+  "expected_pipeline": {
+    "yosys": {
+      "outcome": "pass",
+      "reason": "Positive-edge DFF is supported by Yosys lowering"
+    },
+    "seqir": {
+      "outcome": "pass",
+      "reason": "The importer recognizes the positive-edge DFF boundary"
+    },
+    "legacy_cut": {
+      "outcome": "pass",
+      "reason": "The state boundary can be cut for the legacy combinational flow"
+    },
+    "sequential_pnr": {
+      "outcome": "prototype_expected",
+      "reason": "The sequential placement and routing path is under evaluation"
+    },
+    "mapping": {
+      "outcome": "prototype_expected",
+      "reason": "Mapping is evaluated with an abstract state boundary"
+    },
+    "physical_state_signoff": "not_characterized"
+  },
+  "validation": {
+    "status": "planned",
+    "checks": []
+  }
+}

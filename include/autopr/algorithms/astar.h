@@ -16,6 +16,13 @@ public:
     void setMaxSearchCost(double cost) { maxSearchCost = cost; }
     void setAllowInterSourceWireOverlap(bool allow) { allowInterSourceWireOverlap = allow; }
     void setOccupiedWirePenalty(double penalty) { occupiedWirePenalty = penalty; }
+    void setSearchBounds(const position& minimum, const position& maximum) {
+        searchMinimum = minimum;
+        searchMaximum = maximum;
+        hasSearchBounds = minimum.first <= maximum.first &&
+                          minimum.second <= maximum.second;
+    }
+    void clearSearchBounds() { hasSearchBounds = false; }
 
     inline void reset(){
         inDirections.clear();
@@ -41,6 +48,13 @@ private:
     //检查node的入度和出度
     bool drcInDegreeCheck(const position& current_neighbor);
     bool isNodeCell(const position& pos) const;
+    bool isInsideSearchBounds(const position& pos) const {
+        return !hasSearchBounds ||
+               (pos.first >= searchMinimum.first &&
+                pos.first <= searchMaximum.first &&
+                pos.second >= searchMinimum.second &&
+                pos.second <= searchMaximum.second);
+    }
     void recordRouteOwnership(const std::vector<position>& path);
 
 private:
@@ -55,6 +69,9 @@ private:
     std::map<position, position> outDirections;               //存储每个节点的出度方向, node-pos
 
     bool is_pathReused;
+    bool hasSearchBounds{false};
+    position searchMinimum{0, 0};
+    position searchMaximum{0, 0};
     std::vector<position> reusedPath;
     std::unordered_map<position, position, PositionHash> reusedSuccessor;
     std::map<position, std::vector<position>> finishRoutes;  //起点唯一的路径

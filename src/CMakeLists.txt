@@ -1,5 +1,6 @@
 set(CMAKE_AUTOMOC ON)
 find_package(Qt5 REQUIRED COMPONENTS Widgets PrintSupport Svg)
+find_package(Threads REQUIRED)
 
 ##graph render libraries##
 find_package(PkgConfig REQUIRED)
@@ -52,7 +53,7 @@ add_executable(
     ui/widgets/GaChessboardInputDialog.cpp
     ${RES_RCC})
     
-target_link_libraries(fcnx_gui PRIVATE autopr simon  ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg 
+target_link_libraries(fcnx_gui PRIVATE autopr simon Threads::Threads ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg
                        ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
 
 target_compile_definitions(fcnx_gui PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -60,6 +61,21 @@ target_compile_definitions(fcnx_gui PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_S
 add_executable(ifcn_mapping_metrics app/ifcn_mapping_metrics.cpp)
 target_link_libraries(ifcn_mapping_metrics PRIVATE autopr)
 target_compile_definitions(ifcn_mapping_metrics PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+add_executable(ifcn_sequential_pnr app/ifcn_sequential_pnr.cpp)
+target_link_libraries(ifcn_sequential_pnr PRIVATE autopr ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
+target_compile_definitions(ifcn_sequential_pnr PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+add_executable(ifcn_paper_cyclic_pnr app/ifcn_paper_cyclic_pnr.cpp)
+target_link_libraries(ifcn_paper_cyclic_pnr PRIVATE autopr ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
+target_compile_definitions(ifcn_paper_cyclic_pnr PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+add_executable(ifcn_physical_state_layout app/ifcn_physical_state_layout.cpp)
+target_link_libraries(ifcn_physical_state_layout PRIVATE autopr)
+
+add_executable(ifcn_sequential_clock_experiment
+    app/ifcn_sequential_clock_experiment.cpp)
+target_link_libraries(ifcn_sequential_clock_experiment PRIVATE autopr)
 
 add_executable(ifcn_energy_analysis app/ifcn_energy_analysis.cpp)
 target_link_libraries(ifcn_energy_analysis PRIVATE autopr simon)

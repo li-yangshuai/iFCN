@@ -1,0 +1,115 @@
+{
+  "creator": "Yosys 0.33 (git sha1 2584903a060)",
+  "modules": {
+    "toggle_ff": {
+      "attributes": {
+        "top": "00000000000000000000000000000001",
+        "src": "/home/lys/projects/github/iFCN/tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff.v:3.1-14.10"
+      },
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [ 2 ]
+        },
+        "rst": {
+          "direction": "input",
+          "bits": [ 3 ]
+        },
+        "q": {
+          "direction": "output",
+          "bits": [ 4 ]
+        }
+      },
+      "cells": {
+        "$abc$90$auto$blifparse.cc:386:parse_blif$91": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 3 ],
+            "B": [ 4 ],
+            "Y": [ 5 ]
+          }
+        },
+        "$abc$90$auto$blifparse.cc:386:parse_blif$92": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 5 ],
+            "Y": [ 6 ]
+          }
+        },
+        "$auto$ff.cc:266:slice$87": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "/home/lys/projects/github/iFCN/tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff.v:8.5-13.8"
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 6 ],
+            "Q": [ 4 ]
+          }
+        }
+      },
+      "netnames": {
+        "$abc$90$auto$rtlil.cc:2498:Mux$9": {
+          "hide_name": 1,
+          "bits": [ 6 ],
+          "attributes": {
+          }
+        },
+        "$abc$90$new_n4_": {
+          "hide_name": 1,
+          "bits": [ 5 ],
+          "attributes": {
+          }
+        },
+        "clk": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "src": "/home/lys/projects/github/iFCN/tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff.v:4.17-4.20"
+          }
+        },
+        "q": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "attributes": {
+            "src": "/home/lys/projects/github/iFCN/tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff.v:6.17-6.18"
+          }
+        },
+        "rst": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "src": "/home/lys/projects/github/iFCN/tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff.v:5.17-5.20"
+          }
+        }
+      }
+    }
+  }
+}

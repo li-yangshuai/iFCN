@@ -1,0 +1,129 @@
+{
+  "schema": "ifcn.sequential.paper_benchmark.v1",
+  "benchmark_id": "bhowmik2022/sr_nand_latch_sampled_topology_2b",
+  "module": "sr_nand_latch_sampled_topology_2b",
+  "classification": {
+    "domain": "sequential",
+    "state_element": "sr_flip_flop",
+    "trigger_model": "edge",
+    "bit_width": 2
+  },
+  "source": {
+    "provenance_status": "primary_source_verified",
+    "citation": {
+      "key": "bhowmik2022",
+      "title": "Regular clocking-based Automated Cell Placement technique in QCA targeting sequential circuit",
+      "authors": [
+        "Dhrubajyoti Bhowmik",
+        "Amit Kumar Pramanik",
+        "Jayanta Pal",
+        "Pinaki Sen",
+        "Ayush Ranjan Singh",
+        "Apu Kumar Saha",
+        "Bibhash Sen"
+      ],
+      "venue": "Computers & Electrical Engineering 98, 107668",
+      "year": 2022,
+      "doi": "10.1016/j.compeleceng.2021.107668",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0045790621005905",
+      "accessed": "2026-08-24"
+    },
+    "locator": {
+      "figure": "Fig. 12"
+    },
+    "artifact_url": "https://ars.els-cdn.com/content/image/1-s2.0-S0045790621005905-gr12_lrg.jpg",
+    "redistribution": "reconstruction_only"
+  },
+  "reconstruction": {
+    "kind": "topology_transcription",
+    "source_state_element": "sr_latch",
+    "temporal_relation": "sampled_state_only",
+    "faithfulness_scope": [
+      "truth_table",
+      "io_polarity",
+      "gate_topology"
+    ],
+    "not_claimed": [
+      "transparent_window_timing_equivalence",
+      "S_n=R_n=0 illegal-state equivalence",
+      "non-complementary rail physical-state equivalence",
+      "paper cell coordinates",
+      "paper route coordinates",
+      "physical state characterization"
+    ],
+    "transformations": [
+      "Inserted abstract sample_clk transaction boundaries and represented q/q_bar as two simultaneously sampled state bits while retaining both cross-coupled NAND equations"
+    ],
+    "ambiguities": [
+      "The published S/R labels are active low in the NAND topology"
+    ],
+    "assumptions": [
+      "Source-equivalence comparison is restricted to complementary q/q_bar boundary states with s_n and r_n not simultaneously zero"
+    ]
+  },
+  "semantics": {
+    "state_element": "sr_flip_flop",
+    "clock": {
+      "kind": "edge",
+      "clock_domains": 1,
+      "edge": "posedge",
+      "logical_clock_abstraction": "sample_clk advances one simultaneous iteration of the two NAND feedback equations and is not a logical clock pin in Fig. 12"
+    },
+    "initial_state": "unknown",
+    "next_state_equation": "q_next = ~(s_n & q_bar); q_bar_next = ~(r_n & q)",
+    "simultaneous_set_reset": "forbidden",
+    "legal_input_contract": "s_n and r_n are not simultaneously zero for source-equivalence comparisons",
+    "physical_abstraction": "abstract_state_boundary"
+  },
+  "files": [
+    {
+      "role": "rtl",
+      "path": "sr_nand_latch_sampled_topology_2b.sv",
+      "sha256": "77ea7beedb7dc811b0f6d7fcade22340366a14c32e162dbb995234c5177484b2"
+    },
+    {
+      "role": "truth_table",
+      "path": "expected_transitions.csv",
+      "sha256": "fec3cdfc99eaa073b704b236b47fd47a43dbb399eb6f878bb1af3636079460f9"
+    }
+  ],
+  "reported_metrics": [],
+  "expected_pipeline": {
+    "yosys": {
+      "outcome": "pass",
+      "reason": "The two always_ff assignments lower to positive-edge state bits and two NAND cones"
+    },
+    "seqir": {
+      "outcome": "pass",
+      "reason": "SeqIR v0 supports both positive-edge sampled state boundaries"
+    },
+    "legacy_cut": {
+      "outcome": "pass",
+      "reason": "Cutting the two state boundaries leaves an acyclic pair of NAND next-state cones"
+    },
+    "sequential_pnr": {
+      "outcome": "pass",
+      "reason": "The sampled two-state-bit topology is eligible for the current sequential P&R flow"
+    },
+    "mapping": {
+      "outcome": "pass",
+      "reason": "The sampled NAND cones are eligible for abstract-state-boundary mapping"
+    },
+    "physical_state_signoff": "not_characterized"
+  },
+  "validation": {
+    "status": "partially_validated",
+    "checks": [
+      {
+        "name": "sampled_topology_transition_table",
+        "status": "pass",
+        "evidence": "expected_transitions.csv exhausts both rail bits and both inputs, with forbidden and non-source-equivalent rows explicitly separated"
+      },
+      {
+        "name": "provenance_scope",
+        "status": "pass",
+        "evidence": "Fig. 12 is cited and transparent-window, forbidden-input, and non-complementary-state equivalence are not claimed"
+      }
+    ]
+  }
+}

@@ -11,6 +11,8 @@
 #include <QStringList>
 #include "ui/items/QCADCellItem.h"
 #include <map>
+#include <set>
+#include <tuple>
 #include <vector>
 #include <utility>
 #include <autopr/algorithms/mapping.h>
@@ -41,10 +43,17 @@ public:
     QString circuitName;                              // 电路名
     QMap<int, NodeInfo> nodes;                        // 节点信息
     QMap<QPair<int,int>, QVector<QPoint>> routes;     // 节点对 → 路径
+    QMap<QPair<int,int>, unsigned int> routeIterationDistances; // 路径 → iteration distance
     QMap<QPair<int,int>, QVector<QPoint>> mappedRouteCells; // 节点对 → 映射后的线路元胞坐标
     QHash<QPoint, int> coordPhaseMap;                 // 坐标 → 相位
+    std::map<std::tuple<unsigned int, unsigned int, int>, int> physicalPhaseMap;
+    bool hasPhysicalPhaseMap = false;
+    bool exactPhysicalPhaseTrace = false;
     QMap<QString, QString> metadata;                  // .ifcn header metadata
     QString currentMappingFilePath;                   // 当前映射文件路径
+
+    MappingMode resolvedMappingMode() const noexcept { return mappingMode; }
+    bool hasExplicitMappingMode() const noexcept { return mappingModeExplicit; }
 
 public slots:
         bool parseGateLevelMappingFile(const QString &filePath,
@@ -64,13 +73,21 @@ private:
     QString buildMappingStatusMessage() const;
     void updateMappingMetrics(qulonglong cellCount, qulonglong crossCount);
     void parseNodeLine(const QString &line);
-    void parsePathLine(const QString &line);
+    bool parsePathLine(const QString &line,
+                       unsigned int iterationDistance,
+                       QPair<int, int> *parsedEdge,
+                       QString *errorMessage);
     void parsePhaseLine(const QString &line);
+    bool parsePhysicalPhaseLine(const QString &line, QString *errorMessage);
     void parsePhaseCodecLine(const QString &line);
     void applyClockSchemePhaseTemplate();
+    QString validateParsedRouteGeometry() const;
     MainWindow *mainWindow;
     int phaseCodecPhaseCount = 4;
     int phaseCodecBlockSize = 4;
+    MappingMode mappingMode = MappingMode::Combinational;
+    bool mappingModeExplicit = false;
+    std::set<std::tuple<unsigned int, unsigned int, int>> emittedPhysicalSites;
 };
 
 

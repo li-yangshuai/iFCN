@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 
 try:
-    from .ifcn_layout_dataset import IFCNLayout
+    from .ifcn_layout_dataset import IFCNLayout, MAPPING_MODE_SEQUENTIAL
     from .universal_graph_policy import (
         ACTION_FEATURE_DIM,
         CLOCK_FEATURE_DIM,
@@ -26,7 +26,7 @@ try:
         UniversalGraphPolicy,
     )
 except ImportError:  # Supports the project's top-level ``src`` import style.
-    from ifcn_layout_dataset import IFCNLayout
+    from ifcn_layout_dataset import IFCNLayout, MAPPING_MODE_SEQUENTIAL
     from universal_graph_policy import (
         ACTION_FEATURE_DIM,
         CLOCK_FEATURE_DIM,
@@ -526,6 +526,10 @@ def build_offline_ifcn_sample(
     perturb_scale: float = 0.30,
     teacher_tolerance: float = 1e-6,
 ) -> OfflineIFCNSample:
+    if record.mapping_mode == MAPPING_MODE_SEQUENTIAL:
+        raise ValueError(
+            "sequential IFCN recurrence is not supported by offline DAG learning"
+        )
     if not record.quality.valid_for_training:
         raise ValueError(f"IFCN record is not valid for training: {record.quality.errors}")
     node_ids = sorted(int(node.node_id) for node in record.nodes)

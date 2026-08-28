@@ -1,0 +1,5 @@
+design,state_bits,comb_nodes,transition_cases,transition_status,variant,status,duration_seconds,ii,nodes,routes,feedback_routes,directed_cycle_present,mapped_qca_cells,width,height,bbox_area,routed_steps,dfs_nodes,decisions,forced_edges,conflicts,ii_candidates_tried,geometry_seconds,phase_seconds,mapping_seconds,physical_state_signoff,layout,tex
+toggle_ff,1,2,4,pass,cut,success,0.003659,4,5,4,,,56,7,9,63,10,,,,,,,,,,toggle_ff/cut/layout.ifcn,toggle_ff/cut/layout.tex
+toggle_ff,1,2,4,pass,cyclic_ii4,failed,0.001523,,,,,,,,,,,,,,,,,,,,,
+toggle_ff,1,2,4,pass,cyclic_adaptive,failed,0.001389,,,,,,,,,,,,,,,,,,,,,
+toggle_ff,1,2,4,pass,cyclic_z3_adaptive,failed,0.000837,,,,,,,,,,,,,,,,,,,,,

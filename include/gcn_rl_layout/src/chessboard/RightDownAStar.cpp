@@ -2,6 +2,32 @@
 
 namespace iFCN_Lab {
 
+void RightDownAStar::prepareActivePortReservations(
+    const std::pair<int,int>& start,
+    const std::pair<int,int>& goal,
+    const std::pair<int,int>& firstStep,
+    const std::pair<int,int>& preGoal)
+{
+    activeReservedPorts.clear();
+    activeReservedPorts.reserve(board.nodeIndexToCoordMap.size() * 3);
+    for (const auto& [nodeIndex, coord] : board.nodeIndexToCoordMap) {
+        (void)nodeIndex;
+        activeReservedPorts.insert({coord.first, coord.second + 1});
+        activeReservedPorts.insert({coord.first - 1, coord.second});
+        activeReservedPorts.insert({coord.first, coord.second - 1});
+    }
+    activeReservedPorts.erase(start);
+    activeReservedPorts.erase(goal);
+    activeReservedPorts.erase(firstStep);
+    activeReservedPorts.erase(preGoal);
+}
+
+bool RightDownAStar::canUseActiveRouteCell(
+    const std::pair<int,int>& coord) const
+{
+    return activeReservedPorts.count(coord) == 0 && board.canPlaceWire(coord);
+}
+
 bool RightDownAStar::appendStraightSegment(
     std::vector<std::pair<int,int>>& path,
     const std::pair<int,int>& target,
@@ -23,7 +49,7 @@ bool RightDownAStar::appendStraightSegment(
     while (current != target) {
         current = {current.first + dx, current.second + dy};
         bool isTarget = (current == target);
-        if (!(allowOccupiedTarget && isTarget) && !board.canPlaceWire(current)) {
+        if (!(allowOccupiedTarget && isTarget) && !canUseActiveRouteCell(current)) {
             return false;
         }
         path.push_back(current);
@@ -76,6 +102,102 @@ bool RightDownAStar::tryDirectMonotoneRoute(
     return false;
 }
 
+bool RightDownAStar::trySampledMonotoneRoute(
+    const std::pair<int,int>& start,
+    const std::pair<int,int>& goal,
+    const std::pair<int,int>& firstStep,
+    const std::pair<int,int>& preGoal,
+    std::vector<std::pair<int,int>>& path) const
+{
+    path.clear();
+    if (firstStep == goal) {
+        path = {start, goal};
+        return true;
+    }
+    if (preGoal == firstStep) {
+        path = {start, firstStep, goal};
+        return true;
+    }
+    if (preGoal.first < firstStep.first || preGoal.second < firstStep.second) {
+        return false;
+    }
+
+    std::vector<int> sampledX;
+    std::vector<int> sampledY;
+    constexpr int sampleSegments = 8;
+    for (int sample = 0; sample <= sampleSegments; ++sample) {
+        sampledX.push_back(
+            firstStep.first +
+            (preGoal.first - firstStep.first) * sample / sampleSegments
+        );
+        sampledY.push_back(
+            firstStep.second +
+            (preGoal.second - firstStep.second) * sample / sampleSegments
+        );
+    }
+    std::sort(sampledX.begin(), sampledX.end());
+    sampledX.erase(std::unique(sampledX.begin(), sampledX.end()), sampledX.end());
+    std::sort(sampledY.begin(), sampledY.end());
+    sampledY.erase(std::unique(sampledY.begin(), sampledY.end()), sampledY.end());
+
+    uint64_t bestCongestion = std::numeric_limits<uint64_t>::max();
+    std::vector<std::pair<int,int>> bestPath;
+    auto consider = [&](std::vector<std::pair<int,int>> candidate) {
+        if (candidate.empty() || candidate.back() != preGoal) {
+            return;
+        }
+        candidate.push_back(goal);
+        uint64_t congestion = 0;
+        for (size_t index = 1; index + 1 < candidate.size(); ++index) {
+            congestion += static_cast<uint64_t>(std::max(
+                0,
+                MAX_CELL_CAPACITY -
+                    board.getGridCellCapacityAtCoord(candidate[index])
+            ));
+        }
+        if (congestion < bestCongestion) {
+            bestCongestion = congestion;
+            bestPath.swap(candidate);
+        }
+    };
+
+    // right-down-right candidates
+    for (int pivotX : sampledX) {
+        std::vector<std::pair<int,int>> candidate = {start, firstStep};
+        const std::pair<int,int> firstBend = {pivotX, firstStep.second};
+        const std::pair<int,int> secondBend = {pivotX, preGoal.second};
+        if ((firstBend == candidate.back() ||
+             appendStraightSegment(candidate, firstBend, false)) &&
+            (secondBend == candidate.back() ||
+             appendStraightSegment(candidate, secondBend, false)) &&
+            (preGoal == candidate.back() ||
+             appendStraightSegment(candidate, preGoal, true))) {
+            consider(std::move(candidate));
+        }
+    }
+
+    // down-right-down candidates
+    for (int pivotY : sampledY) {
+        std::vector<std::pair<int,int>> candidate = {start, firstStep};
+        const std::pair<int,int> firstBend = {firstStep.first, pivotY};
+        const std::pair<int,int> secondBend = {preGoal.first, pivotY};
+        if ((firstBend == candidate.back() ||
+             appendStraightSegment(candidate, firstBend, false)) &&
+            (secondBend == candidate.back() ||
+             appendStraightSegment(candidate, secondBend, false)) &&
+            (preGoal == candidate.back() ||
+             appendStraightSegment(candidate, preGoal, true))) {
+            consider(std::move(candidate));
+        }
+    }
+
+    if (bestPath.empty()) {
+        return false;
+    }
+    path.swap(bestPath);
+    return true;
+}
+
 bool RightDownAStar::tryDynamicProgrammingRoute(
     const std::pair<int,int>& start,
     const std::pair<int,int>& goal,
@@ -104,53 +226,70 @@ bool RightDownAStar::tryDynamicProgrammingRoute(
         return false;
     }
 
-    const double inf = std::numeric_limits<double>::infinity();
-    std::vector<double> dist(static_cast<size_t>(width) * static_cast<size_t>(height), inf);
+    // Every monotone path has the same geometric length, but not the same
+    // congestion.  Retain a one-byte parent grid and only two rolling cost
+    // rows: this avoids the old full distance matrix while preferring empty
+    // tracks over cells that already carry a wire.  Greedily accepting the
+    // first L-shaped path used to stack two wires into full-capacity walls.
     std::vector<uint8_t> parent(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+    const uint32_t infinity = std::numeric_limits<uint32_t>::max() / 4;
+    std::vector<uint32_t> previousCost(static_cast<size_t>(width), infinity);
+    std::vector<uint32_t> currentCost(static_cast<size_t>(width), infinity);
 
     auto index_of = [width](int x, int y) -> size_t {
         return static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x);
     };
 
     for (int y = 0; y < height; ++y) {
+        std::fill(currentCost.begin(), currentCost.end(), infinity);
         for (int x = 0; x < width; ++x) {
             const std::pair<int,int> coord = {firstStep.first + x, firstStep.second + y};
             const bool isFirst = (coord == firstStep);
             const bool isPreGoal = (coord == preGoal);
-            if (!isFirst && !isPreGoal && !board.canPlaceWire(coord)) {
+            if (!isFirst && !isPreGoal && !canUseActiveRouteCell(coord)) {
                 continue;
             }
 
             const size_t idx = index_of(x, y);
             if (isFirst) {
-                dist[idx] = 0.0;
+                parent[idx] = 3;  // search root
+                currentCost[static_cast<size_t>(x)] = 0;
                 continue;
             }
 
-            if (y > 0) {
-                const size_t up_idx = index_of(x, y - 1);
-                const double candidate = dist[up_idx] + 1.0;
-                if (candidate < dist[idx]) {
-                    dist[idx] = candidate;
-                    parent[idx] = 1;  // from up: move down
-                }
+            const uint32_t fromUp = (
+                y > 0 ? previousCost[static_cast<size_t>(x)] : infinity
+            );
+            const uint32_t fromLeft = (
+                x > 0 ? currentCost[static_cast<size_t>(x - 1)] : infinity
+            );
+            if (fromUp == infinity && fromLeft == infinity) {
+                continue;
             }
 
-            if (x > 0) {
-                const size_t left_idx = index_of(x - 1, y);
-                const double candidate = dist[left_idx] + 1.1;
-                if (candidate < dist[idx]) {
-                    dist[idx] = candidate;
-                    parent[idx] = 2;  // from left: move right
-                }
-            }
+            const int remainingCapacity = board.getGridCellCapacityAtCoord(coord);
+            const uint32_t congestionPenalty = static_cast<uint32_t>(
+                std::max(0, MAX_CELL_CAPACITY - remainingCapacity)
+            );
+            const bool preferUpOnTie = (
+                (coord.first * 31 + coord.second * 17 +
+                 firstStep.first * 13 + preGoal.first) & 1
+            ) == 0;
+            const bool chooseUp = (
+                fromUp < fromLeft ||
+                (fromUp == fromLeft && preferUpOnTie)
+            );
+            const uint32_t predecessorCost = chooseUp ? fromUp : fromLeft;
+            parent[idx] = chooseUp ? 1 : 2;
+            currentCost[static_cast<size_t>(x)] = predecessorCost + congestionPenalty;
         }
+        previousCost.swap(currentCost);
     }
 
     const int goal_x = preGoal.first - firstStep.first;
     const int goal_y = preGoal.second - firstStep.second;
     const size_t goal_idx = index_of(goal_x, goal_y);
-    if (!std::isfinite(dist[goal_idx])) {
+    if (parent[goal_idx] == 0) {
         return false;
     }
 
@@ -257,53 +396,65 @@ bool RightDownAStar::tryDynamicProgrammingRouteFromAnchor(
         return false;
     }
 
-    const double inf = std::numeric_limits<double>::infinity();
-    std::vector<double> dist(static_cast<size_t>(width) * static_cast<size_t>(height), inf);
     std::vector<uint8_t> parent(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+    const uint32_t infinity = std::numeric_limits<uint32_t>::max() / 4;
+    std::vector<uint32_t> previousCost(static_cast<size_t>(width), infinity);
+    std::vector<uint32_t> currentCost(static_cast<size_t>(width), infinity);
 
     auto index_of = [width](int x, int y) -> size_t {
         return static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x);
     };
 
     for (int y = 0; y < height; ++y) {
+        std::fill(currentCost.begin(), currentCost.end(), infinity);
         for (int x = 0; x < width; ++x) {
             const std::pair<int,int> coord = {anchor.first + x, anchor.second + y};
             const bool isAnchor = (coord == anchor);
             const bool isPreGoal = (coord == preGoal);
-            if (!isAnchor && !isPreGoal && !board.canPlaceWire(coord)) {
+            if (!isAnchor && !isPreGoal && !canUseActiveRouteCell(coord)) {
                 continue;
             }
 
             const size_t idx = index_of(x, y);
             if (isAnchor) {
-                dist[idx] = 0.0;
+                parent[idx] = 3;
+                currentCost[static_cast<size_t>(x)] = 0;
                 continue;
             }
 
-            if (y > 0) {
-                const size_t up_idx = index_of(x, y - 1);
-                const double candidate = dist[up_idx] + 1.0;
-                if (candidate < dist[idx]) {
-                    dist[idx] = candidate;
-                    parent[idx] = 1;
-                }
+            const uint32_t fromUp = (
+                y > 0 ? previousCost[static_cast<size_t>(x)] : infinity
+            );
+            const uint32_t fromLeft = (
+                x > 0 ? currentCost[static_cast<size_t>(x - 1)] : infinity
+            );
+            if (fromUp == infinity && fromLeft == infinity) {
+                continue;
             }
 
-            if (x > 0) {
-                const size_t left_idx = index_of(x - 1, y);
-                const double candidate = dist[left_idx] + 1.1;
-                if (candidate < dist[idx]) {
-                    dist[idx] = candidate;
-                    parent[idx] = 2;
-                }
-            }
+            const int remainingCapacity = board.getGridCellCapacityAtCoord(coord);
+            const uint32_t congestionPenalty = static_cast<uint32_t>(
+                std::max(0, MAX_CELL_CAPACITY - remainingCapacity)
+            );
+            const bool preferUpOnTie = (
+                (coord.first * 31 + coord.second * 17 +
+                 anchor.first * 13 + preGoal.first) & 1
+            ) == 0;
+            const bool chooseUp = (
+                fromUp < fromLeft ||
+                (fromUp == fromLeft && preferUpOnTie)
+            );
+            const uint32_t predecessorCost = chooseUp ? fromUp : fromLeft;
+            parent[idx] = chooseUp ? 1 : 2;
+            currentCost[static_cast<size_t>(x)] = predecessorCost + congestionPenalty;
         }
+        previousCost.swap(currentCost);
     }
 
     const int goal_x = preGoal.first - anchor.first;
     const int goal_y = preGoal.second - anchor.second;
     const size_t goal_idx = index_of(goal_x, goal_y);
-    if (!std::isfinite(dist[goal_idx])) {
+    if (parent[goal_idx] == 0) {
         return false;
     }
 
@@ -365,9 +516,28 @@ bool RightDownAStar::trySharedPrefixRoute(
             }
 
             std::vector<std::pair<int,int>> branchPath;
-            if (!tryDirectMonotoneRouteFromAnchor(branch, goal, preGoal, branchPath) &&
-                !tryDynamicProgrammingRouteFromAnchor(branch, goal, preGoal, branchPath)) {
-                continue;
+            std::vector<std::pair<int,int>> directBranchPath;
+            const bool hasDirectBranch = tryDirectMonotoneRouteFromAnchor(
+                branch, goal, preGoal, directBranchPath
+            );
+            bool directBranchIsEmpty = hasDirectBranch;
+            if (hasDirectBranch) {
+                for (size_t pathIndex = 1; pathIndex + 1 < directBranchPath.size(); ++pathIndex) {
+                    if (board.getGridCellCapacityAtCoord(directBranchPath[pathIndex]) <
+                        MAX_CELL_CAPACITY) {
+                        directBranchIsEmpty = false;
+                        break;
+                    }
+                }
+            }
+            if (directBranchIsEmpty) {
+                branchPath.swap(directBranchPath);
+            } else if (!tryDynamicProgrammingRouteFromAnchor(
+                           branch, goal, preGoal, branchPath)) {
+                if (!hasDirectBranch) {
+                    continue;
+                }
+                branchPath.swap(directBranchPath);
             }
 
             path.assign(existing.begin(), existing.begin() + static_cast<long>(branchIdx) + 1);
@@ -433,12 +603,12 @@ std::vector<std::pair<int,int>> RightDownAStar::routeWithDirs(
         return {};
     }
 
-    if (fanout_dir != std::make_pair(1, 0) &&
-        fanout_dir != std::make_pair(0, 1)) {
+    if (fanout_dir != std::pair<int,int>{1, 0} &&
+        fanout_dir != std::pair<int,int>{0, 1}) {
         return {};
     }
-    if (fanin_dir != std::make_pair(-1, 0) &&
-        fanin_dir != std::make_pair(0, -1)) {
+    if (fanin_dir != std::pair<int,int>{-1, 0} &&
+        fanin_dir != std::pair<int,int>{0, -1}) {
         return {};
     }
 
@@ -453,19 +623,31 @@ std::vector<std::pair<int,int>> RightDownAStar::routeWithDirs(
     std::pair<int,int> preGoal = { goal.first + fanin_dir.first, goal.second + fanin_dir.second };
     const bool preGoalAvailable = (preGoal == start || board.canPlaceWire(preGoal));
 
-    // --- 起点严格从指定的扇出端口离开 ---
+    // The selected sink port is part of the routed net.  In particular, a
+    // shared-prefix fanout must not reuse a different gate node as the final
+    // wire tile before the real sink.  Doing so silently connects the sink to
+    // that gate's cell template instead of to the intended source net.
+    if (!preGoalAvailable) {
+        return {};
+    }
+
+    // Select the source port explicitly.  Horizontal same-row propagation is
+    // a legal right/down route when the sink is strictly to the right.
     std::pair<int,int> firstStep = {
         start.first + fanout_dir.first,
-        start.second + fanout_dir.second
+        start.second + fanout_dir.second,
     };
-    const bool firstStepAvailable = (firstStep == goal || board.canPlaceWire(firstStep));
+    activeReservedPorts.clear();
+    const bool firstStepAvailable = (
+        firstStep == goal || board.canPlaceWire(firstStep)
+    );
 
-    // 相邻节点也必须同时满足两端指定的端口，不能绕过方向约束。
+    // Adjacent nodes must satisfy both selected endpoint ports.
     if (firstStep == goal && preGoal != start) {
         return {};
     }
 
-    if (preGoalAvailable && firstStepAvailable) {
+    if (firstStepAvailable) {
         std::vector<std::pair<int,int>> directPath;
         if (tryDirectMonotoneRoute(start, goal, firstStep, preGoal, directPath)) {
             return commitPath(directPath);
@@ -477,9 +659,11 @@ std::vector<std::pair<int,int>> RightDownAStar::routeWithDirs(
         }
     }
 
-    std::vector<std::pair<int,int>> sharedPrefixPath;
-    if (trySharedPrefixRoute(start, goal, preGoal, sharedPrefixPath)) {
-        return commitPath(sharedPrefixPath);
+    if (firstStepAvailable) {
+        std::vector<std::pair<int,int>> sharedPrefixPath;
+        if (trySharedPrefixRoute(start, goal, preGoal, sharedPrefixPath)) {
+            return commitPath(sharedPrefixPath);
+        }
     }
 
     return {};

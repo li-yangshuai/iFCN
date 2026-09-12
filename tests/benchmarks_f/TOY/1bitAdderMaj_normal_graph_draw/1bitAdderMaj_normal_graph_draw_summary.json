@@ -1,0 +1,16 @@
+{
+  "benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderMaj.v",
+  "output_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderMaj_normal_graph_draw",
+  "ifcn": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderMaj_normal_graph_draw/1bitAdderMaj_normal_graph_draw.ifcn",
+  "encoded_ifcn": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderMaj_normal_graph_draw/1bitAdderMaj_normal_graph_draw_encoded.ifcn",
+  "raw_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderMaj_normal_graph_draw/1bitAdderMaj_raw.svg",
+  "ordered_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderMaj_normal_graph_draw/1bitAdderMaj.svg",
+  "physical_svg": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderMaj_normal_graph_draw/1bitAdderMaj_physical.svg",
+  "stage_tex_dir": "/home/lys/projects/github/iFCN/tests/benchmarks_f/TOY/1bitAdderMaj_normal_graph_draw/stage_tex",
+  "failed_edge_count": 0,
+  "width": 25,
+  "height": 27,
+  "area": 675,
+  "run_time_sec": 2.4825541289999364,
+  "algorithm_description": "normal graph draw algorithm based on GCN embedding + barycenter ordering, right-down reachable initialization, ML-guided node reposition, iterative routing repair, greedy post-route compaction, and post-routing 2DDWave template consistency verification"
+}

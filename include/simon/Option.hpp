@@ -23,6 +23,7 @@
 #define      HFUT_SIMON_OPTION_HPP
 
 #include <array>
+#include <cstdint>
 #include "Util.hpp"
 
 
@@ -42,6 +43,7 @@ namespace simon {
         std::size_t number_of_samples = 12800;
         std::size_t max_iteration_per_sample = 100;
         double convergence_tolerance = 0.001;
+        std::uint32_t random_seed = 5489u;
     };
 
     struct QCACoherenceOption {
@@ -61,6 +63,8 @@ namespace simon {
         double time_step  = 1e-16;
         double duration   = 7e-11;
         NumericMethod algorithm = NumericMethod::Euler;
+        double steady_state_tolerance = 1e-7;
+        std::size_t max_steady_state_iterations = 100000;
     };
 
     struct EnergyAnalysisOption : QCACoherenceOption {

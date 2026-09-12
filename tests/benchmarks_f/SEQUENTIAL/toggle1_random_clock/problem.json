@@ -1,0 +1,37 @@
+{
+  "schema": "ifcn.sequential.random_clock_problem.v0",
+  "name": "toggle1_random_clock",
+  "purpose": "post_route_phase_assignment_and_local_repair_fixture",
+  "logic": "q_next = not(q)",
+  "initial_state_for_test_only": 0,
+  "phase_count": 4,
+  "required_ii_epochs": 4,
+  "max_same_phase_run": 2,
+  "events": ["reg0.q", "inv0.a", "inv0.y", "reg0.d"],
+  "macros": [
+    {
+      "id": "inv0",
+      "input_event": "inv0.a",
+      "output_event": "inv0.y",
+      "iteration_distance": 0,
+      "latency_epochs": 1
+    }
+  ],
+  "temporal_arcs": [
+    {
+      "id": "reg0.state",
+      "source_event": "reg0.d",
+      "sink_event": "reg0.q",
+      "iteration_distance": 1,
+      "latency_epochs": 0,
+      "note": "abstract synchronous state boundary; not a characterized QCA macro"
+    }
+  ],
+  "feedback_loop": {
+    "route_ids": ["q_to_inv", "inv_to_d"],
+    "macro_ids": ["inv0"],
+    "temporal_arc_ids": ["reg0.state"],
+    "required_positive_full_cycles": 1
+  },
+  "expected_trace": [0, 1, 0, 1, 0, 1, 0, 1]
+}

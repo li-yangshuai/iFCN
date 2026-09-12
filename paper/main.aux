@@ -1,0 +1,92 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{Aviram1974Rectifier}
+\citation{Rahimi2018MQCA}
+\citation{Walter2018ExactQCA,Li2022FCNPR,Li2023QCASA}
+\citation{Zhang2024QCAHierarchicalPR,Hofmann2023HybridDA,Hofmann2025PostLayout,Hofmann2025GraphOriented}
+\@writefile{toc}{\contentsline {section}{Abstract}{1}{section*.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{1}{Introduction}{section.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Background and Problem Formulation}{1}{section.2}\protected@file@percent }
+\newlabel{sec:background}{{2}{1}{Background and Problem Formulation}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}MolQCA and Clocking Scheme}{1}{subsection.2.1}\protected@file@percent }
+\newlabel{subsec:molqca_clocking}{{2.1}{1}{MolQCA and Clocking Scheme}{subsection.2.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Basic concepts of MolQCA and clocking. (a) Polarization states of a four-site MolQCA cell. (b) Four-phase clocking process. (c) Regular phase progression in the 2DDWave clocking scheme.}}{1}{figure.caption.4}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:fig01}{{1}{1}{Basic concepts of MolQCA and clocking. (a) Polarization states of a four-site MolQCA cell. (b) Four-phase clocking process. (c) Regular phase progression in the 2DDWave clocking scheme}{figure.caption.4}{}}
+\citation{Tong17022026}
+\citation{Li2025iFCN}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Tile-Based Gate Library}{2}{subsection.2.2}\protected@file@percent }
+\newlabel{subsec:tile_library}{{2.2}{2}{Tile-Based Gate Library}{subsection.2.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Clocking-Constrained RTL-to-Layout Flow}{2}{subsection.2.3}\protected@file@percent }
+\newlabel{subsec:rtl2layout}{{2.3}{2}{Clocking-Constrained RTL-to-Layout Flow}{subsection.2.3}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Sequential legality closure and verified contraction}}{2}{algorithm.1}\protected@file@percent }
+\newlabel{alg:legal_pr}{{1}{2}{Sequential legality closure and verified contraction}{algorithm.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Proposed Method}{2}{section.3}\protected@file@percent }
+\newlabel{sec:method}{{3}{2}{Proposed Method}{section.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Legality-driven back end in clockwise execution order. Fixed fanin/fanout ports constrain monotone routing; local feedback closes $F$ and $C$, while contraction rebuilds every net and commits only when $F=C=P=0$ and area decreases.}}{3}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:algorithm_flow}{{2}{3}{Legality-driven back end in clockwise execution order. Fixed fanin/fanout ports constrain monotone routing; local feedback closes $F$ and $C$, while contraction rebuilds every net and commits only when $F=C=P=0$ and area decreases}{figure.caption.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Structural Ordering as a Front-End Initializer}{3}{subsection.3.1}\protected@file@percent }
+\newlabel{subsec:structural_initializer}{{3.1}{3}{Structural Ordering as a Front-End Initializer}{subsection.3.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Port-Aware Right--Down Placement}{3}{subsection.3.2}\protected@file@percent }
+\newlabel{subsec:compact_reservation}{{3.2}{3}{Port-Aware Right--Down Placement}{subsection.3.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Clock-Compatible Monotone Routing}{3}{section.4}\protected@file@percent }
+\newlabel{sec:routing}{{4}{3}{Clock-Compatible Monotone Routing}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Monotone Routing Under 2DDWave}{3}{subsection.4.1}\protected@file@percent }
+\newlabel{subsec:monotone_routing}{{4.1}{3}{Monotone Routing Under 2DDWave}{subsection.4.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Failure Repair by Relocation and Local Expansion}{3}{subsection.4.2}\protected@file@percent }
+\newlabel{subsec:routing_repair}{{4.2}{3}{Failure Repair by Relocation and Local Expansion}{subsection.4.2}{}}
+\citation{Li2025iFCN}
+\citation{Li2022FCNPR}
+\citation{Li2025iFCN}
+\citation{fiction2019,Hofmann2024WiringReduction}
+\citation{fiction2019,Hofmann2024WiringReduction}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Post-Routing 2DDWave Consistency Closure}{4}{subsection.4.3}\protected@file@percent }
+\newlabel{subsec:clock_closure}{{4.3}{4}{Post-Routing 2DDWave Consistency Closure}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Rollback-Safe Post-Route Compaction}{4}{subsection.4.4}\protected@file@percent }
+\newlabel{subsec:post_compaction}{{4.4}{4}{Rollback-Safe Post-Route Compaction}{subsection.4.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Experimental Results}{4}{section.5}\protected@file@percent }
+\newlabel{sec:exp}{{5}{4}{Experimental Results}{section.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Results on Small and Medium Benchmarks}{4}{subsection.5.1}\protected@file@percent }
+\newlabel{subsec:small_medium_results}{{5.1}{4}{Results on Small and Medium Benchmarks}{subsection.5.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Large-Circuit Completion}{4}{subsection.5.2}\protected@file@percent }
+\newlabel{subsec:large_results}{{5.2}{4}{Large-Circuit Completion}{subsection.5.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Verified \textit  {c17} contraction transaction. From the legal $8\!\times \!9$ state, a ranked cut produces a trial placement; routes are discarded and globally rebuilt, and only $F=C=P=0$ with lower area permits the $6\!\times \!8$ commit ($72\rightarrow 48$ tiles, $-33.33\%$).}}{5}{figure.caption.6}\protected@file@percent }
+\newlabel{fig:c17_corrected_trace}{{3}{5}{Verified \textit {c17} contraction transaction. From the legal $8\!\times \!9$ state, a ranked cut produces a trial placement; routes are discarded and globally rebuilt, and only $F=C=P=0$ with lower area permits the $6\!\times \!8$ commit ($72\rightarrow 48$ tiles, $-33.33\%$)}{figure.caption.6}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Port- and clock-legal pairs that improve both compaction and graph-drawing area.}}{5}{table.caption.7}\protected@file@percent }
+\newlabel{tab:01}{{1}{5}{Port- and clock-legal pairs that improve both compaction and graph-drawing area}{table.caption.7}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Archived large-circuit diagnostic versus \textit  {fiction}; proposed layouts predate endpoint-port certification\nonbreakingspace \citep  {fiction2019,Hofmann2024WiringReduction}.}}{5}{table.caption.8}\protected@file@percent }
+\newlabel{tab:large}{{2}{5}{Archived large-circuit diagnostic versus \textit {fiction}; proposed layouts predate endpoint-port certification~\cite {fiction2019,Hofmann2024WiringReduction}}{table.caption.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Limitations and Failure Modes}{5}{subsection.5.3}\protected@file@percent }
+\newlabel{subsec:limitations}{{5.3}{5}{Limitations and Failure Modes}{subsection.5.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{5}{section.6}\protected@file@percent }
+\newlabel{sec:conclusion}{{6}{5}{Conclusion}{section.6}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Area comparisons: (a) corrected port-legal $K_c=0\rightarrow 8$ pairs relative to graph drawing; (b) archived, not port-certified, large layouts versus \textit  {fiction}.}}{6}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:comparison_curves}{{4}{6}{Area comparisons: (a) corrected port-legal $K_c=0\rightarrow 8$ pairs relative to graph drawing; (b) archived, not port-certified, large layouts versus \textit {fiction}}{figure.caption.9}{}}
+\bibstyle{ACM-Reference-Format}
+\bibdata{ifcn}
+\bibcite{Aviram1974Rectifier}{{1}{1974}{{Aviram and Ratner}}{{}}}
+\bibcite{Hofmann2023HybridDA}{{2}{2023}{{Hofmann et~al\mbox  {.}}}{{}}}
+\bibcite{Hofmann2024WiringReduction}{{3}{2024}{{Hofmann et~al\mbox  {.}}}{{}}}
+\bibcite{Hofmann2025PostLayout}{{4}{2025a}{{Hofmann et~al\mbox  {.}}}{{}}}
+\bibcite{Hofmann2025GraphOriented}{{5}{2025b}{{Hofmann et~al\mbox  {.}}}{{}}}
+\bibcite{Li2023QCASA}{{6}{2023}{{Li et~al\mbox  {.}}}{{}}}
+\bibcite{Li2025iFCN}{{7}{2025}{{Li et~al\mbox  {.}}}{{}}}
+\bibcite{Li2022FCNPR}{{8}{2022}{{Li et~al\mbox  {.}}}{{}}}
+\bibcite{Rahimi2018MQCA}{{9}{2018}{{Rahimi and Reimers}}{{}}}
+\bibcite{Tong17022026}{{10}{2026}{{Tong et~al\mbox  {.}}}{{}}}
+\bibcite{Walter2018ExactQCA}{{11}{2018}{{Walter et~al\mbox  {.}}}{{}}}
+\bibcite{fiction2019}{{12}{2019}{{Walter et~al\mbox  {.}}}{{}}}
+\bibcite{Zhang2024QCAHierarchicalPR}{{13}{2024}{{Zhang et~al\mbox  {.}}}{{}}}
+\newlabel{tocindent-1}{0pt}
+\newlabel{tocindent0}{0pt}
+\newlabel{tocindent1}{4.185pt}
+\newlabel{tocindent2}{10.34999pt}
+\newlabel{tocindent3}{0pt}
+\newlabel{tocindent4}{0pt}
+\newlabel{tocindent5}{0pt}
+\@writefile{toc}{\contentsline {section}{References}{7}{section*.11}\protected@file@percent }
+\newlabel{TotPages}{{7}{7}{}{page.7}{}}
+\gdef \@abspage@last{7}

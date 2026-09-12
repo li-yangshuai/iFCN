@@ -1,0 +1,61 @@
+{
+  "schema": "ifcn.sequential.paper_benchmark.v1",
+  "benchmark_id": "bhowmik2022/d_latch_sampled_state_equation_1b",
+  "module": "d_latch_sampled_state_equation_1b",
+  "classification": {"domain": "sequential", "state_element": "dff", "trigger_model": "edge", "bit_width": 1},
+  "source": {
+    "provenance_status": "primary_source_verified",
+    "citation": {
+      "key": "bhowmik2022",
+      "title": "Regular clocking-based Automated Cell Placement technique in QCA targeting sequential circuit",
+      "authors": ["Dhrubajyoti Bhowmik", "Amit Kumar Pramanik", "Jayanta Pal", "Pinaki Sen", "Ayush Ranjan Singh", "Apu Kumar Saha", "Bibhash Sen"],
+      "venue": "Computers & Electrical Engineering 98, 107668",
+      "year": 2022,
+      "doi": "10.1016/j.compeleceng.2021.107668",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0045790621005905",
+      "accessed": "2026-08-24"
+    },
+    "locator": {"figure": "Fig. 9"},
+    "artifact_url": "https://ars.els-cdn.com/content/image/1-s2.0-S0045790621005905-gr9_lrg.jpg",
+    "redistribution": "reconstruction_only"
+  },
+  "reconstruction": {
+    "kind": "behavioral_equivalent",
+    "source_state_element": "d_latch",
+    "temporal_relation": "sampled_state_only",
+    "faithfulness_scope": ["truth_table", "io_polarity", "gate_topology"],
+    "not_claimed": ["transparent_window_timing_equivalence", "paper cell coordinates", "paper route coordinates", "physical state characterization"],
+    "transformations": ["Inserted an abstract positive-edge tick around the published stable-state equation for SeqIR v0"],
+    "ambiguities": ["The paper calls Fig. 9 a D flip-flop despite its transparent-latch topology"],
+    "assumptions": ["Only values at explicit state-iteration boundaries are compared"]
+  },
+  "semantics": {
+    "state_element": "dff",
+    "clock": {"kind": "edge", "clock_domains": 1, "edge": "posedge", "logical_clock_abstraction": "tick denotes one sampled state iteration and is distinct from the paper CLOCK input and QCA physical clock"},
+    "initial_state": "unknown",
+    "next_state_equation": "q_next = (d & clock) | (q & ~clock)",
+    "simultaneous_set_reset": "not_applicable",
+    "legal_input_contract": "d and clock are stable at each sampled tick",
+    "physical_abstraction": "abstract_state_boundary"
+  },
+  "files": [
+    {"role": "rtl", "path": "d_latch_sampled_state_equation_1b.v", "sha256": "ea8f776f1321ca91b9227e8af920438eaffe6875717d15b3082ef6af79b4f448"},
+    {"role": "truth_table", "path": "expected_transitions.csv", "sha256": "2d4c5ad172a02bf7e37c2652e1e4c0e93e2218a58068491650f4c99517052b4f"}
+  ],
+  "reported_metrics": [],
+  "expected_pipeline": {
+    "yosys": {"outcome": "pass", "reason": "The sampled adapter lowers to one positive-edge DFF and AOI logic"},
+    "seqir": {"outcome": "pass", "reason": "SeqIR v0 supports the explicit sampled state boundary"},
+    "legacy_cut": {"outcome": "pass", "reason": "The next-state cone is an acyclic AOI graph after cutting q"},
+    "sequential_pnr": {"outcome": "pass", "reason": "The current geometry and phase-epoch solver close at II=4"},
+    "mapping": {"outcome": "pass", "reason": "The cut cone maps with crossover DRC"},
+    "physical_state_signoff": "not_characterized"
+  },
+  "validation": {
+    "status": "partially_validated",
+    "checks": [
+      {"name": "truth_table", "status": "pass", "evidence": "expected_transitions.csv exhausts all sampled transitions"},
+      {"name": "automatic_pipeline", "status": "pass", "evidence": "build/artifacts/sequential_papers/bhowmik2022_use_sequential/d_latch_sampled_state_equation_1b/layout.ifcn.json: 8 nodes, 8 routes, II=4, 214 mapped cells"}
+    ]
+  }
+}

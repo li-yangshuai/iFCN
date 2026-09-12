@@ -1,0 +1,27 @@
+{
+  "schema": "ifcn.phase_blind_geometry.v0",
+  "name": "toggle1_dogleg_clockable",
+  "phase_status": "unassigned",
+  "routes": [
+    {
+      "id": "q_to_inv",
+      "source_event": "reg0.q",
+      "sink_event": "inv0.a",
+      "iteration_distance": 0,
+      "points": [[0, 0], [1, 0]]
+    },
+    {
+      "id": "inv_to_d",
+      "source_event": "inv0.y",
+      "sink_event": "reg0.d",
+      "iteration_distance": 0,
+      "points": [[1, 1], [1, 2], [2, 2], [2, 1]]
+    }
+  ],
+  "expected_clock_result": "SAT",
+  "repair": {
+    "victim_routes": ["inv_to_d"],
+    "outside_geometry_unchanged": true,
+    "kind": "phase_blind_dogleg"
+  }
+}

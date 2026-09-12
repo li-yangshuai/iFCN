@@ -1,0 +1,15 @@
+{
+  "benchmark_root": "/home/lys/projects/github/iFCN/tests/benchmarks_f/original_large",
+  "count": 7,
+  "benchmarks": [
+    "c432.v",
+    "c880.v",
+    "c499.v",
+    "c1908.v",
+    "c1355.v",
+    "c2670.v",
+    "c3540.v"
+  ],
+  "selection_results": "",
+  "selection_status": []
+}

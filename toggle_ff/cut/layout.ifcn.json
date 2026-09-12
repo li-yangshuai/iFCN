@@ -1,0 +1,10 @@
+{
+  "schema": "ifcn.sequential-pnr-report.v0",
+  "module": "ifcn_cut_toggle_ff",
+  "status": "success_abstract_state_macro",
+  "initiation_interval": 4,
+  "nodes": 5,
+  "routes": 4,
+  "mapped_qca_cells": 56,
+  "state_boundaries": 1
+}

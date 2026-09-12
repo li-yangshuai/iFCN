@@ -1,0 +1,48 @@
+# Run this script from the iFCN repository root.
+# The caller must create build/sequential before invoking Yosys.
+
+read_verilog -sv tests/benchmarks_f/SEQUENTIAL/counter2_sync/counter2_sync.sv
+hierarchy -check -top counter2_sync
+flatten
+
+# Elaborate processes and expose the semantic sequential netlist.
+proc
+opt
+memory -nomap
+opt
+
+# v0 refuses residual processes, memories, FSM cells, latches, init attributes,
+# and structural problems. Any failed assertion makes Yosys exit non-zero.
+select -assert-none counter2_sync/p:*
+select -assert-none counter2_sync/m:* counter2_sync/t:$mem* counter2_sync/t:$fsm
+select -assert-none counter2_sync/t:$adff counter2_sync/t:$adffe counter2_sync/t:$aldff counter2_sync/t:$aldffe
+select -assert-none counter2_sync/t:$dlatch counter2_sync/t:$adlatch counter2_sync/t:$dlatchsr counter2_sync/t:$sr
+select -assert-none counter2_sync/t:$tribuf counter2_sync/t:$_TBUF_
+check -noinit -nolatches -assert
+
+# Keep this artifact for importing/reset-enable semantic diagnostics.
+write_json -noscopeinfo build/sequential/counter2_sync.semantic.json
+
+# Lower synchronous reset/enable to D-cone muxes. Do not run opt/opt_dff after
+# this point because it can absorb them back into combined FF cells.
+dffunmap
+techmap
+
+# Optimize only the combinational cones; deliberately do not pass -dff.
+abc -g AND,OR,XOR,XNOR,MUX
+clean -purge
+
+# This fixed example must contain exactly two allowed 1-bit posedge DFFs.
+select -assert-count 2 counter2_sync/t:$_DFF_P_
+select -assert-none counter2_sync/t:$_DFF_* counter2_sync/t:$_DFF_P_ %d
+
+# Refuse every remaining word-level or gate-level sequential cell family.
+select -assert-none counter2_sync/t:$ff counter2_sync/t:$dff counter2_sync/t:$dffe counter2_sync/t:$adff counter2_sync/t:$adffe counter2_sync/t:$aldff counter2_sync/t:$aldffe counter2_sync/t:$dffsr counter2_sync/t:$dffsre counter2_sync/t:$sdff counter2_sync/t:$sdffe counter2_sync/t:$sdffce counter2_sync/t:$dlatch counter2_sync/t:$adlatch counter2_sync/t:$dlatchsr counter2_sync/t:$sr
+select -assert-none counter2_sync/t:$_FF_ counter2_sync/t:$_DFFE_* counter2_sync/t:$_DFFSR_* counter2_sync/t:$_DFFSRE_* counter2_sync/t:$_SDFF_* counter2_sync/t:$_SDFFE_* counter2_sync/t:$_SDFFCE_*
+select -assert-none counter2_sync/t:$_ALDFF_* counter2_sync/t:$_ALDFFE_* counter2_sync/t:$_DLATCH_* counter2_sync/t:$_DLATCHSR_* counter2_sync/t:$_SR_*
+select -assert-none counter2_sync/p:* counter2_sync/m:* counter2_sync/t:$mem* counter2_sync/t:$fsm counter2_sync/t:$tribuf counter2_sync/t:$_TBUF_
+
+check -noinit -nolatches -assert
+stat
+write_json -noscopeinfo build/sequential/counter2_sync.yosys.json
+

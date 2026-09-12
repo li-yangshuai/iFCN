@@ -1,0 +1,63 @@
+{
+  "cut_dag": {
+    "clock_signals_excluded": [
+      "clk"
+    ],
+    "combinational_nodes_retained": 2,
+    "inputs": [
+      "q0",
+      "i0"
+    ],
+    "legacy_operations": [
+      "buf",
+      "not",
+      "and",
+      "or"
+    ],
+    "module": "ifcn_cut_toggle_ff",
+    "outputs": [
+      "d0"
+    ],
+    "primary_inputs": [
+      {
+        "bit": 0,
+        "event": "i0",
+        "port": "rst",
+        "signal": "rst"
+      }
+    ]
+  },
+  "generator": {
+    "name": "yosys_json_to_seqir",
+    "version": 1
+  },
+  "ifcn_sequential_pnr": {
+    "argv": [
+      "--state",
+      "d0:q0"
+    ],
+    "state_arguments": [
+      "d0:q0"
+    ]
+  },
+  "schema": "ifcn.state_manifest.v0",
+  "seqir_schema": "ifcn.seqir.v0",
+  "source_module": "toggle_ff",
+  "state_boundaries": [
+    {
+      "data_event": "d0",
+      "data_signal": "bit.6",
+      "id": "reg.0000",
+      "iteration_distance": 1,
+      "latency_epochs": 0,
+      "q_event": "q0",
+      "q_signal": "q",
+      "source": {
+        "bit": 0,
+        "cell": "$auto$ff.cc:266:slice$87",
+        "type": "$_DFF_P_"
+      },
+      "state_argument": "d0:q0"
+    }
+  ]
+}

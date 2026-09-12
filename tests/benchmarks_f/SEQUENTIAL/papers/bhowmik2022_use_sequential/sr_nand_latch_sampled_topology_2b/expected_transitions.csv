@@ -1,0 +1,17 @@
+q,q_bar,s_n,r_n,q_next,q_bar_next,comparison_domain
+0,0,0,0,1,1,excluded_forbidden_input_no_equivalence_claim
+0,0,0,1,1,1,adapter_defined_no_source_equivalence
+0,0,1,0,1,1,adapter_defined_no_source_equivalence
+0,0,1,1,1,1,adapter_defined_no_source_equivalence
+0,1,0,0,1,1,excluded_forbidden_input_no_equivalence_claim
+0,1,0,1,1,1,valid_source_boundary
+0,1,1,0,0,1,valid_source_boundary
+0,1,1,1,0,1,valid_source_boundary
+1,0,0,0,1,1,excluded_forbidden_input_no_equivalence_claim
+1,0,0,1,1,0,valid_source_boundary
+1,0,1,0,1,1,valid_source_boundary
+1,0,1,1,1,0,valid_source_boundary
+1,1,0,0,1,1,excluded_forbidden_input_no_equivalence_claim
+1,1,0,1,1,0,adapter_defined_no_source_equivalence
+1,1,1,0,0,1,adapter_defined_no_source_equivalence
+1,1,1,1,0,0,adapter_defined_no_source_equivalence

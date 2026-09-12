@@ -1,0 +1,51 @@
+#circuit name: xnor2.v
+
+#designed by graph P&R algorithm with encoded 4-phase clock tiles.
+
+#gate level placement and routing infomation
+#algorithm: graph P&R algorithm
+#gates number: 11
+#input/output: 2 / 1
+#edges number: 12
+#total layers: 6
+#layout area: width: 5, height: 7, area: 35
+#cell count: 164
+#cross count: 2
+#phase origin: top-left=(3,3), saved coordinates are normalized to (0,0)
+#phase count: 4
+#runtime: 0.773s
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (1,1);
+1, b, input, (3,1);
+2, out, output, (2,6);
+3, ~b, not, (3,2);
+5, w2, and, (1,3);
+6, ~a, not, (1,2);
+8, w4, and, (3,3);
+9, w5, or, (2,4);
+10, ~w5, not, (2,5);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(0,5): (1,1),(0,1),(0,2),(0,3),(1,3);
+(0,6): (1,1),(1,2);
+(1,3): (3,1),(3,2);
+(1,8): (3,1),(2,1),(2,2),(2,3),(3,3);
+(3,5): (3,2),(2,2),(2,3),(1,3);
+(5,9): (1,3),(1,4),(2,4);
+(6,8): (1,2),(0,2),(0,1),(0,0),(1,0),(2,0),(3,0),(4,0),(4,1),(4,2),(4,3),(3,3);
+(8,9): (3,3),(3,4),(2,4);
+(9,10): (2,4),(2,5);
+(10,2): (2,5),(2,6);
+#paths info
+#phase map
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0x931666f3;
+tile(1,0):0x03000102;
+tile(0,1):0x10203000;
+tile(1,1):0x00000000;
+#phase map

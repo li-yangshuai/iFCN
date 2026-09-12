@@ -1,0 +1,222 @@
+{
+  "comb_nodes": 2,
+  "design": "toggle_ff",
+  "rtl": "tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff.v",
+  "rtl_sha256": "4f80e37f0b99e4205db6e3819d9794a3950ef7af7aa745facee754991d119b66",
+  "stages": [
+    {
+      "command": [
+        "/home/lys/projects/github/iFCN/build/tools/yosys-local/usr/bin/yosys",
+        "-l",
+        "/home/lys/projects/github/iFCN/toggle_ff/yosys.log",
+        "-s",
+        "/home/lys/projects/github/iFCN/toggle_ff/synthesis.ys"
+      ],
+      "duration_seconds": 0.05401,
+      "exit_code": 0,
+      "launch_error": null,
+      "name": "yosys",
+      "status": "success",
+      "stderr": "toggle_ff/yosys.stderr.log",
+      "stdout": "toggle_ff/yosys.stdout.log",
+      "timed_out": false
+    },
+    {
+      "command": [
+        "/usr/bin/python3",
+        "/home/lys/projects/github/iFCN/scripts/yosys_json_to_seqir.py",
+        "/home/lys/projects/github/iFCN/toggle_ff/yosys.json",
+        "-o",
+        "/home/lys/projects/github/iFCN/toggle_ff/seqir.json",
+        "--top",
+        "toggle_ff",
+        "--legacy-cut-verilog",
+        "/home/lys/projects/github/iFCN/toggle_ff/cut.v",
+        "--state-manifest",
+        "/home/lys/projects/github/iFCN/toggle_ff/state.json",
+        "--compact-legacy-names"
+      ],
+      "duration_seconds": 0.052273,
+      "exit_code": 0,
+      "launch_error": null,
+      "name": "converter",
+      "status": "success",
+      "stderr": "toggle_ff/converter.stderr.log",
+      "stdout": "toggle_ff/converter.stdout.log",
+      "timed_out": false
+    }
+  ],
+  "state_bits": 1,
+  "status": "complete",
+  "transition_check": {
+    "cases": 4,
+    "examples": [],
+    "mismatches": 0,
+    "status": "pass"
+  },
+  "variants": [
+    {
+      "duration_seconds": 0.003659,
+      "layout": "toggle_ff/cut/layout.ifcn",
+      "metrics": {
+        "bbox_area": 63,
+        "height": 9,
+        "initiation_interval": 4,
+        "mapped_qca_cells": 56,
+        "module": "ifcn_cut_toggle_ff",
+        "nodes": 5,
+        "routed_steps": 10,
+        "routes": 4,
+        "schema": "ifcn.sequential-pnr-report.v0",
+        "state_boundaries": 1,
+        "status": "success_abstract_state_macro",
+        "unique_route_sites": 11,
+        "width": 7
+      },
+      "name": "cut",
+      "stage": {
+        "command": [
+          "/home/lys/projects/github/iFCN/build-release/ifcn_sequential_pnr",
+          "/home/lys/projects/github/iFCN/toggle_ff/cut.v",
+          "/home/lys/projects/github/iFCN/toggle_ff/cut/layout.ifcn",
+          "--state",
+          "d0:q0",
+          "--ii",
+          "4,8,12,16,20,24",
+          "--max-same-phase",
+          "4",
+          "--max-dfs-nodes",
+          "5000000",
+          "--spacing",
+          "2",
+          "--tex",
+          "/home/lys/projects/github/iFCN/toggle_ff/cut/layout.tex"
+        ],
+        "duration_seconds": 0.003659,
+        "exit_code": 0,
+        "launch_error": null,
+        "name": "cut",
+        "status": "success",
+        "stderr": "toggle_ff/cut/cut.stderr.log",
+        "stdout": "toggle_ff/cut/cut.stdout.log",
+        "timed_out": false
+      },
+      "status": "success",
+      "tex": "toggle_ff/cut/layout.tex"
+    },
+    {
+      "duration_seconds": 0.001523,
+      "layout": null,
+      "metrics": {},
+      "name": "cyclic_ii4",
+      "stage": {
+        "command": [
+          "/usr/bin/false",
+          "/home/lys/projects/github/iFCN/toggle_ff/cut.v",
+          "/home/lys/projects/github/iFCN/toggle_ff/cyclic_ii4/layout.ifcn",
+          "--state",
+          "d0:q0",
+          "--ii",
+          "4",
+          "--max-same-phase",
+          "4",
+          "--max-dfs-nodes",
+          "5000000",
+          "--spacing",
+          "2",
+          "--tex",
+          "/home/lys/projects/github/iFCN/toggle_ff/cyclic_ii4/layout.tex",
+          "--route-search-cost",
+          "80.0"
+        ],
+        "duration_seconds": 0.001523,
+        "exit_code": 1,
+        "launch_error": null,
+        "name": "cyclic_ii4",
+        "status": "failed",
+        "stderr": "toggle_ff/cyclic_ii4/cyclic_ii4.stderr.log",
+        "stdout": "toggle_ff/cyclic_ii4/cyclic_ii4.stdout.log",
+        "timed_out": false
+      },
+      "status": "failed",
+      "tex": null
+    },
+    {
+      "duration_seconds": 0.001389,
+      "layout": null,
+      "metrics": {},
+      "name": "cyclic_adaptive",
+      "stage": {
+        "command": [
+          "/usr/bin/false",
+          "/home/lys/projects/github/iFCN/toggle_ff/cut.v",
+          "/home/lys/projects/github/iFCN/toggle_ff/cyclic_adaptive/layout.ifcn",
+          "--state",
+          "d0:q0",
+          "--ii",
+          "4,8,12,16,20,24",
+          "--max-same-phase",
+          "4",
+          "--max-dfs-nodes",
+          "5000000",
+          "--spacing",
+          "2",
+          "--tex",
+          "/home/lys/projects/github/iFCN/toggle_ff/cyclic_adaptive/layout.tex",
+          "--route-search-cost",
+          "80.0"
+        ],
+        "duration_seconds": 0.001389,
+        "exit_code": 1,
+        "launch_error": null,
+        "name": "cyclic_adaptive",
+        "status": "failed",
+        "stderr": "toggle_ff/cyclic_adaptive/cyclic_adaptive.stderr.log",
+        "stdout": "toggle_ff/cyclic_adaptive/cyclic_adaptive.stdout.log",
+        "timed_out": false
+      },
+      "status": "failed",
+      "tex": null
+    },
+    {
+      "duration_seconds": 0.000837,
+      "layout": null,
+      "metrics": {},
+      "name": "cyclic_z3_adaptive",
+      "stages": [
+        {
+          "command": [
+            "/usr/bin/false",
+            "/home/lys/projects/github/iFCN/toggle_ff/cut.v",
+            "/home/lys/projects/github/iFCN/toggle_ff/cyclic_z3_adaptive/layout.ifcn",
+            "--state",
+            "d0:q0",
+            "--ii",
+            "4,8,12,16,20,24",
+            "--max-same-phase",
+            "4",
+            "--max-dfs-nodes",
+            "5000000",
+            "--spacing",
+            "2",
+            "--route-search-cost",
+            "80.0",
+            "--clock-problem-out",
+            "/home/lys/projects/github/iFCN/toggle_ff/cyclic_z3_adaptive/clock_problem.json",
+            "--defer-phase"
+          ],
+          "duration_seconds": 0.000837,
+          "exit_code": 1,
+          "launch_error": null,
+          "name": "cyclic_z3_geometry",
+          "status": "failed",
+          "stderr": "toggle_ff/cyclic_z3_adaptive/cyclic_z3_geometry.stderr.log",
+          "stdout": "toggle_ff/cyclic_z3_adaptive/cyclic_z3_geometry.stdout.log",
+          "timed_out": false
+        }
+      ],
+      "status": "failed",
+      "tex": null
+    }
+  ]
+}

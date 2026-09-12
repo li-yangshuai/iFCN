@@ -1,0 +1,29 @@
+{
+  "status": "ok",
+  "mode": "trained_memory_then_memory_only_verified",
+  "power_analysis_ran": false,
+  "targets": [
+    {
+      "name": "RCA2",
+      "output_dir": "tests/benchmarks_f/TOY/RCA2_gcn_rl_layout",
+      "ifcn": "tests/benchmarks_f/TOY/RCA2_gcn_rl_layout/RCA2_rl_layout.ifcn",
+      "qca": "tests/benchmarks_f/TOY/RCA2_gcn_rl_layout/RCA2_rl_layout.qca",
+      "best_area": 667.0,
+      "best_failed_edges": 0,
+      "memory_only_inference": true,
+      "memory_candidate_path": "/home/lys/projects/github/iFCN/include/gcn_rl_layout/results/layout_memory/RCA2_15481867701ac5b7.json",
+      "parse_mode_resolved": "layered"
+    },
+    {
+      "name": "xor5R",
+      "output_dir": "tests/benchmarks_f/TOY/xor5R_gcn_rl_layout",
+      "ifcn": "tests/benchmarks_f/TOY/xor5R_gcn_rl_layout/xor5R_rl_layout.ifcn",
+      "qca": "tests/benchmarks_f/TOY/xor5R_gcn_rl_layout/xor5R_rl_layout.qca",
+      "best_area": 559.0,
+      "best_failed_edges": 0,
+      "memory_only_inference": true,
+      "memory_candidate_path": "/home/lys/projects/github/iFCN/include/gcn_rl_layout/results/layout_memory/xor5R_parser_safe_88b4d8c07f06a49f.json",
+      "parse_mode_resolved": "compact"
+    }
+  ]
+}

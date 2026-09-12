@@ -1,0 +1,54 @@
+#circuit name: 00_xor2.v
+
+#designed by normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, right-down reachable initialization, structural-feature-guided node reposition, failure-directed row/column expansion, legality-verified recursive top-down/bottom-up phase-aware node-to-wire contraction, fixed-point blank-row/column deletion, and post-routing 2DDWave template consistency verification.
+
+#gate level placement and routing infomation
+#gates number: 6
+#input/output: 2 / 1
+#edges number: 7
+#total layers: 4
+#layout area: width: 3, height: 4, area: 12
+#cell count: 72
+#cross count: 1
+#critical path: 6
+#clocks: 1.5
+#run time: 0.773742 s
+#phase encoding: enabled
+#phase count: 4
+#clock scheme: 2DDWave
+#block size: 4x4
+#coordinate origin: normalized top-left (0,0)
+#unassigned phase in raw map: none
+#encoded padding/unassigned compatibility fill: 0
+#encoding: row-major blocks; each block stores one byte per row; each cell uses 2 bits; column 0 is LSB
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (0,0);
+1, b, input, (1,0);
+2, out, and, (2,3);
+3, w1, and, (1,2);
+4, w2, or, (2,1);
+5, ~w1, not, (1,3);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(4,2): (2,1),(2,2),(2,3);
+(5,2): (1,3),(2,3);
+(0,3): (0,0),(0,1),(0,2),(1,2);
+(3,5): (1,2),(1,3);
+(1,4): (1,0),(2,0),(2,1);
+(1,3): (1,0),(1,1),(1,2);
+(0,4): (0,0),(0,1),(1,1),(2,1);
+#paths info
+
+#absolute bbox: (0,0) -> (2,3)
+#raw size: width: 3, height: 4
+#padded size: width: 4, height: 4
+#blocks: columns: 1, rows: 1
+
+#encoded phase map
+### (block_x,block_y): hex ###
+(0,0):0x24390e13;
+#encoded phase map

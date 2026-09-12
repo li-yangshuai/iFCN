@@ -1,0 +1,252 @@
+{
+  "clock_domains": [
+    {
+      "edge": "posedge",
+      "id": "clock.0000",
+      "signal": "clk"
+    }
+  ],
+  "comb_regions": [
+    {
+      "id": "comb_region.0000",
+      "must_be_dag": true,
+      "nodes": [
+        "comb.0000",
+        "comb.0001"
+      ],
+      "pseudo_inputs": [
+        "q",
+        "rst"
+      ],
+      "pseudo_outputs": [
+        "bit.6",
+        "q"
+      ]
+    }
+  ],
+  "combinational_nodes": [
+    {
+      "id": "comb.0000",
+      "inputs": {
+        "A": "rst",
+        "B": "q"
+      },
+      "op": "or",
+      "output": "bit.5",
+      "source": {
+        "bit": 0,
+        "cell": "$abc$90$auto$blifparse.cc:386:parse_blif$91",
+        "type": "$_OR_"
+      }
+    },
+    {
+      "id": "comb.0001",
+      "inputs": {
+        "A": "bit.5"
+      },
+      "op": "not",
+      "output": "bit.6",
+      "source": {
+        "bit": 0,
+        "cell": "$abc$90$auto$blifparse.cc:386:parse_blif$92",
+        "type": "$_NOT_"
+      }
+    }
+  ],
+  "data_nets": [
+    {
+      "driver": {
+        "id": "comb.0000",
+        "kind": "node",
+        "port": "Y"
+      },
+      "id": "net.0000",
+      "signal": "bit.5",
+      "sinks": [
+        {
+          "id": "comb.0001",
+          "kind": "node",
+          "port": "A"
+        }
+      ]
+    },
+    {
+      "driver": {
+        "id": "comb.0001",
+        "kind": "node",
+        "port": "Y"
+      },
+      "id": "net.0001",
+      "signal": "bit.6",
+      "sinks": [
+        {
+          "id": "reg.0000",
+          "kind": "register",
+          "port": "D"
+        }
+      ]
+    },
+    {
+      "driver": {
+        "id": "reg.0000",
+        "kind": "register",
+        "port": "Q"
+      },
+      "id": "net.0002",
+      "signal": "q",
+      "sinks": [
+        {
+          "id": "comb.0000",
+          "kind": "node",
+          "port": "B"
+        },
+        {
+          "bit": 0,
+          "id": "q",
+          "kind": "port"
+        }
+      ]
+    },
+    {
+      "driver": {
+        "bit": 0,
+        "id": "rst",
+        "kind": "port"
+      },
+      "id": "net.0003",
+      "signal": "rst",
+      "sinks": [
+        {
+          "id": "comb.0000",
+          "kind": "node",
+          "port": "A"
+        }
+      ]
+    }
+  ],
+  "diagnostics": {
+    "combinational_bits": 2,
+    "control_muxes_inserted": 0,
+    "register_bits": 1,
+    "source_cells": 3
+  },
+  "generator": {
+    "name": "yosys_json_to_seqir",
+    "version": 1
+  },
+  "module": "toggle_ff",
+  "ports": [
+    {
+      "bits": [
+        "clk"
+      ],
+      "direction": "input",
+      "id": "clk",
+      "roles": [
+        "logical_clock"
+      ],
+      "width": 1
+    },
+    {
+      "bits": [
+        "q"
+      ],
+      "direction": "output",
+      "id": "q",
+      "roles": [],
+      "width": 1
+    },
+    {
+      "bits": [
+        "rst"
+      ],
+      "direction": "input",
+      "id": "rst",
+      "roles": [],
+      "width": 1
+    }
+  ],
+  "registers": [
+    {
+      "clock_domain": "clock.0000",
+      "control_priority": [
+        "data"
+      ],
+      "control_provenance": {},
+      "controls_lowered_into_d": false,
+      "d": "bit.6",
+      "id": "reg.0000",
+      "init": "unknown",
+      "kind": "plain_posedge_dff",
+      "q": "q",
+      "source": {
+        "bit": 0,
+        "cell": "$auto$ff.cc:266:slice$87",
+        "type": "$_DFF_P_"
+      },
+      "width": 1
+    }
+  ],
+  "schema": "ifcn.seqir.v0",
+  "semantics": {
+    "control_lowering": "synchronous_reset_enable_exactly_once_to_d_muxes",
+    "mux_semantics": "Y = S ? B : A",
+    "register_model": "plain_posedge_dff",
+    "state_cut": "D(t)->Q(t+1)"
+  },
+  "signals": [
+    {
+      "aliases": [
+        "$abc$90$new_n4_"
+      ],
+      "id": "bit.5",
+      "kind": "wire",
+      "yosys_bit": 5
+    },
+    {
+      "aliases": [
+        "$abc$90$auto$rtlil.cc:2498:Mux$9"
+      ],
+      "id": "bit.6",
+      "kind": "wire",
+      "yosys_bit": 6
+    },
+    {
+      "aliases": [
+        "clk"
+      ],
+      "id": "clk",
+      "kind": "wire",
+      "yosys_bit": 2
+    },
+    {
+      "aliases": [
+        "q"
+      ],
+      "id": "q",
+      "kind": "wire",
+      "yosys_bit": 4
+    },
+    {
+      "aliases": [
+        "rst"
+      ],
+      "id": "rst",
+      "kind": "wire",
+      "yosys_bit": 3
+    }
+  ],
+  "source": {
+    "creator": "Yosys 0.33 (git sha1 2584903a060)",
+    "format": "yosys.write_json"
+  },
+  "state_edges": [
+    {
+      "data": "bit.6",
+      "id": "state.0000",
+      "logical_latency_ticks": 1,
+      "register": "reg.0000",
+      "to": "q"
+    }
+  ]
+}

@@ -1,11 +1,227 @@
 #include "ui/mainwindow/MainWindow.h"
-#include <QCoreApplication>
+#include <QFileInfo>
+#include <QHeaderView>
+#include <QTableWidgetItem>
+
+namespace {
+QString mappingMetadataValue(const QMap<QString, QString> &metadata, const QStringList &keys)
+{
+    for (const QString &key : keys) {
+        const auto it = metadata.constFind(key);
+        if (it != metadata.constEnd() && !it.value().isEmpty()) {
+            return it.value();
+        }
+    }
+    return QString();
+}
+
+void appendIfPresent(QVector<QPair<QString, QString>> &rows,
+                     const QString &label,
+                     const QString &value)
+{
+    if (!value.isEmpty()) {
+        rows.push_back({label, value});
+    }
+}
+} // namespace
 
 void MainWindow::printToStatusBar(const QString &message)
 {
     customStatusBar->addMessage(message);
-    QCoreApplication::processEvents();
 }
+
+qulonglong MainWindow::currentSceneCellCount() const
+{
+    if (scene != nullptr && scene->hasFastRender()) {
+        qulonglong count = 0;
+        for (const auto &layerCells : scene->fastCellsByLayer()) {
+            count += static_cast<qulonglong>(layerCells.size());
+        }
+        return count;
+    }
+
+    qulonglong count = 0;
+    for (const auto &layerItems : layers) {
+        for (QGraphicsItem *item : layerItems) {
+            if (item != nullptr && item->type() == QCADCellItem::Type) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+void MainWindow::setLayoutInfoRows(const QVector<QPair<QString, QString>> &rows)
+{
+    if (layoutInfoTable == nullptr) {
+        return;
+    }
+
+    layoutInfoTable->setUpdatesEnabled(false);
+    layoutInfoTable->clearContents();
+    layoutInfoTable->setRowCount(rows.size());
+
+    for (int row = 0; row < rows.size(); ++row) {
+        auto *metricItem = new QTableWidgetItem(rows[row].first);
+        auto *valueItem = new QTableWidgetItem(rows[row].second);
+        metricItem->setFlags(metricItem->flags() & ~Qt::ItemIsEditable);
+        valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
+        metricItem->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        valueItem->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        layoutInfoTable->setItem(row, 0, metricItem);
+        layoutInfoTable->setItem(row, 1, valueItem);
+    }
+
+    layoutInfoTable->resizeRowsToContents();
+    layoutInfoTable->setUpdatesEnabled(true);
+}
+
+void MainWindow::refreshLayoutInfoPanel()
+{
+    if (view != nullptr) {
+        view->setEmptyStateVisible(!currentCanvasHasItemsOrData());
+    }
+    QVector<QPair<QString, QString>> rows;
+    rows.push_back({tr("Mode"), tr("Manual design")});
+    if (!curFile.isEmpty() && curFile != tr("Unnamed")) {
+        rows.push_back({tr("File"), QFileInfo(curFile).fileName()});
+    }
+    rows.push_back({tr("Cell count"), QString::number(currentSceneCellCount())});
+    rows.push_back({tr("Layers"), QString::number(layers.size())});
+    if (scene != nullptr) {
+        rows.push_back({tr("Clock regions"), QString::number(scene->clockRegions().size())});
+    }
+    setLayoutInfoRows(rows);
+}
+
+void MainWindow::updateLayoutInfoFromMapping(const GateLevelMapping &mapping)
+{
+    if (view != nullptr) {
+        view->setEmptyStateVisible(!currentCanvasHasItemsOrData());
+    }
+    QVector<QPair<QString, QString>> rows;
+    rows.push_back({tr("Mode"), tr("Mapped .ifcn")});
+    appendIfPresent(rows, tr("Circuit"), mapping.circuitName);
+    QString mappingMode = mapping.resolvedMappingMode() == MappingMode::Sequential
+        ? tr("Sequential") : tr("Combinational");
+    if (!mapping.hasExplicitMappingMode()) {
+        mappingMode += mapping.resolvedMappingMode() == MappingMode::Sequential
+            ? tr(" (legacy inferred)") : tr(" (legacy default)");
+    }
+    rows.push_back({tr("Mapping mode"), mappingMode});
+    int feedbackRoutes = 0;
+    for (auto it = mapping.routeIterationDistances.cbegin();
+         it != mapping.routeIterationDistances.cend(); ++it) {
+        if (it.value() > 0) {
+            ++feedbackRoutes;
+        }
+    }
+    rows.push_back({tr("Feedback routes"), QString::number(feedbackRoutes)});
+    appendIfPresent(rows, tr("Gates"), mappingMetadataValue(mapping.metadata, {QStringLiteral("gates number")}));
+    appendIfPresent(rows, tr("I/O"), mappingMetadataValue(mapping.metadata, {QStringLiteral("input/output")}));
+    appendIfPresent(rows, tr("Edges"), mappingMetadataValue(mapping.metadata, {QStringLiteral("edges number")}));
+    appendIfPresent(rows, tr("Layers"), mappingMetadataValue(mapping.metadata, {QStringLiteral("total layers")}));
+    appendIfPresent(rows, tr("Area"), mappingMetadataValue(mapping.metadata, {QStringLiteral("layout area")}));
+    appendIfPresent(rows, tr("Mapped sites"), mappingMetadataValue(mapping.metadata, {
+        QStringLiteral("mapped unique xy sites"),
+        QStringLiteral("mapped qca cells"),
+        QStringLiteral("cell count"),
+    }));
+    appendIfPresent(rows, tr("Cross"), mappingMetadataValue(mapping.metadata, {QStringLiteral("cross count")}));
+    rows.push_back({tr("Current cells"), QString::number(currentSceneCellCount())});
+    appendIfPresent(rows, tr("Critical path"), mappingMetadataValue(mapping.metadata, {QStringLiteral("critical path")}));
+    appendIfPresent(rows, tr("Clocks"), mappingMetadataValue(mapping.metadata, {QStringLiteral("clocks")}));
+    appendIfPresent(rows, tr("Phase count"), mappingMetadataValue(mapping.metadata, {QStringLiteral("phase count")}));
+    appendIfPresent(rows, tr("Clock scheme"), mappingMetadataValue(mapping.metadata, {QStringLiteral("clock scheme")}));
+
+    const QString consistency = mappingMetadataValue(mapping.metadata, {
+        QStringLiteral("random phase scheme consistency"),
+        QStringLiteral("2ddwave template consistency"),
+    });
+    const QString conflicts = mappingMetadataValue(mapping.metadata, {
+        QStringLiteral("random phase scheme conflicts"),
+        QStringLiteral("2ddwave template conflicts"),
+    });
+    if (!consistency.isEmpty()) {
+        QString value = consistency;
+        if (!conflicts.isEmpty()) {
+            value += tr(" (%1 conflicts)").arg(conflicts);
+        }
+        rows.push_back({tr("Clock check"), value});
+    }
+
+    appendIfPresent(rows, tr("Run time"), mappingMetadataValue(mapping.metadata, {
+        QStringLiteral("run time"),
+        QStringLiteral("runtime"),
+    }));
+    rows.push_back({tr("Parsed nodes"), QString::number(mapping.nodes.size())});
+    rows.push_back({tr("Routes"), QString::number(mapping.routes.size())});
+    rows.push_back({tr("Phase entries"), QString::number(mapping.coordPhaseMap.size())});
+
+    setLayoutInfoRows(rows);
+}
+
+void MainWindow::updateLayoutInfoAfterIoContraction(const CellLevelIoContractionStats &stats)
+{
+    if (view != nullptr) {
+        view->setEmptyStateVisible(!currentCanvasHasItemsOrData());
+    }
+
+    QVector<QPair<QString, QString>> rows;
+    rows.push_back({tr("Mode"), tr("Cell-level IO contracted")});
+    if (!curFile.isEmpty() && curFile != tr("Unnamed")) {
+        rows.push_back({tr("Source"), QFileInfo(curFile).fileName()});
+    }
+    const bool mappedSource = gateLevelMapping != nullptr &&
+        QFileInfo(curFile).suffix().compare(QStringLiteral("ifcn"), Qt::CaseInsensitive) == 0 &&
+        !gateLevelMapping->metadata.isEmpty();
+    if (mappedSource) {
+        appendIfPresent(rows, tr("Circuit"), gateLevelMapping->circuitName);
+        QString mappingMode =
+            gateLevelMapping->resolvedMappingMode() == MappingMode::Sequential
+                ? tr("Sequential") : tr("Combinational");
+        if (!gateLevelMapping->hasExplicitMappingMode()) {
+            mappingMode += tr(" (legacy)");
+        }
+        rows.push_back({tr("Mapping mode"), mappingMode});
+        appendIfPresent(rows, tr("Gates"), mappingMetadataValue(
+                            gateLevelMapping->metadata, {QStringLiteral("gates number")}));
+        appendIfPresent(rows, tr("Edges"), mappingMetadataValue(
+                            gateLevelMapping->metadata, {QStringLiteral("edges number")}));
+    }
+    rows.push_back({tr("Cells"), tr("%1 -> %2").arg(stats.cellsBefore).arg(stats.cellsAfter)});
+    rows.push_back({tr("Removed"), QString::number(stats.removedCells)});
+    rows.push_back({tr("I/O"), tr("%1 / %2").arg(stats.inputCount).arg(stats.outputCount)});
+    rows.push_back({tr("Moved I/O"), tr("%1 / %2").arg(stats.movedInputs).arg(stats.movedOutputs)});
+    rows.push_back({tr("Skipped I/O"), QString::number(stats.skippedPorts)});
+    rows.push_back({tr("Cross-edge I/O"), QString::number(stats.crossoverEdgePorts)});
+    rows.push_back({tr("Removed crossover cells"), QString::number(stats.removedCrossoverCells)});
+    rows.push_back({tr("Compacted wire bends"), QString::number(stats.compactedDoglegs)});
+    rows.push_back({tr("Centered wire fanouts"), QString::number(stats.centeredFanouts)});
+    rows.push_back({tr("Removed grid rows / columns"), tr("%1 / %2")
+                        .arg(stats.compactedGridRows)
+                        .arg(stats.compactedGridColumns)});
+    rows.push_back({tr("Removed route cells"), QString::number(stats.removedRouteCells)});
+    rows.push_back({tr("Layers"), QString::number(stats.nonEmptyLayers)});
+    rows.push_back({tr("Grid span (W x H)"), tr("%1 x %2 grids")
+                        .arg(stats.widthInGrids).arg(stats.heightInGrids)});
+    rows.push_back({tr("Occupied area"), tr("%1 x %2 = %3 grids")
+                        .arg(stats.widthInGrids)
+                        .arg(stats.heightInGrids)
+                        .arg(stats.occupiedArea())});
+    rows.push_back({tr("Crossover cells"), QString::number(stats.crossoverCells)});
+    rows.push_back({tr("Clock regions"), QString::number(
+                        scene != nullptr ? scene->clockRegions().size() : 0)});
+    if (mappedSource) {
+        appendIfPresent(rows, tr("Critical path"), mappingMetadataValue(
+                            gateLevelMapping->metadata, {QStringLiteral("critical path")}));
+        appendIfPresent(rows, tr("Clock scheme"), mappingMetadataValue(
+                            gateLevelMapping->metadata, {QStringLiteral("clock scheme")}));
+    }
+    rows.push_back({tr("Save policy"), tr("New .qca required")});
+    setLayoutInfoRows(rows);
+}
+
 void MainWindow::setInputNames(const QVector<QString> &names)
 {
     inputname = names;
@@ -28,6 +244,16 @@ void MainWindow::setDirty(bool on)
     //禁止其他页面响应
     setWindowModified(on);
     updateUi();
+    if (on) {
+        const bool mappedIfcn = QFileInfo(curFile).suffix().compare(QStringLiteral("ifcn"), Qt::CaseInsensitive) == 0 &&
+                                gateLevelMapping != nullptr &&
+                                !gateLevelMapping->metadata.isEmpty();
+        if (mappedIfcn) {
+            updateLayoutInfoFromMapping(*gateLevelMapping);
+        } else {
+            refreshLayoutInfoPanel();
+        }
+    }
 }
 
 void MainWindow::updateUi()

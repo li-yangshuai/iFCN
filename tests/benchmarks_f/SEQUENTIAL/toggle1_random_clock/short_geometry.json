@@ -1,0 +1,23 @@
+{
+  "schema": "ifcn.phase_blind_geometry.v0",
+  "name": "toggle1_short_unclockable",
+  "phase_status": "unassigned",
+  "routes": [
+    {
+      "id": "q_to_inv",
+      "source_event": "reg0.q",
+      "sink_event": "inv0.a",
+      "iteration_distance": 0,
+      "points": [[0, 0], [1, 0]]
+    },
+    {
+      "id": "inv_to_d",
+      "source_event": "inv0.y",
+      "sink_event": "reg0.d",
+      "iteration_distance": 0,
+      "points": [[1, 1], [2, 1]]
+    }
+  ],
+  "expected_clock_result": "UNSAT",
+  "expected_reason": "feedback maximum advance is 3 epochs, below required II=4"
+}

@@ -1,8 +1,10 @@
 #include "SimulationManager.h"
 #include "QMessageBox"
 #include "QFileDialog"
-#include <QDir>
+#include <QApplication>
 #include <QDebug>
+#include <QByteArray>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QPainter>
@@ -14,11 +16,123 @@
 #include <cmath>
 #include <exception>
 #include <limits>
+#include <stdexcept>
+#include <utility>
 
 namespace {
+constexpr long double kBalancedEnergyWorkThreshold = 1.0e8L;
+constexpr long double kFastEnergyWorkThreshold = 1.0e9L;
+constexpr double kBalancedEnergyTimeStep = 1.0e-16;
+constexpr double kFastEnergyTimeStep = 2.0e-15;
+
 QString formatEnergyValue(double value)
 {
     return QString::number(value, 'g', 10);
+}
+
+QString simulationResultBase(const QString &inputFile, const QString &configuredBase)
+{
+    if (!configuredBase.isEmpty()) {
+        return configuredBase;
+    }
+    const QFileInfo fileInfo(inputFile);
+    return fileInfo.absolutePath() + "/" + fileInfo.baseName();
+}
+
+void removeTemporarySimulationInput(const QString &fileName)
+{
+    if (!fileName.isEmpty()) {
+        QFile::remove(fileName);
+    }
+}
+
+class TemporarySimulationInputGuard
+{
+public:
+    explicit TemporarySimulationInputGuard(QString fileName)
+        : fileName_(std::move(fileName))
+    {}
+
+    ~TemporarySimulationInputGuard()
+    {
+        removeTemporarySimulationInput(fileName_);
+    }
+
+private:
+    QString fileName_;
+};
+
+std::size_t countDesignCells(const QCADesign &design)
+{
+    std::size_t count = 0;
+    for (const auto &layer : design) {
+        count += simon::size(layer);
+    }
+    return count;
+}
+
+std::size_t energySampleCount(const EnergyAnalysisOption &option)
+{
+    return static_cast<std::size_t>(std::ceil(option.duration / option.time_step));
+}
+
+bool forceExactEnergyMode()
+{
+    const QByteArray mode = qgetenv("IFCN_ENERGY_MODE").toLower();
+    return mode == "exact" || mode == "accurate";
+}
+
+bool forceFastEnergyMode()
+{
+    const QByteArray mode = qgetenv("IFCN_ENERGY_MODE").toLower();
+    return mode == "fast";
+}
+
+bool forceBalancedEnergyMode()
+{
+    const QByteArray mode = qgetenv("IFCN_ENERGY_MODE").toLower();
+    return mode == "balanced";
+}
+
+const char *energyModeName(SimulationManager::EnergyAnalysisRunInfo::Mode mode)
+{
+    using Mode = SimulationManager::EnergyAnalysisRunInfo::Mode;
+    switch (mode) {
+    case Mode::Fast:
+        return QT_TRANSLATE_NOOP("SimulationManager", "Fast");
+    case Mode::Balanced:
+        return QT_TRANSLATE_NOOP("SimulationManager", "Balanced");
+    case Mode::Accurate:
+    default:
+        return QT_TRANSLATE_NOOP("SimulationManager", "Accurate");
+    }
+}
+
+SimulationManager::EnergyAnalysisRunInfo configureEnergyAnalysis(EnergyAnalysisOption &option,
+                                                                 std::size_t cellCount)
+{
+    SimulationManager::EnergyAnalysisRunInfo info;
+    info.cellCount = cellCount;
+    info.timeStep = option.time_step;
+    info.duration = option.duration;
+    info.sampleCount = energySampleCount(option);
+
+    const long double workItems = static_cast<long double>(std::max<std::size_t>(1, cellCount)) *
+                                  static_cast<long double>(std::max<std::size_t>(1, info.sampleCount));
+    if (forceFastEnergyMode() || (!forceExactEnergyMode() && workItems > kFastEnergyWorkThreshold)) {
+        option.time_step = std::max(option.time_step, kFastEnergyTimeStep);
+        info.mode = SimulationManager::EnergyAnalysisRunInfo::Mode::Fast;
+        info.timeStep = option.time_step;
+        info.sampleCount = energySampleCount(option);
+    } else if (forceBalancedEnergyMode() ||
+               (!forceExactEnergyMode() && workItems > kBalancedEnergyWorkThreshold)) {
+        option.time_step = std::max(option.time_step, kBalancedEnergyTimeStep);
+        info.mode = SimulationManager::EnergyAnalysisRunInfo::Mode::Balanced;
+        info.timeStep = option.time_step;
+        info.sampleCount = energySampleCount(option);
+    }
+
+    return info;
 }
 
 QColor energyHeatColor(double normalized)
@@ -47,6 +161,24 @@ QColor energyHeatColor(double normalized)
 
 SimulationManager::SimulationManager(QObject *parent) : QObject(parent) {
     // Initialization if needed
+}
+
+bool SimulationManager::setSimulationInputFile(
+        const QString &inputFile,
+        const QString &resultBasePath,
+        const QString &temporaryInputFile)
+{
+    if (operationRunning) {
+        emit operationProgress(
+                tr("Another simulation or energy analysis is already running; current task continues."),
+                -1, 0);
+        return false;
+    }
+
+    curfileName = inputFile;
+    simulationResultBasePath = resultBasePath;
+    temporarySimulationInputFile = temporaryInputFile;
+    return true;
 }
 
 void SimulationManager::startWorkerOperation(const QString &title,
@@ -78,22 +210,45 @@ void SimulationManager::bistableSim(const std::string &fname, Result &result) {
     // Result result;
     QVector<std::string> inames;
     QVector<std::string> onames;
-    parse_design(fname, design);
+    if (!parse_design(fname, design)) {
+        throw std::runtime_error("Unable to parse QCA circuit file");
+    }
     QCABistableOption option;
 
     BistableAlgorithm algorithm(option);
     algorithm.run(design, vector_table, result, SimulationMode::Exhaustive, inames.toStdVector(), onames.toStdVector());
 }
 
+AcceleratedBistableStatistics SimulationManager::acceleratedBistableSim(
+        const std::string &fname, Result &result) {
+    QCADesign design;
+    VectorTable vector_table;
+    QVector<std::string> inames;
+    QVector<std::string> onames;
+    if (!parse_design(fname, design)) {
+        throw std::runtime_error("Unable to parse QCA circuit file");
+    }
+
+    QCABistableOption option;
+    AcceleratedBistableAlgorithm algorithm(option);
+    algorithm.run(design, vector_table, result, SimulationMode::Exhaustive,
+                  inames.toStdVector(), onames.toStdVector());
+    return algorithm.statistics();
+}
+
 void SimulationManager::bistableSimWithSelective(const std::string &fname, const std::string &vfname, Result &result) {
     
     QCADesign design;
-    bool ret = parse_design(fname, design);
+    if (!parse_design(fname, design)) {
+        throw std::runtime_error("Unable to parse QCA circuit file");
+    }
 
     QCABistableOption option;
     VectorTable vector_table;
 
-    bool parsing_result = parse_vector_table(vfname, vector_table);
+    if (!parse_vector_table(vfname, vector_table)) {
+        throw std::runtime_error("Unable to parse vector table file");
+    }
 
     BistableAlgorithm algo(option);
     algo.run(design, vector_table, result, SimulationMode::Selective);
@@ -105,27 +260,50 @@ void SimulationManager::coherenceSim(const std::string &fname, Result &result) {
     // Result result;
     QVector<std::string> inames;
     QVector<std::string> onames;
-    parse_design(fname, design);
+    if (!parse_design(fname, design)) {
+        throw std::runtime_error("Unable to parse QCA circuit file");
+    }
     QCACoherenceOption option;
 
     CoherenceAlgorithm algorithm(option);
     algorithm.run(design, vector_table, result, SimulationMode::Exhaustive, inames.toStdVector(), onames.toStdVector());
 }
 
+AcceleratedCoherenceStatistics SimulationManager::acceleratedCoherenceSim(
+        const std::string &fname, Result &result) {
+    QCADesign design;
+    VectorTable vector_table;
+    QVector<std::string> inames;
+    QVector<std::string> onames;
+    if (!parse_design(fname, design)) {
+        throw std::runtime_error("Unable to parse QCA circuit file");
+    }
+
+    QCACoherenceOption option;
+    AcceleratedCoherenceAlgorithm algorithm(option);
+    algorithm.run(design, vector_table, result, SimulationMode::Exhaustive,
+                  inames.toStdVector(), onames.toStdVector());
+    return algorithm.statistics();
+}
+
 void SimulationManager::coherenceSimWithSelective(const std::string &fname, const std::string &vfname, Result &result) {
     QCADesign design;
-    bool ret = parse_design(fname, design);
+    if (!parse_design(fname, design)) {
+        throw std::runtime_error("Unable to parse QCA circuit file");
+    }
 
     QCACoherenceOption option;
     VectorTable vector_table;
 
-    bool parsing_result = parse_vector_table(vfname, vector_table);
+    if (!parse_vector_table(vfname, vector_table)) {
+        throw std::runtime_error("Unable to parse vector table file");
+    }
 
     CoherenceAlgorithm algo(option);
     algo.run(design, vector_table, result, SimulationMode::Selective);
 }
 
-void SimulationManager::energyAnalysis(const std::string &fname, Result &result){
+SimulationManager::EnergyAnalysisRunInfo SimulationManager::energyAnalysis(const std::string &fname, Result &result){
     
     QCADesign design;
 
@@ -134,10 +312,11 @@ void SimulationManager::energyAnalysis(const std::string &fname, Result &result)
 
     EnergyAnalysisOption option;
     VectorTable vector_table;
+    const EnergyAnalysisRunInfo runInfo = configureEnergyAnalysis(option, countDesignCells(design));
 
     COSEnergyAnalysisAlgorithm algo(option);
     algo.run(design, vector_table, result, SimulationMode::Exhaustive);
- 
+    return runInfo;
 }
 
 void SimulationManager::runEnergyAnalysisForFile(const QString &fileName, const QString &sourceFileName)
@@ -162,7 +341,7 @@ void SimulationManager::runEnergyAnalysisForFile(const QString &fileName, const 
                 emit self->operationProgress(QObject::tr("Solving energy model"), -1, 0);
 
                 Result result;
-                self->energyAnalysis(fileName.toStdString(), result);
+                const EnergyAnalysisRunInfo runInfo = self->energyAnalysis(fileName.toStdString(), result);
 
                 emit self->operationProgress(QObject::tr("Writing energy report"), -1, 0);
 
@@ -181,7 +360,7 @@ void SimulationManager::runEnergyAnalysisForFile(const QString &fileName, const 
                 const QString distributionImageName = self->writeEnergyDistributionImage(
                     outputBase + "_energy_distribution.png", result);
                 const QString message = self->formatEnergyAnalysisStatus(
-                    displayName, reportFileName, distributionImageName, result);
+                    displayName, reportFileName, distributionImageName, result, runInfo);
                 emit self->energyAnalysisFinished(message, waveformFileName, reportFileName, distributionImageName);
                 emit self->operationFinished(QObject::tr("Energy analysis completed: %1").arg(reportFileName));
             } catch (const std::exception &e) {
@@ -199,7 +378,8 @@ void SimulationManager::runEnergyAnalysisForFile(const QString &fileName, const 
 QString SimulationManager::formatEnergyAnalysisStatus(const QString &sourceFileName,
                                                       const QString &reportFileName,
                                                       const QString &distributionImageName,
-                                                      const Result &result) const
+                                                      const Result &result,
+                                                      const EnergyAnalysisRunInfo &runInfo) const
 {
     QString message;
     QTextStream out(&message);
@@ -212,6 +392,12 @@ QString SimulationManager::formatEnergyAnalysisStatus(const QString &sourceFileN
     }
 
     const auto &energy = result.energy_analysis;
+    out << tr("Mode: %1, time step=%2 s, samples=%3, cells=%4")
+               .arg(tr(energyModeName(runInfo.mode)),
+                    formatEnergyValue(runInfo.timeStep))
+               .arg(runInfo.sampleCount)
+               .arg(runInfo.cellCount)
+        << "\n";
     out << tr("Total: E_bath=%1 eV, E_clk=%2 eV, E_io=%3 eV, E_error=%4 eV")
                .arg(formatEnergyValue(energy.total_bath_eV),
                     formatEnergyValue(energy.total_clock_eV),
@@ -326,13 +512,18 @@ QString SimulationManager::writeEnergyDistributionImage(const QString &fileName,
 void SimulationManager::slotSavedname(QString fileName)//for 仿真文件名
 {
     this->curfileName = fileName;
+    simulationResultBasePath.clear();
+    temporarySimulationInputFile.clear();
 }
 
 void SimulationManager::slotBistableSim() {
 
     //QString curFile = QFileDialog::getOpenFileName(nullptr, tr("Open File"), ".", tr("QCA files (*.qca)"));
     QString curFile = curfileName;
+    const QString resultBasePath = simulationResultBase(curFile, simulationResultBasePath);
+    const QString temporaryInputFile = temporarySimulationInputFile;
     if (curFile.isEmpty()) {
+        removeTemporarySimulationInput(temporaryInputFile);
         const QString message = tr("Bistable simulation canceled: no circuit file.");
         emit simulationFailed(message);
         emit operationFailed(message);
@@ -343,7 +534,8 @@ void SimulationManager::slotBistableSim() {
     startWorkerOperation(
         tr("Bistable simulation"),
         tr("Running %1").arg(QFileInfo(curFile).fileName()),
-        [self, curFile]() {
+        [self, curFile, resultBasePath, temporaryInputFile]() {
+            const TemporarySimulationInputGuard snapshotGuard(temporaryInputFile);
             if (!self) {
                 return;
             }
@@ -353,8 +545,7 @@ void SimulationManager::slotBistableSim() {
 
                 Result result;
                 self->bistableSim(curFile.toStdString(), result);
-                QFileInfo fileInfo(curFile);
-                const QString outputFileName = fileInfo.absolutePath() + "/" + fileInfo.baseName() + ".rst";
+                const QString outputFileName = resultBasePath + ".rst";
 
                 emit self->operationProgress(QObject::tr("Writing simulation waveform"), -1, 0);
                 result.write_text_file(outputFileName.toStdString());
@@ -372,6 +563,71 @@ void SimulationManager::slotBistableSim() {
             }
         });
 }
+
+void SimulationManager::slotAcceleratedBistableSim() {
+    const QString curFile = curfileName;
+    const QString resultBasePath = simulationResultBase(curFile, simulationResultBasePath);
+    const QString temporaryInputFile = temporarySimulationInputFile;
+    if (curFile.isEmpty()) {
+        removeTemporarySimulationInput(temporaryInputFile);
+        const QString message = tr("Accelerated bistable simulation canceled: no circuit file.");
+        emit simulationFailed(message);
+        emit operationFailed(message);
+        return;
+    }
+
+    QPointer<SimulationManager> self(this);
+    startWorkerOperation(
+        tr("Accelerated bistable simulation"),
+        tr("Running %1").arg(QFileInfo(curFile).fileName()),
+        [self, curFile, resultBasePath, temporaryInputFile]() {
+            const TemporarySimulationInputGuard snapshotGuard(temporaryInputFile);
+            if (!self) {
+                return;
+            }
+
+            try {
+                emit self->operationProgress(
+                        QObject::tr("Solving accelerated bistable simulation"), -1, 0);
+
+                Result result;
+                const AcceleratedBistableStatistics statistics =
+                        self->acceleratedBistableSim(curFile.toStdString(), result);
+                const QString outputFileName = resultBasePath +
+                        "_accelerated_bistable.rst";
+
+                emit self->operationProgress(
+                        QObject::tr("Writing accelerated bistable waveform"), -1, 0);
+                result.write_text_file(outputFileName.toStdString());
+
+                const QString summary = QObject::tr(
+                        "Accelerated bistable simulation completed: %1 "
+                        "[samples=%2, sweeps=%3, cell updates=%4, converged=%5, "
+                        "max-iteration samples=%6, dynamic cells=%7, couplings=%8]")
+                        .arg(outputFileName)
+                        .arg(static_cast<qulonglong>(statistics.samples))
+                        .arg(static_cast<qulonglong>(statistics.sweeps))
+                        .arg(static_cast<qulonglong>(statistics.cell_updates))
+                        .arg(static_cast<qulonglong>(statistics.converged_samples))
+                        .arg(static_cast<qulonglong>(statistics.max_iteration_samples))
+                        .arg(static_cast<qulonglong>(statistics.dynamic_cells))
+                        .arg(static_cast<qulonglong>(statistics.directed_couplings));
+                emit self->simulationFinished(outputFileName);
+                emit self->operationFinished(summary);
+            } catch (const std::exception &e) {
+                const QString message = QObject::tr(
+                        "Accelerated bistable simulation failed: %1").arg(e.what());
+                emit self->simulationFailed(message);
+                emit self->operationFailed(message);
+            } catch (...) {
+                const QString message = QObject::tr(
+                        "Accelerated bistable simulation failed.");
+                emit self->simulationFailed(message);
+                emit self->operationFailed(message);
+            }
+        });
+}
+
 void SimulationManager::slotSimWithSelective()
 {
     Typewindow * typewindow = new Typewindow(nullptr, this->lablename);
@@ -391,7 +647,10 @@ void SimulationManager::slotSendvtnames(const QString &fileName)
 
 void SimulationManager::slotBistableSimWithSelective() {
     QString curFile = curfileName;
+    const QString resultBasePath = simulationResultBase(curFile, simulationResultBasePath);
+    const QString temporaryInputFile = temporarySimulationInputFile;
     if (curFile.isEmpty()) {
+        removeTemporarySimulationInput(temporaryInputFile);
         const QString message = tr("Selective bistable simulation canceled: no circuit file.");
         emit simulationFailed(message);
         emit operationFailed(message);
@@ -399,6 +658,7 @@ void SimulationManager::slotBistableSimWithSelective() {
     }
     QString vframe = vtfilenames;
     if (vframe.isEmpty()) {
+        removeTemporarySimulationInput(temporaryInputFile);
         const QString message = tr("Selective bistable simulation canceled: no vector table file.");
         emit simulationFailed(message);
         emit operationFailed(message);
@@ -409,7 +669,8 @@ void SimulationManager::slotBistableSimWithSelective() {
     startWorkerOperation(
         tr("Selective bistable simulation"),
         tr("Running %1").arg(QFileInfo(curFile).fileName()),
-        [self, curFile, vframe]() {
+        [self, curFile, vframe, resultBasePath, temporaryInputFile]() {
+            const TemporarySimulationInputGuard snapshotGuard(temporaryInputFile);
             if (!self) {
                 return;
             }
@@ -419,8 +680,7 @@ void SimulationManager::slotBistableSimWithSelective() {
 
                 Result result;
                 self->bistableSimWithSelective(curFile.toStdString(), vframe.toStdString(), result);
-                QFileInfo fileInfo(curFile);
-                const QString outputFileName = fileInfo.absolutePath() + "/" + fileInfo.baseName() + ".rst";
+                const QString outputFileName = resultBasePath + ".rst";
 
                 emit self->operationProgress(QObject::tr("Writing simulation waveform"), -1, 0);
                 result.write_text_file(outputFileName.toStdString());
@@ -441,7 +701,10 @@ void SimulationManager::slotBistableSimWithSelective() {
 
 void SimulationManager::slotCoherenceSim() {
     QString curFile = curfileName;
+    const QString resultBasePath = simulationResultBase(curFile, simulationResultBasePath);
+    const QString temporaryInputFile = temporarySimulationInputFile;
     if (curFile.isEmpty()) {
+        removeTemporarySimulationInput(temporaryInputFile);
         const QString message = tr("Coherence simulation canceled: no circuit file.");
         emit simulationFailed(message);
         emit operationFailed(message);
@@ -452,7 +715,8 @@ void SimulationManager::slotCoherenceSim() {
     startWorkerOperation(
         tr("Coherence simulation"),
         tr("Running %1").arg(QFileInfo(curFile).fileName()),
-        [self, curFile]() {
+        [self, curFile, resultBasePath, temporaryInputFile]() {
+            const TemporarySimulationInputGuard snapshotGuard(temporaryInputFile);
             if (!self) {
                 return;
             }
@@ -462,8 +726,7 @@ void SimulationManager::slotCoherenceSim() {
 
                 Result result;
                 self->coherenceSim(curFile.toStdString(), result);
-                QFileInfo fileInfo(curFile);
-                const QString outputFileName = fileInfo.absolutePath() + "/" + fileInfo.baseName() + ".rst";
+                const QString outputFileName = resultBasePath + ".rst";
 
                 emit self->operationProgress(QObject::tr("Writing simulation waveform"), -1, 0);
                 result.write_text_file(outputFileName.toStdString());
@@ -482,9 +745,78 @@ void SimulationManager::slotCoherenceSim() {
         });
 }
 
+void SimulationManager::slotAcceleratedCoherenceSim() {
+    const QString curFile = curfileName;
+    const QString resultBasePath = simulationResultBase(curFile, simulationResultBasePath);
+    const QString temporaryInputFile = temporarySimulationInputFile;
+    if (curFile.isEmpty()) {
+        removeTemporarySimulationInput(temporaryInputFile);
+        const QString message = tr("Accelerated coherence simulation canceled: no circuit file.");
+        emit simulationFailed(message);
+        emit operationFailed(message);
+        return;
+    }
+
+    QPointer<SimulationManager> self(this);
+    startWorkerOperation(
+        tr("Accelerated coherence simulation"),
+        tr("Running %1").arg(QFileInfo(curFile).fileName()),
+        [self, curFile, resultBasePath, temporaryInputFile]() {
+            const TemporarySimulationInputGuard snapshotGuard(temporaryInputFile);
+            if (!self) {
+                return;
+            }
+
+            try {
+                emit self->operationProgress(
+                        QObject::tr("Solving accelerated coherence simulation"), -1, 0);
+
+                Result result;
+                const AcceleratedCoherenceStatistics statistics =
+                        self->acceleratedCoherenceSim(curFile.toStdString(), result);
+                const QString outputFileName = resultBasePath +
+                        "_accelerated_coherence.rst";
+
+                emit self->operationProgress(
+                        QObject::tr("Writing accelerated coherence waveform"), -1, 0);
+                result.write_text_file(outputFileName.toStdString());
+
+                const QString summary = QObject::tr(
+                        "Accelerated coherence simulation completed: %1 "
+                        "[samples=%2, cell updates=%3, field accumulations=%4, "
+                        "dynamic cells=%5, couplings=%6, clock cache=%7, input cache=%8]")
+                        .arg(outputFileName)
+                        .arg(static_cast<qulonglong>(statistics.samples))
+                        .arg(static_cast<qulonglong>(statistics.cell_updates))
+                        .arg(static_cast<qulonglong>(statistics.field_accumulations))
+                        .arg(static_cast<qulonglong>(statistics.dynamic_cells))
+                        .arg(static_cast<qulonglong>(statistics.directed_couplings))
+                        .arg(statistics.clock_cache_used ? QObject::tr("on")
+                                                         : QObject::tr("off"))
+                        .arg(statistics.input_cache_used ? QObject::tr("on")
+                                                         : QObject::tr("off"));
+                emit self->simulationFinished(outputFileName);
+                emit self->operationFinished(summary);
+            } catch (const std::exception &e) {
+                const QString message = QObject::tr(
+                        "Accelerated coherence simulation failed: %1").arg(e.what());
+                emit self->simulationFailed(message);
+                emit self->operationFailed(message);
+            } catch (...) {
+                const QString message = QObject::tr(
+                        "Accelerated coherence simulation failed.");
+                emit self->simulationFailed(message);
+                emit self->operationFailed(message);
+            }
+        });
+}
+
 void SimulationManager::slotCoherenceSimWithSelective() {
     QString curFile = curfileName;
+    const QString resultBasePath = simulationResultBase(curFile, simulationResultBasePath);
+    const QString temporaryInputFile = temporarySimulationInputFile;
     if (curFile.isEmpty()) {
+        removeTemporarySimulationInput(temporaryInputFile);
         const QString message = tr("Selective coherence simulation canceled: no circuit file.");
         emit simulationFailed(message);
         emit operationFailed(message);
@@ -492,6 +824,7 @@ void SimulationManager::slotCoherenceSimWithSelective() {
     }
     QString vframe = vtfilenames;
     if (vframe.isEmpty()) {
+        removeTemporarySimulationInput(temporaryInputFile);
         const QString message = tr("Selective coherence simulation canceled: no vector table file.");
         emit simulationFailed(message);
         emit operationFailed(message);
@@ -502,7 +835,8 @@ void SimulationManager::slotCoherenceSimWithSelective() {
     startWorkerOperation(
         tr("Selective coherence simulation"),
         tr("Running %1").arg(QFileInfo(curFile).fileName()),
-        [self, curFile, vframe]() {
+        [self, curFile, vframe, resultBasePath, temporaryInputFile]() {
+            const TemporarySimulationInputGuard snapshotGuard(temporaryInputFile);
             if (!self) {
                 return;
             }
@@ -512,8 +846,7 @@ void SimulationManager::slotCoherenceSimWithSelective() {
 
                 Result result;
                 self->coherenceSimWithSelective(curFile.toStdString(), vframe.toStdString(), result);
-                QFileInfo fileInfo(curFile);
-                const QString outputFileName = fileInfo.absolutePath() + "/" + fileInfo.baseName() + ".rst";
+                const QString outputFileName = resultBasePath + ".rst";
 
                 emit self->operationProgress(QObject::tr("Writing simulation waveform"), -1, 0);
                 result.write_text_file(outputFileName.toStdString());
@@ -533,7 +866,7 @@ void SimulationManager::slotCoherenceSimWithSelective() {
 }
 
 void SimulationManager::slotEnergyAnalysis() {
-    QString curFile = QFileDialog::getOpenFileName(nullptr, tr("Open File"), ".", tr("QCA files (*.qca)"));
+    QString curFile = QFileDialog::getOpenFileName(QApplication::activeWindow(), tr("Open File"), ".", tr("QCA files (*.qca)"));
     if (curFile.isEmpty()) {
         return;
     }

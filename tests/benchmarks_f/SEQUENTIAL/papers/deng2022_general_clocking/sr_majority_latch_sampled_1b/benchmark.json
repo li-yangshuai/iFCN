@@ -1,0 +1,61 @@
+{
+  "schema": "ifcn.sequential.paper_benchmark.v1",
+  "benchmark_id": "deng2022/sr_majority_latch_sampled_1b",
+  "module": "sr_majority_latch_sampled_1b",
+  "classification": {"domain": "sequential", "state_element": "sr_flip_flop", "trigger_model": "edge", "bit_width": 1},
+  "source": {
+    "provenance_status": "primary_source_verified",
+    "citation": {
+      "key": "deng2022",
+      "title": "A general and efficient clocking scheme for majority logic in quantum-dot cellular automata",
+      "authors": ["Feifei Deng", "Guangjun Xie", "Xin Cheng", "Yongqiang Zhang"],
+      "venue": "Microelectronics Journal 128, 105544",
+      "year": 2022,
+      "doi": "10.1016/j.mejo.2022.105544",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0026269222001744",
+      "accessed": "2026-08-24"
+    },
+    "locator": {"figure": "Fig. 9"},
+    "artifact_url": "https://ars.els-cdn.com/content/image/1-s2.0-S0026269222001744-gr9_lrg.jpg",
+    "redistribution": "reconstruction_only"
+  },
+  "reconstruction": {
+    "kind": "topology_transcription",
+    "source_state_element": "sr_latch",
+    "temporal_relation": "sampled_state_only",
+    "faithfulness_scope": ["truth_table", "io_polarity", "gate_topology"],
+    "not_claimed": ["transparent_window_timing_equivalence", "paper cell coordinates", "paper route coordinates", "physical state characterization"],
+    "transformations": ["Inserted an abstract positive-edge tick around M3(S,~R,Q) for SeqIR v0"],
+    "ambiguities": [],
+    "assumptions": ["Only values at explicit state-iteration boundaries are compared"]
+  },
+  "semantics": {
+    "state_element": "sr_flip_flop",
+    "clock": {"kind": "edge", "clock_domains": 1, "edge": "posedge", "logical_clock_abstraction": "tick denotes one sampled state iteration and is distinct from QCA's four-phase physical clock"},
+    "initial_state": "unknown",
+    "next_state_equation": "q_next = M(s, ~r, q) = (s & ~r) | (s & q) | (~r & q)",
+    "simultaneous_set_reset": "hold",
+    "legal_input_contract": "All four S/R combinations are sampled; both 00 and 11 hold state",
+    "physical_abstraction": "abstract_state_boundary"
+  },
+  "files": [
+    {"role": "rtl", "path": "sr_majority_latch_sampled_1b.v", "sha256": "64a0d5d60932be6bdf62705e13639ad94e856fbee65a87378f171aaf3cd64f56"},
+    {"role": "truth_table", "path": "expected_transitions.csv", "sha256": "2034135369d2e38d8077026b4e656f3ef9d8922de1355b84f867c990280686e1"}
+  ],
+  "reported_metrics": [],
+  "expected_pipeline": {
+    "yosys": {"outcome": "pass", "reason": "The sampled majority equation lowers to a positive-edge register and AOI logic"},
+    "seqir": {"outcome": "pass", "reason": "SeqIR v0 supports the sampled state boundary"},
+    "legacy_cut": {"outcome": "pass", "reason": "The majority next-state cone becomes an AOI DAG after cutting q"},
+    "sequential_pnr": {"outcome": "pass", "reason": "Hold-first phase search closes the current geometry at II=4"},
+    "mapping": {"outcome": "pass", "reason": "The cut cone maps with crossover DRC"},
+    "physical_state_signoff": "not_characterized"
+  },
+  "validation": {
+    "status": "partially_validated",
+    "checks": [
+      {"name": "truth_table", "status": "pass", "evidence": "expected_transitions.csv exhausts all sampled q/s/r transitions"},
+      {"name": "automatic_pipeline", "status": "pass", "evidence": "build/artifacts/sequential_papers/deng2022_general_clocking/sr_majority_latch_sampled_1b/layout_hold_first.ifcn.json: 9 nodes, 10 routes, II=4, 216 mapped cells"}
+    ]
+  }
+}

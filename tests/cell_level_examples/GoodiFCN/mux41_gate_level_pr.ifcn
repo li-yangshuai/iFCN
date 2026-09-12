@@ -8,6 +8,8 @@
 #edges number: 38
 #total layers: 7
 #layout area: width: 15, height: 15, area: 225
+#cell count: 826
+#cross count: 22
 #critical path: 30
 #clocks: 7.5
 

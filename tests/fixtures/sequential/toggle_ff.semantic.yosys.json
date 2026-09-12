@@ -1,0 +1,115 @@
+{
+  "creator": "Yosys 0.40 (offline semantic fixture)",
+  "modules": {
+    "toggle_ff": {
+      "attributes": {
+        "top": "00000000000000000000000000000001"
+      },
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [
+            2
+          ]
+        },
+        "rst": {
+          "direction": "input",
+          "bits": [
+            3
+          ]
+        },
+        "q": {
+          "direction": "output",
+          "bits": [
+            4
+          ]
+        }
+      },
+      "cells": {
+        "$not$toggle_ff.v:9$1": {
+          "hide_name": 1,
+          "type": "$not",
+          "parameters": {
+            "A_SIGNED": "0",
+            "A_WIDTH": "00000000000000000000000000000001",
+            "Y_WIDTH": "00000000000000000000000000000001"
+          },
+          "attributes": {},
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [
+              4
+            ],
+            "Y": [
+              5
+            ]
+          }
+        },
+        "$procdff$toggle_ff.v:8$2": {
+          "hide_name": 1,
+          "type": "$sdff",
+          "parameters": {
+            "CLK_POLARITY": "1",
+            "SRST_POLARITY": "1",
+            "SRST_VALUE": "0",
+            "WIDTH": "00000000000000000000000000000001"
+          },
+          "attributes": {},
+          "port_directions": {
+            "CLK": "input",
+            "D": "input",
+            "Q": "output",
+            "SRST": "input"
+          },
+          "connections": {
+            "CLK": [
+              2
+            ],
+            "D": [
+              5
+            ],
+            "Q": [
+              4
+            ],
+            "SRST": [
+              3
+            ]
+          }
+        }
+      },
+      "netnames": {
+        "$next_q": {
+          "hide_name": 1,
+          "bits": [
+            5
+          ],
+          "attributes": {}
+        },
+        "clk": {
+          "hide_name": 0,
+          "bits": [
+            2
+          ],
+          "attributes": {}
+        },
+        "q": {
+          "hide_name": 0,
+          "bits": [
+            4
+          ],
+          "attributes": {}
+        },
+        "rst": {
+          "hide_name": 0,
+          "bits": [
+            3
+          ],
+          "attributes": {}
+        }
+      }
+    }
+  }
+}

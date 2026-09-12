@@ -67,9 +67,11 @@ void MappingExecutor::executeMapping()
 
     //get circle_line from routes(containing all paths)
     std::vector<std::vector<position>> circle_line;
+    std::vector<unsigned int> circleIterationDistances;
     circle_line.clear();
-    for (const QVector<QPoint>& qPoints : routes)  // 直接拿 value
+    for (auto routeIt = routes.cbegin(); routeIt != routes.cend(); ++routeIt)
     {
+        const QVector<QPoint>& qPoints = routeIt.value();
         std::vector<position> convertedRoute;
         convertedRoute.reserve(qPoints.size());
 
@@ -77,6 +79,8 @@ void MappingExecutor::executeMapping()
             convertedRoute.emplace_back(point.x(), point.y());
 
         circle_line.push_back(std::move(convertedRoute));
+        circleIterationDistances.push_back(
+            gatelevelmapping->routeIterationDistances.value(routeIt.key(), 0));
     }
 
 
@@ -184,7 +188,19 @@ void MappingExecutor::executeMapping()
         return;
     }
 
-    mapping.node_mapping(Nodelink);
+    mapping.node_mapping(Nodelink, gatelevelmapping->resolvedMappingMode());
+    auto routeexample = mapping.mapping_line(
+        circle_line,
+        gatelevelmapping->resolvedMappingMode(),
+        circleIterationDistances);
+    std::string crossoverError;
+    if (!mapping.validate_crossovers(&crossoverError)) {
+        const QString message = QStringLiteral("Cell mapping rejected: invalid crossover: %1")
+                                    .arg(QString::fromStdString(crossoverError));
+        qWarning().noquote() << message;
+        mainWindow->customStatusBar->addMessage(message);
+        return;
+    }
     auto nodeexample = mapping.nodecell_list;//按单位元胞类型分类的映射 std::map<std::string, std::vector<position>>
     if(nodeexample.empty())
     {
@@ -286,9 +302,9 @@ void MappingExecutor::executeMapping()
             // 仅 input/output 需要节点名匹配
             if (cellType == CellType::InputCell || cellType == CellType::OutputCell)
             {
-                unsigned int xNode = cellPos.first / 5;
-                unsigned int yNode = cellPos.second / 5;
-                QPoint nodePoint(xNode, yNode);
+                position nodePosition{cellPos.first / 5, cellPos.second / 5};
+                QPoint nodePoint(static_cast<int>(nodePosition.first),
+                                 static_cast<int>(nodePosition.second));
 
                 for (const auto& node : nodes)
                 {
@@ -304,7 +320,6 @@ void MappingExecutor::executeMapping()
         }
     }
 
-    auto routeexample = mapping.mapping_line(circle_line);
     auto crossexample = mapping.crossline_list;
 
     std::vector<position> allroutecells;//存放所有路线元胞坐标，用于后续交叉线的检查

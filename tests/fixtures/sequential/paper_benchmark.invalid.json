@@ -1,0 +1,93 @@
+{
+  "schema": "ifcn.sequential.paper_benchmark.v1",
+  "benchmark_id": "demo2025/sr_latch_active_high_1b",
+  "module": "paper_dff_posedge_1b",
+  "classification": {
+    "domain": "sequential",
+    "state_element": "sr_latch",
+    "trigger_model": "edge",
+    "bit_width": 1
+  },
+  "source": {
+    "provenance_status": "secondary_only",
+    "citation": {
+      "key": "wrongkey",
+      "title": "Deliberately invalid validator fixture",
+      "authors": [
+        "iFCN test suite"
+      ],
+      "venue": "iFCN repository fixture",
+      "year": 2025,
+      "url": "not-an-absolute-url",
+      "accessed": "2026-08-24"
+    },
+    "locator": {},
+    "redistribution": "reconstruction_only"
+  },
+  "reconstruction": {
+    "kind": "behavioral_equivalent",
+    "faithfulness_scope": [
+      "truth_table"
+    ],
+    "not_claimed": [
+      "physical implementation"
+    ],
+    "transformations": [],
+    "ambiguities": [],
+    "assumptions": []
+  },
+  "semantics": {
+    "state_element": "dff",
+    "clock": {
+      "kind": "edge",
+      "clock_domains": 1,
+      "edge": "posedge"
+    },
+    "initial_state": "unknown",
+    "next_state_equation": "q_next = d",
+    "simultaneous_set_reset": "not_applicable",
+    "legal_input_contract": "none",
+    "physical_abstraction": "abstract_state_boundary"
+  },
+  "files": [
+    {
+      "role": "rtl",
+      "path": "paper_benchmark_stub.sv",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "reported_metrics": [],
+  "expected_pipeline": {
+    "yosys": {
+      "outcome": "pass",
+      "reason": "Deliberately inconsistent fixture"
+    },
+    "seqir": {
+      "outcome": "pass",
+      "reason": "Deliberately inconsistent fixture"
+    },
+    "legacy_cut": {
+      "outcome": "pass",
+      "reason": "Deliberately inconsistent fixture"
+    },
+    "sequential_pnr": {
+      "outcome": "pass",
+      "reason": "Deliberately inconsistent fixture"
+    },
+    "mapping": {
+      "outcome": "pass",
+      "reason": "Deliberately inconsistent fixture"
+    },
+    "physical_state_signoff": "characterized"
+  },
+  "validation": {
+    "status": "validated",
+    "checks": [
+      {
+        "name": "deliberate failure",
+        "status": "fail",
+        "evidence": "This fixture must be rejected"
+      }
+    ]
+  }
+}

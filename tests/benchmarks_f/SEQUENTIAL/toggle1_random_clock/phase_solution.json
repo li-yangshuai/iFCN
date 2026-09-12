@@ -1,0 +1,28 @@
+{
+  "schema": "ifcn.global_clock_solution.v0",
+  "geometry": "repaired_geometry.json",
+  "phase_count": 4,
+  "ii_epochs": 4,
+  "phase_numbering": "zero_based",
+  "event_epochs": {
+    "reg0.q": 0,
+    "inv0.a": 1,
+    "inv0.y": 2,
+    "reg0.d": 4
+  },
+  "cell_phases": [
+    {"point": [0, 0], "phase": 0},
+    {"point": [1, 0], "phase": 1},
+    {"point": [1, 1], "phase": 2},
+    {"point": [1, 2], "phase": 3},
+    {"point": [2, 2], "phase": 3},
+    {"point": [2, 1], "phase": 0}
+  ],
+  "route_arrival_epochs": {
+    "q_to_inv": [0, 1],
+    "inv_to_d": [2, 3, 3, 4]
+  },
+  "loop_advance_epochs": 4,
+  "max_same_phase_run": 2,
+  "status": "SAT_AND_INDEPENDENTLY_CHECKABLE"
+}

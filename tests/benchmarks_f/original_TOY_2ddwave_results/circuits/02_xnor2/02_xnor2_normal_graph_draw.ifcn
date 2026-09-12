@@ -1,0 +1,52 @@
+#circuit name: 02_xnor2.v
+
+#designed by normal graph draw algorithm based on Graphviz dot/mincross + exact-gain sifting, right-down reachable initialization, structural-feature-guided node reposition, failure-directed row/column expansion, legality-verified recursive top-down/bottom-up phase-aware node-to-wire contraction, fixed-point blank-row/column deletion, and post-routing 2DDWave template consistency verification.
+
+#gate level placement and routing infomation
+#gates number: 8
+#input/output: 2 / 1
+#edges number: 9
+#total layers: 5
+#layout area: width: 4, height: 3, area: 12
+#cell count: 76
+#cross count: 1
+#critical path: 6
+#clocks: 1.5
+#run time: 0.443408 s
+#phase count: 4
+#clock scheme: 2DDWave
+#clock scheme consistency: success
+#clock scheme conflicts: 0
+#random phase scheme consistency: success
+#random phase scheme conflicts: 0
+
+#nodes info 
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (0,0);
+1, b, input, (1,0);
+3, ~b, not, (2,0);
+5, w2, and, (2,1);
+6, ~a, not, (0,2);
+8, w4, and, (1,2);
+9, w5, or, (2,2);
+10, ~w5, not, (3,2);
+#nodes info 
+
+#paths info
+### {node1, node2} : path ###
+(1,8): (1,0),(1,1),(1,2);
+(9,10): (2,2),(3,2);
+(8,9): (1,2),(2,2);
+(0,5): (0,0),(0,1),(1,1),(2,1);
+(5,9): (2,1),(2,2);
+(6,8): (0,2),(1,2);
+(3,5): (2,0),(2,1);
+(0,6): (0,0),(0,1),(0,2);
+(1,3): (1,0),(2,0);
+#paths info
+#phase map
+### (x,y) : phase ###
+(0,0):0; (1,0):1; (2,0):2; (3,0):3;
+(0,1):1; (1,1):2; (2,1):3; (3,1):0;
+(0,2):2; (1,2):3; (2,2):0; (3,2):1;
+#phase map

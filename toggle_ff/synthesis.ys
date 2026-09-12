@@ -1,0 +1,9 @@
+read_verilog -sv "/home/lys/projects/github/iFCN/tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff.v";
+hierarchy -check -top toggle_ff;
+proc;
+opt;
+dffunmap;
+techmap;
+abc -g AND,OR;
+clean;
+write_json "/home/lys/projects/github/iFCN/toggle_ff/yosys.json";

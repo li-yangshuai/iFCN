@@ -30,6 +30,7 @@
 #include <random>
 #include <any>
 #include <cassert>
+#include <cstdint>
 
 #include <boost/iterator/permutation_iterator.hpp>
 #include <boost/algorithm/apply_permutation.hpp>
@@ -330,18 +331,25 @@ namespace simon {
         std::for_each(begin(layer), end(layer), fn);
     }
 
+    inline std::mt19937 &simulation_random_generator() {
+        static std::mt19937 generator(5489u);
+        return generator;
+    }
+
+    inline void seed_simulation_random_generator(std::uint32_t seed) {
+        simulation_random_generator().seed(seed);
+    }
+
     template<typename Layer, typename Fn>
     inline void foreach_cell_randomly(Layer &layer, Fn &&fn) {
         static std::vector<std::size_t> index;
-        static std::random_device rd;
-        static std::mt19937 g(rd());
 
         index.clear();
         for(std::size_t i=0; i<layer.cells.size(); ++i){
             index.push_back(i);
         }
 
-        std::shuffle(index.begin(), index.end(),g);
+        std::shuffle(index.begin(), index.end(), simulation_random_generator());
         auto first = boost::iterators::make_permutation_iterator(begin(layer), index.begin());
         auto last  = boost::iterators::make_permutation_iterator(begin(layer), index.end());
         std::for_each(first, last, fn);
@@ -410,7 +418,7 @@ namespace simon {
         int layer_index = 0;
         std::array<QCADot, 4> dots;
         std::any extrinsics;
-        QCACellMode cellMode;
+        QCACellMode cellMode = QCACellMode::NORMAL;
     };
 
     GEN_ACCESSING_API(QCACell, name)

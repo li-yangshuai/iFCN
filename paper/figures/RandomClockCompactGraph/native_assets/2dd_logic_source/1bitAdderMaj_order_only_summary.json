@@ -1,0 +1,19 @@
+{
+  "benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj.v",
+  "resolved_benchmark": "/home/lys/projects/github/iFCN/tests/benchmarks_f/MAJ/1bitAdderMaj.v",
+  "parser_safe_generated": false,
+  "mode": "order-only",
+  "crossing_orderer_requested": "ogdf",
+  "crossing_orderer": "ogdf",
+  "crossing_order_metrics": {
+    "orderer": "ogdf",
+    "executable": "/home/lys/projects/github/iFCN/build-ogdf/ifcn_ogdf_layer_order",
+    "kernel_ms": 0.058284,
+    "wall_seconds": 0.0022943670001041028,
+    "ogdf_internal_crossings": 0,
+    "total_seconds": 0.002387242999702721,
+    "adjacent_crossings": 0
+  },
+  "raw_svg": "/home/lys/projects/github/iFCN/paper/figures/RandomClockCompactGraph/native_assets/2dd_logic_source/1bitAdderMaj_raw.svg",
+  "ordered_svg": "/home/lys/projects/github/iFCN/paper/figures/RandomClockCompactGraph/native_assets/2dd_logic_source/1bitAdderMaj.svg"
+}

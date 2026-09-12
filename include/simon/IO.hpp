@@ -503,16 +503,24 @@ namespace x3 = boost::spirit::x3;
     inline bool parse_design(const std::string &design_file_path, QCADesign &design) {
         namespace x3 = boost::spirit::x3;
         std::ifstream ifs(design_file_path);
+        if (!ifs.is_open()) {
+            return false;
+        }
         ifs >> std::noskipws;
 
         std::string content;
         std::copy(std::istream_iterator<char>(ifs), std::istream_iterator<char>(),
                   std::back_inserter(content));
+        if (ifs.bad() || content.empty()) {
+            return false;
+        }
 
         QCADDesignRawData raw_data;
         bool ret = x3::phrase_parse(content.begin(), content.end(),
                                     QCADDesignParser, x3::ascii::space, raw_data);
-        assert(ret);
+        if (!ret) {
+            return false;
+        }
 
         //erase non cell layers
         raw_data.layers.erase(

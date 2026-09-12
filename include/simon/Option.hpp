@@ -23,11 +23,30 @@
 #define      HFUT_SIMON_OPTION_HPP
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include "Util.hpp"
 
 
 namespace simon {
+    class OrderedInteractionGraph;
+    class SimulationTraceRecorder;
+
+    /** Controls semantics-preserving physical graph compilation.
+     *
+     * A precompiled graph is accepted only after an exact geometry and
+     * technology-geometry match.  epsilon_r is deliberately not part of that
+     * match because it is applied when kink energies are materialized.
+     */
+    struct QCAAccelerationOption {
+        bool use_spatial_buckets = true;
+        bool use_clock_cache = true;
+        bool use_input_cache = true;
+        bool use_fused_integration = true;
+        std::size_t cache_budget_bytes = std::size_t{512} * 1024 * 1024;
+        const OrderedInteractionGraph *precompiled_graph = nullptr;
+    };
+
     struct QCABistableOption {
         //tecnology options
         double epsilon_r = 12.9;
@@ -44,6 +63,8 @@ namespace simon {
         std::size_t max_iteration_per_sample = 100;
         double convergence_tolerance = 0.001;
         std::uint32_t random_seed = 5489u;
+        QCAAccelerationOption acceleration;
+        SimulationTraceRecorder *trace_recorder = nullptr;
     };
 
     struct QCACoherenceOption {
@@ -65,6 +86,8 @@ namespace simon {
         NumericMethod algorithm = NumericMethod::Euler;
         double steady_state_tolerance = 1e-7;
         std::size_t max_steady_state_iterations = 100000;
+        QCAAccelerationOption acceleration;
+        SimulationTraceRecorder *trace_recorder = nullptr;
     };
 
     struct EnergyAnalysisOption : QCACoherenceOption {

@@ -415,14 +415,37 @@ int main(int argc,char *argv[])
 
     TabbedMainWindow mainWindow;
     const QString screenshotPath = qEnvironmentVariable("IFCN_UI_SCREENSHOT").trimmed();
-    const QString automaticMappingPath =
+    const auto environmentPath = [](const char *name, const char *legacyName) {
+        const QString preferred = qEnvironmentVariable(name).trimmed();
+        return preferred.isEmpty()
+            ? qEnvironmentVariable(legacyName).trimmed() : preferred;
+    };
+    QString automaticMappingPath =
         qEnvironmentVariable("IFCN_AUTO_MAP_FILE").trimmed();
-    const QString automaticExportPath =
-        qEnvironmentVariable("IFCN_AUTO_EXPORT_CELL_LAYOUT").trimmed();
-    const QString automaticStructure3DExportPath =
-        qEnvironmentVariable("IFCN_AUTO_EXPORT_3D_LAYOUT").trimmed();
-    const QString automaticGraphRenderPath =
-        qEnvironmentVariable("IFCN_AUTO_GRAPH_RENDER_FILE").trimmed();
+    const QString automaticExportPath = environmentPath(
+        "IFCN_AUTO_EXPORT_CELL_LAYOUT", "IFCN_EXPORT_CELL_LAYOUT");
+    const QString automaticStructure3DExportPath = environmentPath(
+        "IFCN_AUTO_EXPORT_3D_LAYOUT", "IFCN_EXPORT_3D_STRUCTURE");
+    const QString automaticSchematicExportPath = environmentPath(
+        "IFCN_AUTO_EXPORT_CIRCUIT_SCHEMATIC", "IFCN_EXPORT_CIRCUIT_SCHEMATIC");
+    const QString automaticGraphRenderPath = environmentPath(
+        "IFCN_AUTO_GRAPH_RENDER_FILE", "IFCN_COMPACT_GRAPH_INPUT");
+    QStringList inputPaths;
+    const QStringList commandLine = app.arguments();
+    for (int index = 1; index < commandLine.size(); ++index) {
+        const QFileInfo input(commandLine[index]);
+        const QString suffix = input.suffix().toLower();
+        if (input.isFile()
+            && (suffix == QStringLiteral("ifcn") || suffix == QStringLiteral("qca"))) {
+            inputPaths.append(input.absoluteFilePath());
+        }
+    }
+    if (automaticMappingPath.isEmpty() && !inputPaths.isEmpty()
+        && (!automaticExportPath.isEmpty()
+            || !automaticStructure3DExportPath.isEmpty()
+            || !automaticSchematicExportPath.isEmpty())) {
+        automaticMappingPath = inputPaths.last();
+    }
     const bool automaticIoContraction =
         qEnvironmentVariableIntValue("IFCN_AUTO_CONTRACT_IO") != 0;
     const bool automaticIoRestore =
@@ -430,14 +453,23 @@ int main(int argc,char *argv[])
     const bool automaticExportRequested =
         !automaticMappingPath.isEmpty()
         || !automaticExportPath.isEmpty()
-        || !automaticStructure3DExportPath.isEmpty();
+        || !automaticStructure3DExportPath.isEmpty()
+        || !automaticSchematicExportPath.isEmpty();
     const bool automaticGraphRenderRequested =
         !automaticGraphRenderPath.isEmpty();
+    if (automaticExportRequested || automaticGraphRenderRequested) {
+        qputenv("IFCN_NONINTERACTIVE", QByteArrayLiteral("1"));
+    }
     if (!screenshotPath.isEmpty() || automaticExportRequested
         || automaticGraphRenderRequested) {
         mainWindow.resize(1600, 900);
     }
     mainWindow.show();
+    if (!automaticExportRequested && !automaticGraphRenderRequested) {
+        for (const QString &inputPath : inputPaths) {
+            mainWindow.openFileInNewTab(inputPath, true);
+        }
+    }
 
     // Non-interactive production Compact Graph run for CI and reproducible
     // paper assets.  The handler itself saves and maps the generated IFCN,
@@ -497,15 +529,17 @@ int main(int argc,char *argv[])
     }
 
     // Non-interactive cell-layout export for offscreen CI and reproducible figures.
-    // Both variables are required; the normal GUI load and export paths are reused.
+    // Reuse the normal load/export paths; command-line input and legacy
+    // export variable names remain supported for existing automation.
     if (automaticExportRequested && !automaticGraphRenderRequested) {
         QTimer::singleShot(0, &mainWindow,
             [&app, &mainWindow, automaticMappingPath, automaticExportPath,
-             automaticStructure3DExportPath, automaticIoContraction,
-             automaticIoRestore, screenshotPath]() {
+             automaticStructure3DExportPath, automaticSchematicExportPath,
+             automaticIoContraction, automaticIoRestore, screenshotPath]() {
                 if (automaticMappingPath.isEmpty()
                     || (automaticExportPath.isEmpty()
-                        && automaticStructure3DExportPath.isEmpty())) {
+                        && automaticStructure3DExportPath.isEmpty()
+                        && automaticSchematicExportPath.isEmpty())) {
                     qCritical() << "IFCN_AUTO_MAP_FILE and at least one automatic export path must be set together.";
                     app.exit(2);
                     return;
@@ -546,7 +580,9 @@ int main(int argc,char *argv[])
                 if (!validateExportPath(automaticExportPath,
                                         QStringLiteral("Cell-level"))
                     || !validateExportPath(automaticStructure3DExportPath,
-                                           QStringLiteral("3D structure"))) {
+                                           QStringLiteral("3D structure"))
+                    || !validateExportPath(automaticSchematicExportPath,
+                                           QStringLiteral("Circuit schematic"))) {
                     return;
                 }
 
@@ -586,6 +622,14 @@ int main(int argc,char *argv[])
                             structureInfo.absoluteFilePath())) {
                         qCritical() << "Failed to export 3D encoded structure to:"
                                     << structureInfo.absoluteFilePath();
+                        app.exit(3);
+                        return;
+                    }
+                }
+                if (!automaticSchematicExportPath.isEmpty()) {
+                    if (!editor->saveCircuitSchematicGraphic(automaticSchematicExportPath)) {
+                        qCritical() << "Failed to export circuit schematic to:"
+                                    << automaticSchematicExportPath;
                         app.exit(3);
                         return;
                     }

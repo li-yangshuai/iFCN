@@ -83,3 +83,7 @@ target_compile_definitions(ifcn_energy_analysis PRIVATE IFCN_PROJECT_SOURCE_DIR=
 
 add_executable(ifcn_physical_benchmark app/ifcn_physical_benchmark.cpp)
 target_link_libraries(ifcn_physical_benchmark PRIVATE simon)
+
+# Headless adapters for the production combinational C++ layout algorithms.
+add_executable(ifcn_combinational_pnr app/ifcn_combinational_pnr.cpp)
+target_link_libraries(ifcn_combinational_pnr PRIVATE autopr ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})

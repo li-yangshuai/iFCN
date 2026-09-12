@@ -1,4 +1,7 @@
 # Prerequisites
+# Local Pi workflow outputs (inputs, waveforms and native backend logs).
+/output/pi-runs/
+/output/pi-validation/
 *.d
 
 # Compiled Object files

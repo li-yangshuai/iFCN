@@ -456,3 +456,8 @@ endif()
 #add_executable(energy EnergyAnalysisUnitTest.cpp)
 #target_link_libraries(energy simon)
 #target_compile_definitions(energy PUBLIC "TESTCASE=\"${CMAKE_CURRENT_SOURCE_DIR}/benchmark\"")
+
+add_test(NAME pi_layout_artifact_validation_regression
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/test_ifcn_agent_layout_validation.py")
+set_tests_properties(pi_layout_artifact_validation_regression PROPERTIES TIMEOUT 15)

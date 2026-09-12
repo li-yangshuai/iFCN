@@ -1,0 +1,62 @@
+#circuit name: xor2
+#algorithm: regular_heuristic_2DDWave
+#mapping mode: combinational
+#primary output nodes: 2
+#phase count: 4
+#clock scheme: 2DDWave
+#clock scheme consistency: success
+#layout area: width: 5, height: 8, area: 40
+#mapped qca cells: 155
+#physical output check: not_run
+#source sha256: a609d8a0cfc61fb3d9e0c5c545009994ee3ec795a533ac3786d8a523d3ed80bf
+#nodes info
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (0,1);
+1, b, input, (1,0);
+2, out, and, (4,7);
+3, w1, and, (3,1);
+4, w2, or, (1,6);
+5, ~w1, not, (4,4);
+#nodes info
+#paths info
+### {node1, node2} : path ###
+(0,3): (0,1),(1,1),(2,1),(3,1);
+(0,4): (0,1),(0,2),(0,3),(0,4),(0,5),(0,6),(1,6);
+(1,3): (1,0),(2,0),(3,0),(3,1);
+(1,4): (1,0),(1,1),(1,2),(1,3),(1,4),(1,5),(1,6);
+(3,5): (3,1),(3,2),(3,3),(3,4),(4,4);
+(4,2): (1,6),(1,7),(2,7),(3,7),(4,7);
+(5,2): (4,4),(4,5),(4,6),(4,7);
+#paths info
+#phase map
+### (x,y) : phase ###
+(1,0):0;
+(2,0):1;
+(3,0):2;
+(0,1):0;
+(1,1):1;
+(2,1):2;
+(3,1):3;
+(0,2):1;
+(1,2):2;
+(3,2):0;
+(0,3):2;
+(1,3):3;
+(3,3):1;
+(0,4):3;
+(1,4):0;
+(3,4):2;
+(4,4):3;
+(0,5):0;
+(1,5):1;
+(4,5):0;
+(0,6):1;
+(1,6):2;
+(4,6):1;
+(1,7):3;
+(2,7):0;
+(3,7):1;
+(4,7):2;
+#phase map
+#fixed clock template original origin: (3, 0)
+#validation limitation: physical output truth has not been tested.

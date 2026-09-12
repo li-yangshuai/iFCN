@@ -2019,7 +2019,8 @@ std::map<std::pair<position, position>, std::vector<std::vector<position>>> Mapp
 }
 
 std::vector<std::vector<position>> Mapping::orderedPhysicalRoutes(
-    const std::vector<std::vector<position>>& coarseRoutes) const
+    const std::vector<std::vector<position>>& coarseRoutes,
+    MappingMode mode) const
 {
     const auto appendAdjacent = [](std::vector<position>& path,
                                    const position& cell) {
@@ -2109,6 +2110,26 @@ std::vector<std::vector<position>> Mapping::orderedPhysicalRoutes(
         includeMappedCells(deviatemapping_list);
         includeMappedCells(crossline_list);
 
+        if (mode == MappingMode::Combinational) {
+            // Combinational template compaction can move a shared tile
+            // boundary away from its center. Check its real geometry instead
+            // of requiring sequential mode's fixed intermediate boundaries.
+            std::unordered_set<position, MappingPositionHash> routeCells;
+            for (const auto& tile : cellsByTile) {
+                routeCells.insert(tile.second.begin(), tile.second.end());
+            }
+            routeCells.insert(sourceBoundary.pos);
+            routeCells.insert(sinkBoundary.pos);
+            try {
+                physicalRoutes.push_back(pathInsideTile(
+                    routeCells, sourceBoundary.pos, sinkBoundary.pos));
+            } catch (const std::runtime_error&) {
+                throw std::runtime_error(
+                    "combinational mapped physical route is disconnected");
+            }
+            continue;
+        }
+
         std::vector<position> path;
         appendAdjacent(path, sourceBoundary.pos);
         for (std::size_t index = 1;
@@ -2136,9 +2157,10 @@ std::vector<std::vector<position>> Mapping::orderedPhysicalRoutes(
 
 std::vector<std::vector<PhysicalCellSite>>
 Mapping::orderedLayerAwarePhysicalRoutes(
-    const std::vector<std::vector<position>>& coarseRoutes) const
+    const std::vector<std::vector<position>>& coarseRoutes,
+    MappingMode mode) const
 {
-    const auto xyRoutes = orderedPhysicalRoutes(coarseRoutes);
+    const auto xyRoutes = orderedPhysicalRoutes(coarseRoutes, mode);
     if (xyRoutes.size() != coarseRoutes.size()) {
         throw std::runtime_error(
             "mapped XY/layer-aware route counts are inconsistent");
@@ -2272,7 +2294,8 @@ Mapping::orderedLayerAwarePhysicalRoutes(
 }
 
 std::set<PhysicalCellSite> Mapping::physicalCellSites(
-    const std::vector<std::vector<position>>& coarseRoutes) const
+    const std::vector<std::vector<position>>& coarseRoutes,
+    MappingMode mode) const
 {
     std::set<PhysicalCellSite> sites;
     for (const auto& bucket : nodecell_list) {
@@ -2280,7 +2303,7 @@ std::set<PhysicalCellSite> Mapping::physicalCellSites(
             sites.emplace(cell, 0);
         }
     }
-    for (const auto& route : orderedLayerAwarePhysicalRoutes(coarseRoutes)) {
+    for (const auto& route : orderedLayerAwarePhysicalRoutes(coarseRoutes, mode)) {
         sites.insert(route.begin(), route.end());
     }
     return sites;
@@ -2378,6 +2401,8 @@ bool Mapping::validate_crossovers(std::string* error) const
 
 //给予门级线路偏移量
 void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
+    if (_oneroutepos_list.size() < 2)
+        throw std::runtime_error("cannot offset a route with fewer than two coordinates");
     std::vector<std::pair<std::pair<unsigned int, unsigned int>, std::string>> RouteDeviate_list;
     std::vector<std::vector<std::pair<std::pair<unsigned int, unsigned int>, std::string>>> temp_list_vector;
     std::vector<std::pair<std::pair<unsigned int, unsigned int>, std::string>> temp_list;
@@ -2427,7 +2452,7 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
                         for (auto &v : temp_list_vector)
                         {
                             int temprepeat = 0;
-                            for (size_t i = 0; i < v.size(); ++i)
+                            for (size_t i = 0; i < v.size() && i + 1 < _oneroutepos_list.size(); ++i)
                             {
                                 if (v[i].first == _oneroutepos_list[i+1])
                                 {
@@ -2448,10 +2473,12 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
                 }
                 if (isFanout)
                 {
-                    for (size_t i = 0; i < temp_list.size(); ++i) 
+                    for (size_t i = 0; i < temp_list.size() && i + 1 < _oneroutepos_list.size(); ++i)
                     {  
                         if (_oneroutepos_list[i+1] == temp_list[i].first) 
                         {  
+                            if (i + 2 == _oneroutepos_list.size())
+                                throw std::runtime_error("route terminates inside an existing fanout wire");
                             if (i != (temp_list.size()-1))
                             {
                                 RouteDeviate_list.push_back(temp_list[i]);
@@ -2493,7 +2520,7 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
                                                 RouteDeviate_list.emplace_back(_oneroutepos_list[i+1], YMIDDLE);
                                                 tempdirection = 0;
                                             }
-                                            else if ((temp_list[i].second == XMYS) && (temp_list[i].second == XSYS))
+                                            else if ((temp_list[i].second == XMYS) || (temp_list[i].second == XSYS))
                                             {
                                                 RouteDeviate_list.emplace_back(_oneroutepos_list[i+1], YSIDE);
                                                 tempdirection = 0;
@@ -2510,6 +2537,8 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
                         } 
                         else
                         {
+                            if (i == 0)
+                                throw std::runtime_error("fanout offset has no common route prefix");
                             std::pair<unsigned int, unsigned int> fanoutpos = temp_list[i-1].first;
                             if (!RouteDeviate_list.empty()){
                                 if ((RouteDeviate_list.back().second == XMIDDLE) || (RouteDeviate_list.back().second == XSIDE))
@@ -2544,7 +2573,7 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
                                             RouteDeviate_list.emplace_back(_oneroutepos_list[i], YMIDDLE);
                                             tempdirection = 0;
                                         }
-                                        else if ((temp_list[i-1].second == XMYS) && (temp_list[i-1].second == XSYS))
+                                        else if ((temp_list[i-1].second == XMYS) || (temp_list[i-1].second == XSYS))
                                         {
                                             RouteDeviate_list.emplace_back(_oneroutepos_list[i], YSIDE);
                                             tempdirection = 0;
@@ -2760,6 +2789,8 @@ void Mapping::routepos_Deviate(std::vector<position>& _oneroutepos_list){
                         }
                         else//后一条边尽量同步前一条的位置
                         {
+                            if (RouteDeviate_list.empty())
+                                throw std::runtime_error("vertical route lost its shared fanout offset");
                             if (RouteDeviate_list.back().second == YSIDE)
                             {
                                 if ((findInVectorPairFirst(deviate_list, *it) == YSIDE)||(findInVectorPairFirst(deviate_list, *it) == XMYS)||(findInVectorPairFirst(deviate_list, *it) == XSYS))
@@ -5834,6 +5865,14 @@ void Mapping::node_mapping(
             {
                 continue;
             }
+            // A primary-output alias may also feed downstream logic. Keep
+            // its passive center observation cell and materialize every
+            // outgoing arm; terminal status does not end the logical net.
+            // The port helper only fills existing node-tile half-wires.
+            for (const position& outputPort : node.second.second)
+            {
+                mapSequentialTerminalPort(temppos, temppos1, outputPort);
+            }
         }
         else if (node.first.second == "maj")
         {
@@ -5846,6 +5885,43 @@ void Mapping::node_mapping(
             nodecell_list["normal"].emplace_back(temppos1.first+1, temppos1.second+2);
             nodecell_list["normal"].emplace_back(temppos1.first+3, temppos1.second+2);
             nodecell_list["normal"].emplace_back(temppos1.first+4, temppos1.second+2);
+            if (node.second.second.empty())
+            {
+                // A leaf majority still has its fourth, passive output arm.
+                // Observe that existing endpoint without adding a cell or
+                // changing the three-input majority template.
+                std::set<int> inputDirections;
+                for (const position& inputPort : node.second.first)
+                {
+                    if (inputPort.second == temppos.second && inputPort.first < temppos.first)
+                        inputDirections.insert(0);
+                    else if (inputPort.second == temppos.second && inputPort.first > temppos.first)
+                        inputDirections.insert(1);
+                    else if (inputPort.first == temppos.first && inputPort.second < temppos.second)
+                        inputDirections.insert(2);
+                    else if (inputPort.first == temppos.first && inputPort.second > temppos.second)
+                        inputDirections.insert(3);
+                    else
+                        throw std::runtime_error("Majority input does not use a cardinal gate port");
+                }
+                if (node.second.first.size() != 3 || inputDirections.size() != 3)
+                    throw std::runtime_error("Leaf majority requires three distinct input ports");
+                const position armEnds[] = {
+                    {temppos1.first, temppos1.second+2},
+                    {temppos1.first+4, temppos1.second+2},
+                    {temppos1.first+2, temppos1.second},
+                    {temppos1.first+2, temppos1.second+4}};
+                for (int direction = 0; direction < 4; ++direction)
+                {
+                    if (inputDirections.count(direction) != 0) continue;
+                    auto& normalCells = nodecell_list["normal"];
+                    const auto endpoint = std::find(normalCells.begin(), normalCells.end(), armEnds[direction]);
+                    if (endpoint == normalCells.end())
+                        throw std::runtime_error("Leaf majority output endpoint is missing from its template");
+                    normalCells.erase(endpoint);
+                    nodecell_list["output"].push_back(armEnds[direction]);
+                }
+            }
         }
         else if (node.first.second == "and")
         {

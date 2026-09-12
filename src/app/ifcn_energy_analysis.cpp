@@ -16,7 +16,9 @@
 #include <vector>
 
 #include <autopr/algorithms/mapping.h>
+#include <autopr/algorithms/phase_codec.h>
 #include <autopr/io/ifcnMappingMetadata.h>
+#include <autopr/io/ifcnPrimaryOutputs.h>
 #include <simon/simon.hpp>
 
 namespace {
@@ -28,13 +30,10 @@ using fcngraph::PhysicalCellSite;
 using fcngraph::IfcnMappingModeResolver;
 using fcngraph::position;
 
-struct NodeInfo {
-    std::string name;
-    std::string type;
-    position pos{0, 0};
-};
+using NodeInfo = fcngraph::IfcnObservationNode;
 
 struct LayoutData {
+    fcngraph::IfcnPrimaryOutputMetadata primaryOutputs;
     std::map<int, NodeInfo> nodes;
     std::map<std::pair<int, int>, std::vector<position>> routes;
     std::map<std::pair<int, int>, unsigned int> iterationDistances;
@@ -67,11 +66,6 @@ struct Cell {
     CellMode mode = CellMode::Normal;
     std::string name;
     double fixedPolarization = 0.0;
-};
-
-struct ShiftedPosition {
-    position pos{0, 0};
-    bool valid = false;
 };
 
 struct EnergyRunOptions {
@@ -219,23 +213,6 @@ std::string lowerCopy(std::string value)
     return value;
 }
 
-ShiftedPosition shiftedPosition(const position &base, int dx, int dy)
-{
-    const long long x = static_cast<long long>(base.first) + dx;
-    const long long y = static_cast<long long>(base.second) + dy;
-    const long long maxCoord = static_cast<long long>(std::numeric_limits<unsigned int>::max());
-    if (x < 0 || y < 0 || x > maxCoord || y > maxCoord) {
-        return {};
-    }
-    return {{static_cast<unsigned int>(x), static_cast<unsigned int>(y)}, true};
-}
-
-bool containsPosition(const std::unordered_set<position, MappingPositionHash> &positions,
-                      const ShiftedPosition &candidate)
-{
-    return candidate.valid && positions.find(candidate.pos) != positions.end();
-}
-
 LayoutData parseIfcn(const std::string &filename)
 {
     std::ifstream input(filename);
@@ -246,12 +223,22 @@ LayoutData parseIfcn(const std::string &filename)
     LayoutData data;
     std::string line;
     std::string section;
+    int codecPhaseCount = 4;
+    int codecBlockSize = 4;
+    bool packedPhasesSeen = false;
 
     const std::regex nodePattern(
         R"(^\s*(\d+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*\((-?\d+),(-?\d+)\)\s*;)");
     const std::regex routePattern(R"(^\s*\((\d+),(\d+)\)\s*:\s*(.*);)");
     const std::regex coordPattern(R"(\((-?\d+),(-?\d+)\))");
     const std::regex phasePattern(R"(\((-?\d+),(-?\d+)\)\s*:\s*(-?\d+)\s*;)");
+    const std::regex codecKeyPattern(R"(^\s*#\s*phase\s+codec\b.*$)", std::regex::icase);
+    const std::regex codecPhaseCountPattern(R"(phase_count\s*=\s*(\d+))");
+    const std::regex codecBlockSizePattern(R"(block_size\s*=\s*(\d+))");
+    const std::regex codecEncodingPattern(R"(encoding\s*=\s*([A-Za-z0-9_]+))");
+    const std::regex packedTilePattern(
+        R"(^\s*tile\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*:\s*(?:0[xX])?([0-9a-fA-F]+)\s*;\s*$)");
+    const std::regex packedTileKeyPattern(R"(^\s*tile\b.*$)", std::regex::icase);
     const std::regex physicalPhaseSectionPattern(
         R"(^\s*#\s*physical\s+phase\s+map\s*$)", std::regex::icase);
     const std::regex physicalPhaseSectionKeyPattern(
@@ -298,6 +285,11 @@ LayoutData parseIfcn(const std::string &filename)
 
     while (std::getline(input, line)) {
         if (line.find_first_not_of(" \t\r\n") == std::string::npos) {
+            continue;
+        }
+        if (data.primaryOutputs.observeLine(line)) {
+            if (!section.empty())
+                throw std::runtime_error("IFCN primary output declaration must precede data sections");
             continue;
         }
         std::smatch metadataMatch;
@@ -390,6 +382,26 @@ LayoutData parseIfcn(const std::string &filename)
             data.exactPhysicalPhaseTrace = true;
             continue;
         }
+        if (std::regex_match(line, codecKeyPattern)) {
+            if (!std::regex_search(line, metadataMatch, codecPhaseCountPattern)) {
+                throw std::runtime_error("phase codec requires phase_count");
+            }
+            codecPhaseCount = std::stoi(metadataMatch[1].str());
+            if (!std::regex_search(line, metadataMatch, codecBlockSizePattern)) {
+                throw std::runtime_error("phase codec requires block_size");
+            }
+            codecBlockSize = std::stoi(metadataMatch[1].str());
+            if ((codecPhaseCount != 3 && codecPhaseCount != 4) ||
+                (codecBlockSize != 3 && codecBlockSize != 4)) {
+                throw std::runtime_error("phase codec phase_count and block_size must be 3 or 4");
+            }
+            if (std::regex_search(line, metadataMatch, codecEncodingPattern) &&
+                metadataMatch[1].str() != "packed_hex_2bit_row_major") {
+                throw std::runtime_error("unsupported phase codec encoding");
+            }
+            packedPhasesSeen = true;
+            continue;
+        }
         if (std::regex_match(line, physicalPhaseTraceKeyPattern)) {
             throw std::runtime_error(
                 "malformed or unsupported IFCN physical phase trace declaration");
@@ -454,7 +466,8 @@ LayoutData parseIfcn(const std::string &filename)
             section = (section == "paths") ? "" : "paths";
             continue;
         }
-        if (line.rfind("#phase map", 0) == 0) {
+        if (line.rfind("#phase map", 0) == 0 ||
+            line.rfind("#encoded phase map", 0) == 0) {
             rejectDanglingDistance();
             section = (section == "phase") ? "" : "phase";
             continue;
@@ -494,6 +507,30 @@ LayoutData parseIfcn(const std::string &filename)
             }
             pendingIterationDistance.reset();
         } else if (section == "phase") {
+            if (std::regex_match(line, packedTileKeyPattern)) {
+                if (!std::regex_match(line, match, packedTilePattern)) {
+                    throw std::runtime_error("malformed packed phase tile: " + line);
+                }
+                const auto tileX = std::stoull(match[1].str());
+                const auto tileY = std::stoull(match[2].str());
+                const auto maxCoordinate = std::numeric_limits<unsigned int>::max();
+                if (tileX > (maxCoordinate - codecBlockSize + 1ULL) / codecBlockSize ||
+                    tileY > (maxCoordinate - codecBlockSize + 1ULL) / codecBlockSize) {
+                    throw std::runtime_error("packed phase tile coordinate is out of range");
+                }
+                const auto matrix = fcngraph::phase_codec::decodePackedHexToMatrix(
+                    match[3].str(), codecPhaseCount, codecBlockSize);
+                for (int row = 0; row < codecBlockSize; ++row) {
+                    for (int column = 0; column < codecBlockSize; ++column) {
+                        const position coordinate{
+                            static_cast<unsigned int>(tileX * codecBlockSize + column),
+                            static_cast<unsigned int>(tileY * codecBlockSize + row)};
+                        data.phases[coordinate] = matrix[row][column];
+                    }
+                }
+                packedPhasesSeen = true;
+                continue;
+            }
             for (auto it = std::sregex_iterator(line.begin(), line.end(), phasePattern);
                  it != std::sregex_iterator();
                  ++it) {
@@ -511,6 +548,25 @@ LayoutData parseIfcn(const std::string &filename)
     const fcngraph::IfcnMappingModeResolution modeResolution =
         mappingModeResolver.resolve();
     data.mappingMode = modeResolution.mode;
+    if (packedPhasesSeen) {
+        // A partial packed map must not silently assign phase zero to an
+        // uncovered circuit tile, the original failure for Legacy exports.
+        const auto requirePhase = [&](const position &tile) {
+            if (data.phases.count(tile) == 0) {
+                throw std::runtime_error("packed phase map is missing occupied tile (" +
+                                         std::to_string(tile.first) + "," +
+                                         std::to_string(tile.second) + ")");
+            }
+        };
+        for (const auto &[index, node] : data.nodes) {
+            (void)index;
+            requirePhase(node.pos);
+        }
+        for (const auto &[edge, path] : data.routes) {
+            (void)edge;
+            for (const position &tile : path) requirePhase(tile);
+        }
+    }
     if (modeResolution.explicitMode &&
         data.mappingMode == MappingMode::Sequential &&
         routesWithExplicitDistance.size() != data.routes.size()) {
@@ -685,6 +741,10 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data,
     if (!mapping.validate_crossovers(&crossoverError)) {
         throw std::runtime_error("invalid crossover mapping: " + crossoverError);
     }
+    // Run connectivity and exact-layer source ownership DRC for both mapping
+    // modes, before optional I/O contraction changes the public cell sets.
+    const std::set<PhysicalCellSite> validatedPhysicalSites =
+        mapping.physicalCellSites(routePaths, data.mappingMode);
     if (contractIoPorts) {
         mapping.contract_io_ports(nodeLinks, routeCellsByPath);
     }
@@ -757,13 +817,10 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data,
         }
     }
 
-    if (data.mappingMode == MappingMode::Sequential) {
-        // Mapping owns the sequential topology contract.  Its ordered physical
-        // routes split crossover ownership per route, put a full L0/L1/L2
-        // pillar at both ends of every maximal lifted run, and reject an exact
-        // layer site shared by routes with different sources.
-        std::set<PhysicalCellSite> physicalSites =
-            mapping.physicalCellSites(routePaths);
+    {
+        // Export the exact topology accepted by DRC in both modes. Per-route
+        // crossover ownership determines pillars at each lifted run boundary.
+        std::set<PhysicalCellSite> physicalSites = validatedPhysicalSites;
 
         // I/O contraction edits the public node/route cell sets after the
         // ordered routes have been constructed.  Retain only XY coordinates
@@ -801,7 +858,7 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data,
             const std::set<int> &layers = entry.second;
             if (layers.count(1) != 0 && layers != std::set<int>{0, 1, 2}) {
                 throw std::runtime_error(
-                    "invalid sequential vertical stack at (" +
+                    "invalid mapped vertical stack at (" +
                     std::to_string(entry.first.first) + "," +
                     std::to_string(entry.first.second) + ")");
             }
@@ -815,75 +872,6 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data,
                                              : CellMode::Normal);
             addCell(cells, data, site.xy, site.layer,
                     CellFunction::Normal, mode);
-        }
-    } else {
-        // Preserve the historical combinational exporter, including its
-        // global-neighbour endpoint treatment.
-        std::unordered_set<position, MappingPositionHash> crossCellSet;
-        std::unordered_set<position, MappingPositionHash> verticalCellSet;
-        std::map<std::pair<position, position>,
-                 std::unordered_set<position, MappingPositionHash>>
-            crossCellsByRoute;
-        auto addVerticalStack = [&](const position &cell) {
-            addCell(cells, data, cell, 0, CellFunction::Normal, CellMode::Vertical);
-            addCell(cells, data, cell, 1, CellFunction::Normal, CellMode::Vertical);
-            addCell(cells, data, cell, 2, CellFunction::Normal, CellMode::Vertical);
-            verticalCellSet.insert(cell);
-        };
-        for (const auto &crossLine : crossCellsByPath) {
-            for (const auto &cross : crossLine.second) {
-                crossCellSet.insert(cross.begin(), cross.end());
-                crossCellsByRoute[crossLine.first].insert(cross.begin(), cross.end());
-            }
-        }
-
-        for (const auto &crossLine : crossCellsByPath) {
-            for (const auto &cross : crossLine.second) {
-                for (auto unit = cross.begin(); unit != cross.end(); ++unit) {
-                    if (unit == cross.begin() || std::next(unit) == cross.end()) {
-                        int count = 0;
-                        const position base = *unit;
-                        const auto dir1 = shiftedPosition(base, 0, 1);
-                        const auto dir2 = shiftedPosition(base, 0, -1);
-                        const auto dir3 = shiftedPosition(base, -1, 0);
-                        const auto dir4 = shiftedPosition(base, 1, 0);
-                        count += containsPosition(crossCellSet, dir1) ? 1 : 0;
-                        count += containsPosition(crossCellSet, dir2) ? 1 : 0;
-                        count += containsPosition(crossCellSet, dir3) ? 1 : 0;
-                        count += containsPosition(crossCellSet, dir4) ? 1 : 0;
-
-                        if (count >= 2) {
-                            addCell(cells, data, *unit, 2,
-                                    CellFunction::Normal, CellMode::Crossover);
-                        } else {
-                            addVerticalStack(*unit);
-                        }
-                    } else {
-                        addCell(cells, data, *unit, 2,
-                                CellFunction::Normal, CellMode::Crossover);
-                    }
-                }
-            }
-        }
-
-        for (const auto &line : routeCellsByPath) {
-            const auto routeCrossIt = crossCellsByRoute.find(line.first);
-            for (const auto &segment : line.second) {
-                for (const position &pos : segment) {
-                    if (verticalCellSet.find(pos) != verticalCellSet.end()) {
-                        continue;
-                    }
-
-                    const bool routeOwnsCrossCell =
-                        routeCrossIt != crossCellsByRoute.end()
-                        && routeCrossIt->second.find(pos) != routeCrossIt->second.end();
-                    if (routeOwnsCrossCell) {
-                        continue;
-                    }
-
-                    addCell(cells, data, pos, 0, CellFunction::Normal);
-                }
-            }
         }
     }
 
@@ -937,6 +925,28 @@ std::vector<Cell> mapIfcnToCells(const LayoutData &data,
                         std::to_string(std::get<2>(site)) + ")");
                 }
             }
+        }
+    }
+
+    if (data.primaryOutputs.isExplicit()) {
+        const auto outputCells = fcngraph::resolveIfcnPrimaryOutputCells(
+            data.primaryOutputs, data.nodes, data.routes, mapping);
+        // The declaration is authoritative: terminal topology alone cannot
+        // distinguish a primary output from an unused internal sink.
+        for (Cell &cell : uniqueCells) {
+            if (cell.function == CellFunction::Output) {
+                cell.function = CellFunction::Normal;
+                cell.name.clear();
+            }
+        }
+        for (const auto &[site, name] : outputCells) {
+            const auto cell = std::find_if(uniqueCells.begin(), uniqueCells.end(),
+                [&](const Cell &value) { return value.layer == 0 && value.pos == site; });
+            if (cell == uniqueCells.end() || cell->function != CellFunction::Normal)
+                throw std::runtime_error("mapped primary output observation cell is unavailable or not passive: " + name);
+            cell->function = CellFunction::Output;
+            cell->name = name;
+            if (!cell->name.empty() && cell->name.front() == '\\') cell->name.erase(cell->name.begin());
         }
     }
 

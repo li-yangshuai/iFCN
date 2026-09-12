@@ -1,0 +1,45 @@
+#circuit name: toggle_ff_cut
+#mapping mode: sequential
+#flow: sequential register-cut P&R v0
+#status: sequential-aware abstract state boundary
+#phase count: 4
+#phase granularity: tile
+#tile phase drc scope: ordered_route_tiles
+#max same phase tiles: 4
+#observed max same phase tile run: 4
+#initiation interval epochs: 4
+#mapped unique xy sites: 54
+#mapped qca cells: 54
+#mapped layer cell records: 54
+#state arc: d(t) -> q(t+1), distance=1, latency=0
+
+#nodes info
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, q, input, (4,4);
+1, d, output, (4,14);
+2, ~q, not, (4,9);
+#nodes info
+
+#paths info
+### {node1, node2} : path ###
+#iteration_distance=0
+(0,2): (4,4),(4,5),(4,6),(4,7),(4,8),(4,9);
+#iteration_distance=0
+(2,1): (4,9),(4,10),(4,11),(4,12),(4,13),(4,14);
+#paths info
+
+#phase map
+### authoritative tile clock map; every mapped QCA cell inherits its tile phase ###
+### tile clock resource (x,y) : zero-based phase ###
+(4,4): 0;
+(4,5): 1;
+(4,6): 2;
+(4,7): 3;
+(4,8): 3;
+(4,9): 3;
+(4,10): 3;
+(4,11): 0;
+(4,12): 0;
+(4,13): 0;
+(4,14): 0;
+#phase map

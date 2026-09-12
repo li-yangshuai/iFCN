@@ -1,41 +1,15 @@
 #include "legacyGraphvizRenderer.h"
+#include "graphvizRuntime.h"
 
 #include <graphviz/gvc.h>
 
 #include <cmath>
 #include <map>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 
 namespace fcngraph {
 namespace {
-
-std::mutex &graphvizMutex()
-{
-    static std::mutex mutex;
-    return mutex;
-}
-
-struct GraphvizResources
-{
-    GVC_t *context = nullptr;
-    Agraph_t *graph = nullptr;
-    bool hasLayout = false;
-
-    ~GraphvizResources()
-    {
-        if (hasLayout && context != nullptr && graph != nullptr) {
-            gvFreeLayout(context, graph);
-        }
-        if (graph != nullptr) {
-            agclose(graph);
-        }
-        if (context != nullptr) {
-            gvFreeContext(context);
-        }
-    }
-};
 
 struct GraphvizRenderBuffer
 {
@@ -108,9 +82,8 @@ LegacyGraphvizResult renderLegacyGraphviz(Parse &parse,
                                           const LegacyGraphvizOptions &options)
 {
     LegacyGraphvizResult result;
-    std::lock_guard<std::mutex> lock(graphvizMutex());
-
     try {
+        detail::GraphvizSession session;
         const auto &layerNodes = parse.getlayerNodeDivVec();
         std::size_t nodeCount = 0;
         for (const auto &layer : layerNodes) {
@@ -121,12 +94,7 @@ LegacyGraphvizResult renderLegacyGraphviz(Parse &parse,
             return result;
         }
 
-        GraphvizResources resources;
-        resources.context = gvContext();
-        if (resources.context == nullptr) {
-            result.error = "Graphviz could not create a layout context.";
-            return result;
-        }
+        detail::GraphvizGraph resources(session);
 
         resources.graph = agopen(const_cast<char *>("G"), Agdirected, nullptr);
         if (resources.graph == nullptr) {
@@ -189,11 +157,10 @@ LegacyGraphvizResult renderLegacyGraphviz(Parse &parse,
                       const_cast<char *>("ortho"), const_cast<char *>(""));
         }
 
-        if (gvLayout(resources.context, resources.graph, "dot") != 0) {
+        if (resources.layout("dot") != 0) {
             result.error = "Graphviz DOT could not lay out the circuit.";
             return result;
         }
-        resources.hasLayout = true;
 
         for (const auto &entry : nodes) {
             const pointf coordinate = ND_coord(entry.second);

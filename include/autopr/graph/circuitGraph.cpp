@@ -1,10 +1,14 @@
 #include "circuitGraph.h"
+#include "graphvizRuntime.h"
+#include "autopr/algorithms/combinationalClock.h"
+#include "autopr/algorithms/combinationalValidation.h"
 #include "autopr/algorithms/mapping.h"
 #include "autopr/algorithms/phaseSolver.h"
 #include "autopr/algorithms/astarwithphase.h"
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <random>
 #include <set>
 #include <tuple>
@@ -416,11 +420,14 @@ namespace fcngraph
     void CircuitGraph::processAndGenerateGraph(bool printSVG, bool showCircuitLabel, bool isBox, bool isOGD)
     {
         node_positions.clear();
-        if (gvc == nullptr)
+        detail::GraphvizSession session;
+        detail::GraphvizGraph resources(session);
+        resources.graph = agopen(const_cast<char *>("G"), Agdirected, nullptr);
+        Agraph_t *A = resources.graph;
+        if (A == nullptr)
         {
-            gvc = gvContext();
+            throw std::runtime_error("Graphviz could not create a directed graph.");
         }
-        Agraph_t *A = agopen(const_cast<char *>("G"), Agdirected, nullptr);
         const auto &layerNodes = parse.getlayerNodeDivVec();
         const auto &edges = parse.getEffectiveEdges();
 
@@ -432,24 +439,46 @@ namespace fcngraph
             {
                 std::string node_str = std::to_string(node_index);
                 Agnode_t *node = agnode(A, const_cast<char *>(node_str.c_str()), 1);
+                if (node == nullptr)
+                {
+                    throw std::runtime_error("Graphviz failed to create node " + node_str + ".");
+                }
                 node_map[node_index] = node;
             }
+        }
+        if (node_map.empty())
+        {
+            throw std::runtime_error("The parsed circuit contains no drawable nodes.");
         }
 
         // 添加边到图中
         for (const auto &edge : edges)
         {
-            Agnode_t *node1 = node_map[edge.first];
-            Agnode_t *node2 = node_map[edge.second];
-            agedge(A, node1, node2, nullptr, 1);
+            const auto source = node_map.find(edge.first);
+            const auto sink = node_map.find(edge.second);
+            if (source == node_map.end() || sink == node_map.end())
+            {
+                throw std::runtime_error("The circuit contains an edge outside its logic layers.");
+            }
+            if (agedge(A, source->second, sink->second, nullptr, 1) == nullptr)
+            {
+                throw std::runtime_error("Graphviz failed to create a circuit edge.");
+            }
         }
 
         for (size_t i = 0; i < layerNodes.size(); ++i)
         {
             Agraph_t *subgraph = agsubg(A, const_cast<char *>(("layer" + std::to_string(i)).c_str()), TRUE);
+            if (subgraph == nullptr)
+            {
+                throw std::runtime_error("Graphviz failed to create a circuit rank group.");
+            }
             for (int node : layerNodes[i])
             {
-                agsubnode(subgraph, node_map[node], TRUE);
+                if (agsubnode(subgraph, node_map.at(node), TRUE) == nullptr)
+                {
+                    throw std::runtime_error("Graphviz failed to populate a circuit rank group.");
+                }
             }
             agsafeset(subgraph, const_cast<char *>("rank"), const_cast<char *>("same"), const_cast<char *>("same"));
         }
@@ -544,36 +573,45 @@ namespace fcngraph
         agsafeset(A, const_cast<char *>("ranksep"), const_cast<char *>("1"), const_cast<char *>(""));
 
         // 进行布局计算
-        gvLayout(gvc, A, "dot");
+        if (resources.layout("dot") != 0)
+        {
+            throw std::runtime_error("Graphviz DOT could not lay out the circuit.");
+        }
 
         // 获取每个节点的坐标,svg图中的坐标
+        decltype(node_positions) positions;
+        positions.reserve(node_map.size());
         for (const auto &node_graphNode : node_map)
         {
             pointf pos = ND_coord(node_graphNode.second);
+            if (!std::isfinite(pos.x) || !std::isfinite(pos.y))
+            {
+                throw std::runtime_error("Graphviz returned a non-finite node coordinate.");
+            }
             auto position = std::make_pair(static_cast<double>(pos.x), static_cast<double>(pos.y));
-            node_positions.push_back({node_graphNode.first, position});
+            positions.push_back({node_graphNode.first, position});
         }
 
         if (printSVG)
         {
             // 将图形输出为SVG格式的字符串
             std::string moduleName = fileName + ".svg";
-            FILE *fp = fopen(moduleName.c_str(), "w");
-            if (fp)
+            const auto closeFile = [](FILE *file) { fclose(file); };
+            std::unique_ptr<FILE, decltype(closeFile)> fp(fopen(moduleName.c_str(), "w"), closeFile);
+            if (!fp)
             {
-                gvRender(gvc, A, "svg", fp);
-                fclose(fp);
+                throw std::runtime_error("Could not open SVG file " + moduleName + " for writing.");
             }
-            else
+            if (gvRender(resources.context, A, "svg", fp.get()) != 0)
             {
-                std::cerr << "Error: Could not open file " << moduleName << " for writing." << std::endl;
+                throw std::runtime_error("Graphviz could not render the circuit as SVG.");
+            }
+            if (fclose(fp.release()) != 0)
+            {
+                throw std::runtime_error("Could not finish writing SVG file " + moduleName + ".");
             }
         }
-
-        gvFreeLayout(gvc, A);
-        gvFreeContext(gvc);
-        gvc = nullptr;
-        agclose(A);
+        node_positions.swap(positions);
     }
 
     void CircuitGraph::sortNodesByYThenXCoordinate(double grid_size,
@@ -1060,46 +1098,20 @@ namespace fcngraph
             shuffledRouteOrderRetries, nullptr, true, 6);
     }
 
-    bool CircuitGraph::validateLegacyMappedLayout()
+    bool CircuitGraph::validateMappedRoutePorts(bool constrainIoRows)
     {
-            unsigned int inputRow = std::numeric_limits<unsigned int>::max();
-            unsigned int outputRow = 0;
-            bool hasInput = false;
-            bool hasOutput = false;
-            const auto &primaryOutputs = parse.getOutputNodesIndex();
-            const auto isBoundaryOutput = [this, &primaryOutputs](int node) {
-                return primaryOutputs.count(static_cast<unsigned int>(node)) != 0 &&
-                       parse.getFanoutsIndex(static_cast<unsigned int>(node)).empty();
-            };
-
-            for (const auto &node : nodeIndex_pos)
-            {
-                if (parse.getNodeType(node.first) == "input")
-                {
-                    inputRow = std::min(inputRow, node.second.second);
-                    hasInput = true;
+            // Primary I/O alignment is a placement preference, not a DRC.
+            // A legal detour may leave those rows; all seeds share the same
+            // physical port, crossover and clock checks during refinement.
+            if (constrainIoRows) {
+                unsigned int inputRow = std::numeric_limits<unsigned int>::max(), outputRow = 0;
+                for (const auto& node : nodeIndex_pos) {
+                    if (parse.getNodeType(node.first) == "input") inputRow = std::min(inputRow, node.second.second);
+                    if (parse.getOutputNodesIndex().count(node.first) && parse.getFanoutsIndex(node.first).empty())
+                        outputRow = std::max(outputRow, node.second.second);
                 }
-                if (isBoundaryOutput(node.first))
-                {
-                    outputRow = std::max(outputRow, node.second.second);
-                    hasOutput = true;
-                }
-            }
-
-            if (!hasInput || !hasOutput)
-            {
-                return true;
-            }
-
-            for (const auto &route : routes)
-            {
-                for (const position &cell : route.second)
-                {
-                    if (cell.second < inputRow || cell.second > outputRow)
-                    {
-                        return false;
-                    }
-                }
+                for (const auto& route : routes) for (const auto point : route.second)
+                    if (point.second < inputRow || point.second > outputRow) return false;
             }
 
             NodeLinkMap nodeLinks;
@@ -1184,7 +1196,7 @@ namespace fcngraph
                 {
                     for (const auto &owner : owners->second)
                     {
-                        if (owner != record.key)
+                        if (owner.first != record.key.first)
                         {
                             return false;
                         }
@@ -1210,26 +1222,45 @@ namespace fcngraph
             return cellMapping.validate_crossovers(&mappingError);
     }
 
-    bool CircuitGraph::placeAndRouteLegacyFast()
+    bool CircuitGraph::routeGraphPlacement(int phaseCount)
     {
-        const auto acceptsLegacyMapping = [this]() {
-            return validateLegacyMappedLayout();
+        const auto run = [&](bool constrainIo) {
+            const auto accept = [&]() {
+                return validateMappedRoutePorts(constrainIo) &&
+                       (phaseCount <= 0 || assignPhases(phaseCount, 4));
+            };
+            return placeAndRouteInternal(8, nullptr, true, 7, accept) && accept();
         };
-
-        // Candidate generation is intentionally bounded: the controller
-        // explores many elastic and regular seeds, then performs the costly
-        // transactional single-node refinement only on the winner.  Seven
-        // deterministic route policies plus eight seeded repairs retain the
-        // version1.2 route-order coverage without compacting every seed.
-        if (!placeAndRouteInternal(
-                8, nullptr, true, 7, acceptsLegacyMapping))
-        {
-            return false;
+        if (nodeIndex_pos.empty() || cancellationRequested()) return false;
+        if (astar.searchBoundsEnabled()) return run(false);
+        // Sequential routing retains its own feedback and boundary policy.
+        if (phaseCount <= 0) return run(true);
+        position minimum{std::numeric_limits<unsigned int>::max(), std::numeric_limits<unsigned int>::max()};
+        position maximum{0,0};
+        for (const auto& node : nodeIndex_pos) {
+            minimum.first = std::min(minimum.first, node.second.first);
+            minimum.second = std::min(minimum.second, node.second.second);
+            maximum.first = std::max(maximum.first, node.second.first);
+            maximum.second = std::max(maximum.second, node.second.second);
         }
-        return validateLegacyMappedLayout();
+        // Try compact route envelopes before permitting long detours. Clock
+        // closure participates in route-order acceptance when requested.
+        for (unsigned int margin : {0u, 1u, 2u}) {
+            if (cancellationRequested()) return false;
+            astar.setSearchBounds(
+                {minimum.first > margin ? minimum.first-margin : 0,
+                 minimum.second > margin ? minimum.second-margin : 0},
+                {maximum.first+margin, maximum.second+margin});
+            bool routed = false;
+            try { routed = run(false); }
+            catch (...) { astar.clearSearchBounds(); throw; }
+            astar.clearSearchBounds();
+            if (routed) return true;
+        }
+        return !cancellationRequested() && run(true);
     }
 
-    bool CircuitGraph::refineLegacyMappedLayout(
+    bool CircuitGraph::compactMappedLayout(
         int phaseCount,
         int maxRounds,
         int maxEvaluatedMoves,
@@ -1244,7 +1275,7 @@ namespace fcngraph
         struct LayoutScore
         {
             int area = std::numeric_limits<int>::max();
-            int usedCells = std::numeric_limits<int>::max();
+            int physicalCells = std::numeric_limits<int>::max();
             int routeLength = std::numeric_limits<int>::max();
             int bends = std::numeric_limits<int>::max();
             int centerDistance = std::numeric_limits<int>::max();
@@ -1270,7 +1301,7 @@ namespace fcngraph
         }
 
         grid_positions = nodeIndex_pos;
-        if (!validateLegacyMappedLayout())
+        if (!validateMappedRoutePorts())
         {
             return false;
         }
@@ -1309,7 +1340,7 @@ namespace fcngraph
                 : centerTwice - doubled);
         };
 
-        const auto scoreLayout = [this, anchorCenterXTwice,
+        const auto scoreLayout = [this, phaseCount, anchorCenterXTwice,
                                   anchorCenterYTwice, &doubledDistance]() {
             LayoutScore score;
             bool initialized = false;
@@ -1377,7 +1408,8 @@ namespace fcngraph
             const int width = static_cast<int>(maxX - minX + 1);
             const int height = static_cast<int>(maxY - minY + 1);
             score.area = width * height;
-            score.usedCells = static_cast<int>(used.size());
+            score.physicalCells = static_cast<int>(
+                validateCombinationalLayout(parse, *this, phaseCount, 4).physicalCells);
             score.maxDimension = std::max(width, height);
             return score;
         };
@@ -1412,80 +1444,11 @@ namespace fcngraph
 
         const auto placementLegal = [this]() {
             std::set<position> occupied;
-            unsigned int inputRow = std::numeric_limits<unsigned int>::max();
-            unsigned int outputRow = std::numeric_limits<unsigned int>::max();
-            bool hasInput = false;
-            bool hasOutput = false;
-            const auto &primaryOutputs = parse.getOutputNodesIndex();
-            const auto isBoundaryOutput = [this, &primaryOutputs](int node) {
-                return primaryOutputs.count(static_cast<unsigned int>(node)) != 0 &&
-                       parse.getFanoutsIndex(static_cast<unsigned int>(node)).empty();
-            };
-
-            for (const auto &node : nodeIndex_pos)
-            {
-                if (!occupied.insert(node.second).second)
-                {
-                    return false;
-                }
-                if (parse.getNodeType(node.first) == "input")
-                {
-                    if (!hasInput)
-                    {
-                        inputRow = node.second.second;
-                        hasInput = true;
-                    }
-                    else if (node.second.second != inputRow)
-                    {
-                        return false;
-                    }
-                }
-                if (isBoundaryOutput(node.first))
-                {
-                    if (!hasOutput)
-                    {
-                        outputRow = node.second.second;
-                        hasOutput = true;
-                    }
-                    else if (node.second.second != outputRow)
-                    {
-                        return false;
-                    }
-                }
-            }
-
-            if (hasInput && hasOutput && inputRow >= outputRow)
-            {
-                return false;
-            }
-            for (const auto &node : nodeIndex_pos)
-            {
-                const bool isInput = parse.getNodeType(node.first) == "input";
-                const bool isOutput = isBoundaryOutput(node.first);
-                if (hasInput && !isInput && node.second.second <= inputRow)
-                {
-                    return false;
-                }
-                if (hasOutput && !isOutput && node.second.second >= outputRow)
-                {
-                    return false;
-                }
-            }
-
-            for (const auto &edge : parse.getEffectiveEdges())
-            {
-                const auto source = nodeIndex_pos.find(edge.first);
-                const auto sink = nodeIndex_pos.find(edge.second);
-                if (source == nodeIndex_pos.end() || sink == nodeIndex_pos.end())
-                {
-                    return false;
-                }
-                if (parse.getVertexLayer(edge.first) < parse.getVertexLayer(edge.second) &&
-                    source->second.second >= sink->second.second)
-                {
-                    return false;
-                }
-            }
+            for (const auto& node : nodeIndex_pos)
+                if (!occupied.insert(node.second).second) return false;
+            // Irregular-clock causality is enforced by the global epoch
+            // solver. Gates need not remain below their logical fanins or
+            // on a shared output row after compaction.
             return true;
         };
 
@@ -1500,11 +1463,11 @@ namespace fcngraph
             {
                 return false;
             }
-            if (candidate.usedCells < base.usedCells)
+            if (candidate.physicalCells < base.physicalCells)
             {
                 return true;
             }
-            if (candidate.usedCells > base.usedCells)
+            if (candidate.physicalCells > base.physicalCells)
             {
                 return false;
             }
@@ -1549,14 +1512,15 @@ namespace fcngraph
             }
             grid_positions = nodeIndex_pos;
             const auto acceptsLegacyMapping = [this]() {
-                return validateLegacyMappedLayout();
+                return validateMappedRoutePorts();
             };
             if (!placeAndRouteInternal(
                     shuffledRouteOrderRetries, nullptr, false, 6,
                     acceptsLegacyMapping) ||
                 !assignPhases(phaseCount) ||
                 !validateAssignedRoutePhases(phaseCount) ||
-                !phaseRunAcceptable())
+                !phaseRunAcceptable() ||
+                !validateCombinationalLayout(parse, *this, phaseCount, 4).valid)
             {
                 restore(base);
                 return false;
@@ -1570,9 +1534,47 @@ namespace fcngraph
             return true;
         };
 
+        const auto tryLocalRetarget = [this, phaseCount, &scoreLayout, &scoreImproved](
+            const MoveCandidate& move, const Snapshot& base, const LayoutScore& baseScore) {
+            routes = base.routedEdges;
+            for (auto& route : routes) {
+                auto& path = route.second;
+                if (route.first.first == static_cast<unsigned int>(move.node)) {
+                    if (path.size() > 1 && path[1] == move.target) path.erase(path.begin());
+                    else path.insert(path.begin(), move.target);
+                }
+                if (route.first.second == static_cast<unsigned int>(move.node)) {
+                    if (path.size() > 1 && path[path.size()-2] == move.target) path.pop_back();
+                    else path.push_back(move.target);
+                }
+            }
+            chessboard.gridMap.clear();
+            std::set<position> nodes;
+            for (const auto& node : nodeIndex_pos) {
+                if (!nodes.insert(node.second).second) return false;
+                chessboard.placeNode(node.second);
+            }
+            std::map<position, std::set<unsigned int>> owners;
+            for (const auto& route : routes)
+                for (std::size_t i = 1; i + 1 < route.second.size(); ++i)
+                    owners[route.second[i]].insert(route.first.first);
+            for (const auto& entry : owners) {
+                if (nodes.count(entry.first) || entry.second.size() > 2) return false;
+                for (std::size_t i = 0; i < entry.second.size(); ++i) {
+                    if (!chessboard.is_addWire(entry.first)) return false;
+                    chessboard.addWire(entry.first);
+                }
+            }
+            astar.reset();
+            if (!assignPhases(phaseCount, 4) ||
+                !validateCombinationalLayout(parse, *this, phaseCount, 4).valid) return false;
+            return scoreImproved(scoreLayout(), baseScore, false);
+        };
+
         if (!assignPhases(phaseCount) ||
             !validateAssignedRoutePhases(phaseCount) ||
-            !phaseRunAcceptable())
+            !phaseRunAcceptable() ||
+                !validateCombinationalLayout(parse, *this, phaseCount, 4).valid)
         {
             return false;
         }
@@ -1585,7 +1587,7 @@ namespace fcngraph
                    parse.getFanoutsIndex(static_cast<unsigned int>(node)).empty();
         };
 
-        while (acceptedMoves < maxRounds &&
+        while (!cancellationRequested() && acceptedMoves < maxRounds &&
                evaluatedMoves < maxEvaluatedMoves)
         {
             const Snapshot base = takeSnapshot();
@@ -1628,7 +1630,7 @@ namespace fcngraph
                 }
                 const bool isInput = parse.getNodeType(node) == "input";
                 const bool isOutput = isBoundaryOutput(node);
-                if ((isInput || isOutput) && target.second != current.second)
+                if (isInput && target.second != current.second)
                 {
                     return;
                 }
@@ -1669,7 +1671,7 @@ namespace fcngraph
                 }
                 addCandidate(nodeIndex,
                              {current.first + 1, current.second}, false);
-                if (!isInput && !isOutput)
+                if (!isInput)
                 {
                     if (current.second > 0)
                     {
@@ -1712,7 +1714,7 @@ namespace fcngraph
                             {current.first + (medianX > current.first ? 1u : -1u),
                              current.second}, false);
                     }
-                    if (!isInput && !isOutput && medianY != current.second)
+                    if (!isInput && medianY != current.second)
                     {
                         addCandidate(nodeIndex,
                             {current.first,
@@ -1770,7 +1772,7 @@ namespace fcngraph
             bool accepted = false;
             for (const MoveCandidate &candidate : candidates)
             {
-                if (evaluatedMoves >= maxEvaluatedMoves)
+                if (cancellationRequested() || evaluatedMoves >= maxEvaluatedMoves)
                 {
                     break;
                 }
@@ -1778,7 +1780,14 @@ namespace fcngraph
                 restore(base);
                 nodeIndex_pos[candidate.node] = candidate.target;
                 grid_positions = nodeIndex_pos;
-                if (tryCurrentPlacement(base, baseScore, false))
+                bool improved = tryLocalRetarget(candidate, base, baseScore);
+                if (!improved) {
+                    restore(base);
+                    nodeIndex_pos[candidate.node] = candidate.target;
+                    grid_positions = nodeIndex_pos;
+                    improved = tryCurrentPlacement(base, baseScore, false);
+                }
+                if (improved)
                 {
                     ++acceptedMoves;
                     accepted = true;
@@ -1796,7 +1805,7 @@ namespace fcngraph
         // compatible occupied rows/columns.  A collision, topology reversal,
         // phase failure, or v1.1 mapping failure rolls the cut back.
         int acceptedCuts = 0;
-        while (acceptedCuts < maxRounds &&
+        while (!cancellationRequested() && acceptedCuts < maxRounds &&
                evaluatedMoves < maxEvaluatedMoves)
         {
             const Snapshot base = takeSnapshot();
@@ -1847,7 +1856,7 @@ namespace fcngraph
             bool accepted = false;
             for (const CutCandidate &cut : cuts)
             {
-                if (evaluatedMoves >= maxEvaluatedMoves)
+                if (cancellationRequested() || evaluatedMoves >= maxEvaluatedMoves)
                 {
                     break;
                 }
@@ -1879,7 +1888,7 @@ namespace fcngraph
         }
 
         grid_positions = nodeIndex_pos;
-        return validateLegacyMappedLayout() &&
+        return validateMappedRoutePorts() &&
                validateAssignedRoutePhases(phaseCount) &&
                phaseRunAcceptable();
     }
@@ -2061,6 +2070,7 @@ namespace fcngraph
         };
 
         const auto routeEdges = [&](const std::vector<std::pair<int, int>> &orderedEdges) {
+            if (cancellationRequested()) return false;
             if (!prepareBoard())
             {
                 return false;
@@ -2071,6 +2081,7 @@ namespace fcngraph
                  edgeIndex < orderedEdges.size();
                  ++edgeIndex)
             {
+                if (cancellationRequested()) return false;
                 const auto &edge = orderedEdges[edgeIndex];
                 auto start = nodeIndex_pos[edge.first];
                 auto end = nodeIndex_pos[edge.second];
@@ -2139,17 +2150,21 @@ namespace fcngraph
             return failedEdges.empty();
         };
         const auto acceptsCurrentLayout = [&]() {
+            lastClockAssignmentRejected = false;
             if (!acceptRoutedLayout || acceptRoutedLayout())
             {
                 if (failureInfo)
                 {
                     failureInfo->routedLayoutRejected = false;
+                    failureInfo->clockAssignmentRejected = false;
                 }
                 return true;
             }
             if (failureInfo)
             {
                 failureInfo->routedLayoutRejected = true;
+                failureInfo->clockAssignmentRejected =
+                    failureInfo->clockAssignmentRejected || lastClockAssignmentRejected;
             }
             return false;
         };
@@ -2168,6 +2183,7 @@ namespace fcngraph
              policyIndex < deterministicPolicyLimit;
              ++policyIndex)
         {
+            if (cancellationRequested()) return false;
             if (routeEdges(sortEdges(policies[policyIndex])) &&
                 acceptsCurrentLayout())
             {
@@ -2185,6 +2201,7 @@ namespace fcngraph
         shuffledRouteOrderRetries = std::max(0, shuffledRouteOrderRetries);
         for (int retry = 0; retry < shuffledRouteOrderRetries; ++retry)
         {
+            if (cancellationRequested()) return false;
             std::shuffle(shuffledEdges.begin(), shuffledEdges.end(),
                          routeOrderGenerator);
             std::stable_sort(shuffledEdges.begin(), shuffledEdges.end(),
@@ -2224,8 +2241,8 @@ namespace fcngraph
         {
             fitnessCallback("June random-clock graph P&R: post-route phase assignment");
         }
-        if (!assignPhases(phaseCount) ||
-            !validateAssignedRoutePhases(phaseCount))
+        if (!assignPhases(phaseCount, maxSamePhase > 0 ? maxSamePhase : 4) ||
+            !validateAssignedRoutePhases(phaseCount, maxSamePhase > 0 ? maxSamePhase : 4))
         {
             return false;
         }
@@ -2319,7 +2336,7 @@ namespace fcngraph
         return true;
     }
 
-    bool CircuitGraph::routeCompactRandomClockWithExpansion(
+    bool CircuitGraph::routeWithCapacityExpansion(
         int phaseCount,
         int shuffledRouteOrderRetries,
         int maxExpansionRounds,
@@ -2466,6 +2483,7 @@ namespace fcngraph
                  removalRound < std::max(12, maxExpansionRounds);
                  ++removalRound)
             {
+                if (cancellationRequested()) break;
                 unsigned int minX = std::numeric_limits<unsigned int>::max();
                 unsigned int minY = std::numeric_limits<unsigned int>::max();
                 unsigned int maxX = 0;
@@ -2508,6 +2526,7 @@ namespace fcngraph
                 bool removed = false;
                 for (const CapacityCut &cut : removableCuts)
                 {
+                    if (cancellationRequested()) break;
                     const auto savedNodes = nodeIndex_pos;
                     const auto savedRoutes = routes;
                     const auto savedCells = chessboard.gridMap;
@@ -2583,6 +2602,7 @@ namespace fcngraph
 
         for (int round = 0; round <= maxExpansionRounds; ++round)
         {
+            if (cancellationRequested()) return false;
             if (fitnessCallback)
             {
                 fitnessCallback(
@@ -2604,15 +2624,16 @@ namespace fcngraph
                 removeRedundantCapacity();
                 return true;
             }
-            if (failure.routedLayoutRejected && failure.failedEdges.empty())
+            auto pressureEdges = failure.failedEdges;
+            if (failure.routedLayoutRejected && pressureEdges.empty())
             {
                 // Geometry alone is insufficient: phase closure, fanout
                 // ownership, or crossover validation rejected every complete
                 // route ordering.  Let one sparse cut be tested using the full
                 // net set as pressure instead of silently abandoning expansion.
-                failure.failedEdges = parse.getEffectiveEdges();
+                pressureEdges = parse.getEffectiveEdges();
             }
-            if (round == maxExpansionRounds || failure.failedEdges.empty())
+            if (round == maxExpansionRounds || pressureEdges.empty())
             {
                 break;
             }
@@ -2625,7 +2646,7 @@ namespace fcngraph
             // unrelated whitespace is added.
             std::map<unsigned int, int> rowPressure;
             std::map<unsigned int, int> columnPressure;
-            for (const auto &edge : failure.failedEdges)
+            for (const auto &edge : pressureEdges)
             {
                 const auto sourceIt = nodeIndex_pos.find(edge.first);
                 const auto targetIt = nodeIndex_pos.find(edge.second);
@@ -2794,6 +2815,7 @@ namespace fcngraph
             stageCallback = {};
             for (const CapacityCut &cut : cuts)
             {
+                if (cancellationRequested()) break;
                 nodeIndex_pos = basePositions;
                 grid_positions = nodeIndex_pos;
                 if (!applyCut(cut))
@@ -2808,7 +2830,8 @@ namespace fcngraph
                     false,
                     6,
                     acceptCompleteLayout);
-                if (!trialRouted && trialReport.routedLayoutRejected)
+                if (!trialRouted && trialReport.routedLayoutRejected &&
+                    !trialReport.clockAssignmentRejected)
                 {
                     continue;
                 }
@@ -2849,7 +2872,14 @@ namespace fcngraph
                              false,
                              failure,
                              baseArea);
-            if (!strictlyImproved)
+            // A fully routed geometry can need more than one cut before
+            // its gate-port timing is feasible. Permit bounded capacity
+            // growth in that case; success still requires the full clock and
+            // mapping validator and every cut consumes the existing budget.
+            const bool timingCapacityExpanded = haveAcceptedCut &&
+                failure.clockAssignmentRejected && bestReport.clockAssignmentRejected &&
+                bestReport.routedEdges >= failure.routedEdges && bestArea > baseArea;
+            if (!strictlyImproved && !timingCapacityExpanded)
             {
                 if (fitnessCallback)
                 {
@@ -2898,7 +2928,7 @@ namespace fcngraph
         return false;
     }
 
-    bool CircuitGraph::placeAndRouteJuneRandomClock(int phaseCount,
+    bool CircuitGraph::routeBufferedGraphvizSeed(int phaseCount,
                                                      double graphvizGridSize,
                                                      int shuffledRouteOrderRetries,
                                                      int maxSamePhase)
@@ -2927,7 +2957,7 @@ namespace fcngraph
             phaseCount, shuffledRouteOrderRetries, maxSamePhase);
     }
 
-    bool CircuitGraph::placeAndRouteJuneRandomClockAnisotropic(
+    bool CircuitGraph::routeGraphvizSeedAnisotropic(
         int phaseCount,
         double graphvizGridSizeX,
         double graphvizGridSizeY,
@@ -3183,7 +3213,7 @@ namespace fcngraph
                 routes[{static_cast<unsigned int>(edge.first),
                         static_cast<unsigned int>(edge.second)}] = std::move(result->positions);
             }
-            if (!routed || !validateAssignedRoutePhases(phaseCount))
+            if (!routed || !assignPhases(phaseCount, maxSamePhase))
             {
                 continue;
             }
@@ -3840,77 +3870,27 @@ namespace fcngraph
         }
     }
 
-    bool CircuitGraph::assignPhases(int phaseCount)
+    bool CircuitGraph::assignPhases(int phaseCount, int maxSamePhase)
     {
-        // 使用 map 来存储分类的路径，按层级分类
-        std::map<unsigned int, std::map<std::pair<unsigned int, unsigned int>, std::vector<position>>> classifiedRoutes;
-        // 存放新层对应的旧层
-        std::map<unsigned int, std::vector<unsigned int>> groupMapping;
-        // 将 routes 按照层级分类
-        for (const auto &route : routes)
+        lastClockAssignmentRejected = false;
+        CombinationalClockProblem problem;
+        std::vector<position> positions;
+        if (!buildCombinationalClockProblem(problem, positions, maxSamePhase))
+            return false;
+        std::vector<std::int64_t> epochs;
+        std::string error;
+        if (!solveCombinationalClockEpochs(problem, epochs, &error, nullptr, phaseCount))
         {
-            unsigned int layer = parse.getVertexLayer(route.first.first);
-            classifiedRoutes[layer][route.first] = route.second;
+            lastClockAssignmentRejected = true;
+            if (fitnessCallback) fitnessCallback("global clock assignment failed: " + error);
+            return false;
         }
-
-        auto classifiedRoutes_New = reclassifyLayers(classifiedRoutes, groupMapping);
-
-        bool is_first_layer = true;
-
-        // 遍历所有层
-        for (auto &[layer_id, routes] : classifiedRoutes_New)
-        {
-            std::vector<Path> paths;
-            std::vector<int> start_phases; // 存储当前层每条路径的起始相位
-
-            // 遍历当前层的所有路径
-            for (auto &path_positions : routes)
-            {
-                std::vector<std::pair<int, int>> decodedPath;
-
-                // 构建路径
-                for (auto pos : path_positions)
-                {
-                    decodedPath.push_back({static_cast<int>(pos.first), static_cast<int>(pos.second)});
-                }
-
-                paths.push_back(Path{decodedPath});
-
-                int start_phase = -1;
-                if (is_first_layer)
-                {
-                    start_phase = -1;
-                }
-                else
-                {
-                    auto start_pos = path_positions[0];
-                    start_phase = chessboard.gridMap[start_pos].getPhase();
-                }
-                start_phases.push_back(start_phase);
-            }
-            // 调用相位优化函数
-            bool success = false;
-            try
-            {
-                success = phaseOptimize(layer_id, paths, start_phases, phaseCount);
-            }
-            catch (const std::exception &)
-            {
-                success = false;
-            }
-            if (!success)
-            {
-                return assignPhasesFallback(phaseCount);
-            }
-
-            is_first_layer = false;
-        }
-
-        if (validateAssignedRoutePhases(phaseCount) && hasAcceptableAssignedRoutePhases(phaseCount))
-        {
-            return true;
-        }
-        return assignPhasesFallback(phaseCount);
+        // Commit only a complete feasible assignment; failed candidates retain
+        // their geometry for the existing rerouting/expansion retry path.
+        for (std::size_t i = 0; i < positions.size(); ++i)
+            chessboard.gridMap.at(positions[i]).setPhase(
+                static_cast<int>(epochs[i] % phaseCount) + 1);
+        return validateAssignedRoutePhases(phaseCount, maxSamePhase);
     }
 
     bool CircuitGraph::phaseOptimize(int current_layer, std::vector<fcngraph::Path> &paths, std::vector<int> &start_phases, int phaseCount, int recursion_count)
@@ -4009,411 +3989,79 @@ namespace fcngraph
 
     bool CircuitGraph::assignPhasesFallback(int phaseCount)
     {
-        phaseCount = std::max(2, phaseCount);
-
-        for (auto &cell : chessboard.gridMap)
-        {
-            if (cell.second.getPhase() >= 1)
-            {
-                cell.second.setPhase(-1);
-            }
-        }
-
-        std::vector<std::pair<std::pair<unsigned int, unsigned int>, std::vector<position>>> orderedRoutes(routes.begin(), routes.end());
-        std::stable_sort(orderedRoutes.begin(), orderedRoutes.end(), [this](const auto &lhs, const auto &rhs) {
-            const int lhsLayer = parse.getVertexLayer(lhs.first.first);
-            const int rhsLayer = parse.getVertexLayer(rhs.first.first);
-            if (lhsLayer != rhsLayer)
-            {
-                return lhsLayer < rhsLayer;
-            }
-            return lhs.second.size() > rhs.second.size();
-        });
-
-        const auto getPhaseAt = [this](const position &pos) -> int {
-            auto cell = chessboard.gridMap.find(pos);
-            if (cell == chessboard.gridMap.end())
-            {
-                return -1;
-            }
-            return cell->second.getPhase();
-        };
-
-        const auto setPhaseAt = [this](const position &pos, int phase) -> bool {
-            auto cell = chessboard.gridMap.find(pos);
-            if (cell == chessboard.gridMap.end())
-            {
-                return false;
-            }
-            int existingPhase = cell->second.getPhase();
-            if (existingPhase >= 1 && existingPhase != phase)
-            {
-                return false;
-            }
-            cell->second.setPhase(phase);
-            return true;
-        };
-
-        for (const auto &route : orderedRoutes)
-        {
-            if (route.second.empty())
-            {
-                continue;
-            }
-
-            std::vector<int> fixedPhases;
-            fixedPhases.reserve(route.second.size());
-            bool hasFixedPhase = false;
-            for (const position &pos : route.second)
-            {
-                const int phase = getPhaseAt(pos);
-                fixedPhases.push_back(phase);
-                if (phase >= 1)
-                {
-                    hasFixedPhase = true;
-                }
-            }
-
-            const int preferredStartPhase = hasFixedPhase
-                ? -1
-                : phaseAfter(1, parse.getVertexLayer(route.first.first), phaseCount);
-
-            std::vector<int> phases;
-            try
-            {
-                phases = solveForwardPhasePath(fixedPhases, phaseCount, preferredStartPhase);
-            }
-            catch (const std::exception &)
-            {
-                return assignRouteConstraintPhases(phaseCount);
-            }
-
-            for (std::size_t i = 0; i < route.second.size(); ++i)
-            {
-                if (!setPhaseAt(route.second[i], phases[i]))
-                {
-                    return assignRouteConstraintPhases(phaseCount);
-                }
-            }
-        }
-
-        if (validateAssignedRoutePhases(phaseCount) && hasAcceptableAssignedRoutePhases(phaseCount))
-        {
-            return true;
-        }
-        if (assignRouteConstraintPhases(phaseCount))
-        {
-            return true;
-        }
-        return validateAssignedRoutePhases(phaseCount);
+        return assignPhases(phaseCount);
     }
 
     bool CircuitGraph::assignRouteConstraintPhases(int phaseCount)
     {
-        phaseCount = std::max(2, phaseCount);
-
-        struct ConstraintEdge
-        {
-            int from = 0;
-            int to = 0;
-        };
-
-        struct PhaseScore
-        {
-            int invalid = 0;
-            int maxRun = 1;
-            int waits = 0;
-        };
-
-        std::map<position, int> positionIndex;
-        std::vector<position> positions;
-        const auto getPositionIndex = [&positionIndex, &positions](const position &pos) {
-            auto iter = positionIndex.find(pos);
-            if (iter != positionIndex.end())
-            {
-                return iter->second;
-            }
-            const int index = static_cast<int>(positions.size());
-            positionIndex[pos] = index;
-            positions.push_back(pos);
-            return index;
-        };
-
-        for (auto &cell : chessboard.gridMap)
-        {
-            if (cell.second.get_current_weight() > 0)
-            {
-                getPositionIndex(cell.first);
-            }
-        }
-
-        std::vector<ConstraintEdge> constraintEdges;
-        std::vector<std::vector<int>> routePositionIndexes;
-        for (const auto &route : routes)
-        {
-            const auto &path = route.second;
-            std::vector<int> routeIndexes;
-            routeIndexes.reserve(path.size());
-            for (std::size_t i = 0; i < path.size(); ++i)
-            {
-                routeIndexes.push_back(getPositionIndex(path[i]));
-                if (i > 0)
-                {
-                    constraintEdges.push_back({
-                        routeIndexes[i - 1],
-                        routeIndexes[i]
-                    });
-                }
-            }
-            routePositionIndexes.push_back(std::move(routeIndexes));
-        }
-
-        if (positions.empty())
-        {
-            return false;
-        }
-
-        const auto transitionCost = [phaseCount](int fromPhase, int toPhase) {
-            if (toPhase == phaseAfter(fromPhase, 1, phaseCount))
-            {
-                return 0;
-            }
-            if (toPhase == fromPhase)
-            {
-                return 1;
-            }
-            return 1000000;
-        };
-
-        const auto scorePhases = [&constraintEdges, &routePositionIndexes, &transitionCost](const std::vector<int> &phases) {
-            PhaseScore score;
-            for (const auto &edge : constraintEdges)
-            {
-                const int cost = transitionCost(phases[edge.from], phases[edge.to]);
-                if (cost >= 1000000)
-                {
-                    ++score.invalid;
-                }
-                else if (cost > 0)
-                {
-                    ++score.waits;
-                }
-            }
-            for (const auto &path : routePositionIndexes)
-            {
-                int currentRun = 1;
-                for (std::size_t i = 1; i < path.size(); ++i)
-                {
-                    if (phases[path[i]] == phases[path[i - 1]])
-                    {
-                        ++currentRun;
-                        score.maxRun = std::max(score.maxRun, currentRun);
-                    }
-                    else
-                    {
-                        currentRun = 1;
-                    }
-                }
-            }
-            return score;
-        };
-
-        const auto isBetterScore = [](const PhaseScore &candidate, const PhaseScore &current) {
-            return std::tie(candidate.invalid, candidate.maxRun, candidate.waits)
-                 < std::tie(current.invalid, current.maxRun, current.waits);
-        };
-
-        std::vector<std::vector<int>> incidentEdges(positions.size());
-        for (std::size_t edgeIndex = 0; edgeIndex < constraintEdges.size(); ++edgeIndex)
-        {
-            const auto &edge = constraintEdges[edgeIndex];
-            incidentEdges[edge.from].push_back(static_cast<int>(edgeIndex));
-            incidentEdges[edge.to].push_back(static_cast<int>(edgeIndex));
-        }
-
-        const auto localCost = [&constraintEdges, &transitionCost](const std::vector<int> &phases, int edgeIndex) {
-            const auto &edge = constraintEdges[static_cast<std::size_t>(edgeIndex)];
-            return transitionCost(phases[edge.from], phases[edge.to]);
-        };
-
-        const auto improve = [&](std::vector<int> phases) {
-            const std::size_t maxPasses = std::max<std::size_t>(32, std::min<std::size_t>(512, phases.size() * 4));
-            for (std::size_t pass = 0; pass < maxPasses; ++pass)
-            {
-                bool changed = false;
-                for (std::size_t index = 0; index < positions.size(); ++index)
-                {
-                    int currentPhase = phases[index];
-                    int bestPhase = currentPhase;
-                    int bestCost = 0;
-                    for (int edgeIndex : incidentEdges[index])
-                    {
-                        bestCost += localCost(phases, edgeIndex);
-                    }
-
-                    const int preferredPhase = static_cast<int>(positions[index].second % static_cast<unsigned int>(phaseCount)) + 1;
-                    for (int phase = 1; phase <= phaseCount; ++phase)
-                    {
-                        phases[index] = phase;
-                        int cost = 0;
-                        for (int edgeIndex : incidentEdges[index])
-                        {
-                            cost += localCost(phases, edgeIndex);
-                        }
-                        if (cost < bestCost || (cost == bestCost && phase == preferredPhase && bestPhase != preferredPhase))
-                        {
-                            bestCost = cost;
-                            bestPhase = phase;
-                        }
-                    }
-
-                    phases[index] = bestPhase;
-                    if (bestPhase != currentPhase)
-                    {
-                        changed = true;
-                    }
-                }
-
-                if (!changed)
-                {
-                    break;
-                }
-            }
-            return phases;
-        };
-
-        std::vector<std::vector<int>> seeds;
-        for (int phase = 1; phase <= phaseCount; ++phase)
-        {
-            seeds.push_back(std::vector<int>(positions.size(), phase));
-        }
-        for (int offset = 0; offset < phaseCount; ++offset)
-        {
-            std::vector<int> ySeed(positions.size());
-            std::vector<int> diagonalSeed(positions.size());
-            for (std::size_t index = 0; index < positions.size(); ++index)
-            {
-                const int x = static_cast<int>(positions[index].first);
-                const int y = static_cast<int>(positions[index].second);
-                ySeed[index] = ((y + offset) % phaseCount) + 1;
-                diagonalSeed[index] = ((x + y + offset) % phaseCount) + 1;
-            }
-            seeds.push_back(std::move(ySeed));
-            seeds.push_back(std::move(diagonalSeed));
-        }
-
-        std::vector<int> voteSeed(positions.size(), 0);
-        std::vector<std::vector<int>> phaseVotes(positions.size(), std::vector<int>(phaseCount + 1, 0));
-        for (const auto &route : routes)
-        {
-            const auto &path = route.second;
-            for (std::size_t i = 0; i < path.size(); ++i)
-            {
-                const int index = positionIndex[path[i]];
-                const int phase = phaseAfter(1, static_cast<int>(i), phaseCount);
-                ++phaseVotes[static_cast<std::size_t>(index)][phase];
-            }
-        }
-        for (std::size_t index = 0; index < positions.size(); ++index)
-        {
-            int bestPhase = static_cast<int>(positions[index].second % static_cast<unsigned int>(phaseCount)) + 1;
-            int bestVotes = -1;
-            for (int phase = 1; phase <= phaseCount; ++phase)
-            {
-                if (phaseVotes[index][phase] > bestVotes)
-                {
-                    bestVotes = phaseVotes[index][phase];
-                    bestPhase = phase;
-                }
-            }
-            voteSeed[index] = bestPhase;
-        }
-        seeds.push_back(std::move(voteSeed));
-
-        std::vector<int> bestPhases;
-        PhaseScore bestScore{
-            std::numeric_limits<int>::max(),
-            std::numeric_limits<int>::max(),
-            std::numeric_limits<int>::max()
-        };
-        for (const auto &seed : seeds)
-        {
-            auto candidate = improve(seed);
-            const auto candidateScore = scorePhases(candidate);
-            if (bestPhases.empty() || isBetterScore(candidateScore, bestScore))
-            {
-                bestScore = candidateScore;
-                bestPhases = std::move(candidate);
-            }
-        }
-
-        if (bestPhases.empty() || bestScore.invalid > 0)
-        {
-            return false;
-        }
-
-        std::set<int> usedPhases(bestPhases.begin(), bestPhases.end());
-        if (usedPhases.size() < 2 && positions.size() > 1)
-        {
-            return false;
-        }
-
-        for (auto &cell : chessboard.gridMap)
-        {
-            if (cell.second.getPhase() >= 1)
-            {
-                cell.second.setPhase(-1);
-            }
-        }
-
-        for (std::size_t index = 0; index < positions.size(); ++index)
-        {
-            auto cell = chessboard.gridMap.find(positions[index]);
-            if (cell == chessboard.gridMap.end())
-            {
-                return false;
-            }
-            cell->second.setPhase(bestPhases[index]);
-        }
-
-        return validateAssignedRoutePhases(phaseCount);
+        return assignPhases(phaseCount);
     }
 
-    bool CircuitGraph::validateAssignedRoutePhases(int phaseCount) const
+    bool CircuitGraph::buildCombinationalClockProblem(
+        CombinationalClockProblem &problem,
+        std::vector<position> &positions,
+        int maxSamePhase) const
     {
-        phaseCount = std::max(2, phaseCount);
-
+        problem = CombinationalClockProblem{};
+        problem.maxSamePhaseTiles = maxSamePhase;
+        positions.clear();
+        std::map<position, std::size_t> indexes;
+        const auto index = [&](const position &pos) {
+            const auto inserted = indexes.emplace(pos, indexes.size());
+            if (inserted.second) positions.push_back(pos);
+            return inserted.first->second;
+        };
+        const auto effectiveEdges = parse.getEffectiveEdges();
+        if (routes.empty() || routes.size() != effectiveEdges.size()) return false;
+        for (const auto &edge : effectiveEdges)
+            if (!routes.count({static_cast<unsigned int>(edge.first),
+                               static_cast<unsigned int>(edge.second)})) return false;
         for (const auto &route : routes)
         {
+            const auto source = nodeIndex_pos.find(route.first.first);
+            const auto sink = nodeIndex_pos.find(route.first.second);
             const auto &path = route.second;
-            if (path.empty())
+            if (source == nodeIndex_pos.end() || sink == nodeIndex_pos.end() ||
+                path.size() < 2 || path.front() != source->second ||
+                path.back() != sink->second) return false;
+            std::set<position> unique;
+            std::vector<std::size_t> tiles;
+            for (std::size_t i = 0; i < path.size(); ++i)
             {
-                continue;
+                if (!chessboard.gridMap.count(path[i]) || !unique.insert(path[i]).second)
+                    return false;
+                if (i > 0)
+                {
+                    const auto dx = std::abs(static_cast<std::int64_t>(path[i].first) - path[i-1].first);
+                    const auto dy = std::abs(static_cast<std::int64_t>(path[i].second) - path[i-1].second);
+                    if (dx + dy != 1) return false;
+                }
+                tiles.push_back(index(path[i]));
             }
-
-            for (std::size_t i = 1; i < path.size(); ++i)
-            {
-                auto prevCell = chessboard.gridMap.find(path[i - 1]);
-                auto currCell = chessboard.gridMap.find(path[i]);
-                if (prevCell == chessboard.gridMap.end() || currCell == chessboard.gridMap.end())
-                {
-                    return false;
-                }
-
-                const int prevPhase = prevCell->second.getPhase();
-                const int currPhase = currCell->second.getPhase();
-                if (prevPhase < 1 || currPhase < 1)
-                {
-                    return false;
-                }
-                if (!isForwardPhaseStep(prevPhase, currPhase, phaseCount))
-                {
-                    return false;
-                }
-            }
+            problem.routes.push_back(std::move(tiles));
         }
-
+        for (const auto &node : nodeIndex_pos)
+        {
+            if (!chessboard.gridMap.count(node.second)) return false;
+            const auto tile = index(node.second);
+            if (parse.getNodeType(node.first) == "input")
+                problem.primaryInputs.push_back(tile);
+        }
+        problem.tileCount = positions.size();
         return true;
+    }
+
+    bool CircuitGraph::validateAssignedRoutePhases(int phaseCount, int maxSamePhase) const
+    {
+        CombinationalClockProblem problem;
+        std::vector<position> positions;
+        if (!buildCombinationalClockProblem(problem, positions, maxSamePhase))
+            return false;
+        std::vector<int> phases;
+        for (const auto &pos : positions)
+            phases.push_back(chessboard.gridMap.at(pos).getPhase());
+        std::vector<std::int64_t> epochs;
+        return solveCombinationalClockEpochs(problem, epochs, nullptr, &phases, phaseCount);
     }
 
     bool CircuitGraph::hasAcceptableAssignedRoutePhases(int phaseCount) const

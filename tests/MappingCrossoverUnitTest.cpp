@@ -222,6 +222,59 @@ std::size_t commonPhysicalPrefixLength(const std::vector<position>& left,
 
 int main()
 {
+    // A branch continuing vertically after an earlier side-offset bend must
+    // retain its Y offset. The old mutually exclusive AND condition erased
+    // this first segment and the next iteration dereferenced an empty vector.
+    for (const bool divergeBeforePreviousEnd : {false, true}) {
+        Mapping mapping;
+        std::vector<position> neighboringBend{{3, 5}, {4, 5}, {4, 6}};
+        std::vector<position> firstBranch{{4, 4}, {4, 5}, {5, 5}};
+        if (divergeBeforePreviousEnd) firstBranch.push_back({6, 5});
+        std::vector<position> secondBranch{{4, 4}, {4, 5}, {4, 6}, {4, 7}};
+        mapping.routepos_Deviate(neighboringBend);
+        mapping.routepos_Deviate(firstBranch);
+        mapping.routepos_Deviate(secondBranch);
+    }
+    {
+        Mapping mapping;
+        std::vector<position> longBranch{{1, 1}, {1, 2}, {1, 3}, {1, 4}, {1, 5}};
+        mapping.routepos_Deviate(longBranch);
+        std::vector<position> prefix{{1, 1}, {1, 2}, {1, 3}};
+        try {
+            mapping.routepos_Deviate(prefix);
+            std::cerr << "short fanout endpoint was accepted inside another wire\n";
+            return 31;
+        } catch (const std::runtime_error&) {}
+        std::vector<position> empty;
+        try {
+            mapping.routepos_Deviate(empty);
+            std::cerr << "empty route offset was accepted\n";
+            return 32;
+        } catch (const std::runtime_error&) {}
+    }
+    // Each rotation of a leaf MAJ observes its existing fourth arm. Marking
+    // an output must leave the nine-cell, three-input geometry unchanged.
+    const position majorityPorts[] = {{1, 2}, {3, 2}, {2, 1}, {2, 3}};
+    const position majorityEnds[] = {{10, 12}, {14, 12}, {12, 10}, {12, 14}};
+    for (int outputDirection = 0; outputDirection < 4; ++outputDirection) {
+        NodeLinkMap nodes;
+        auto& link = nodes[{{2, 2}, "maj"}];
+        for (int inputDirection = 0; inputDirection < 4; ++inputDirection)
+            if (inputDirection != outputDirection)
+                link.first.push_back(majorityPorts[inputDirection]);
+        Mapping leaf;
+        leaf.node_mapping(nodes, MappingMode::Combinational);
+        std::set<position> sites;
+        for (const auto& bucket : leaf.nodecell_list)
+            sites.insert(bucket.second.begin(), bucket.second.end());
+        if (leaf.nodecell_list["output"] != std::vector<position>{majorityEnds[outputDirection]} ||
+            leaf.nodecell_list["normal"].size() != 8 || sites.size() != 9 ||
+            sites.count({12, 12}) != 1) {
+            std::cerr << "leaf majority output annotation changed its physical template\n";
+            return 1;
+        }
+    }
+
     // Seed-1 legal 2DDWave routing for TOY/par_gen after rejecting parallel
     // inter-net overlap. Same-source fanout trunks remain shared; the five
     // remaining inter-net intersections are orthogonal and local.
@@ -255,6 +308,10 @@ int main()
                   << validationError << '\n';
         return 1;
     }
+
+    // The same layer-aware connectivity/ownership DRC also applies to
+    // combinational routes, including legal shared fanout and crossings.
+    static_cast<void>(mapping.physicalCellSites(routes, MappingMode::Combinational));
 
     std::size_t crossoverCount = 0;
     for (const auto& routeEntry : mapping.crossline_list) {
@@ -506,6 +563,81 @@ int main()
         return 34;
     }
 
+    // Corner NOT gates intentionally use diagonal Coulomb coupling inside
+    // their template. Route DRC checks the boundary-to-boundary wires and
+    // must not mistake the inverter's internal diagonal for a broken wire.
+    Mapping cornerNot;
+    NodeLinkMap cornerNodes{
+        {{{2, 1}, "input"}, {{}, {{1, 1}}}},
+        {{{1, 1}, "not"}, {{{2, 1}}, {{1, 2}}}},
+        {{{1, 2}, "output"}, {{{1, 1}}, {}}},
+    };
+    std::vector<std::vector<position>> cornerRoutes{
+        {{2, 1}, {1, 1}}, {{1, 1}, {1, 2}},
+    };
+    cornerNot.node_mapping(cornerNodes, MappingMode::Combinational);
+    cornerNot.mapping_line(cornerRoutes, MappingMode::Combinational);
+    const auto cornerSites = cornerNot.physicalCellSites(
+        cornerRoutes, MappingMode::Combinational);
+    for (const PhysicalCellSite &site :
+         std::vector<PhysicalCellSite>{{9, 7, 0}, {8, 8, 0},
+                                      {7, 8, 0}, {7, 9, 0}}) {
+        if (cornerSites.count(site) != 1) {
+            std::cerr << "combinational corner inverter lost a template cell\n";
+            return 37;
+        }
+    }
+
+    Mapping brokenWire;
+    const std::vector<std::vector<position>> brokenCoarseRoute{
+        {{0, 0}, {1, 0}, {2, 0}},
+    };
+    brokenWire.deviatemapping_list[{{0, 0}, {2, 0}}] = {
+        {{5, 2}, {6, 2}, {8, 2}, {9, 2}},
+    };
+    try {
+        static_cast<void>(brokenWire.physicalCellSites(
+            brokenCoarseRoute, MappingMode::Combinational));
+        std::cerr << "combinational route DRC accepted a missing wire cell\n";
+        return 38;
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()).find("physical route is disconnected") ==
+            std::string::npos) {
+            std::cerr << "broken wire failed for an unexpected reason: "
+                      << error.what() << '\n';
+            return 39;
+        }
+    }
+
+    Mapping shiftedBoundary;
+    const std::vector<std::vector<position>> shiftedCoarseRoute{
+        {{0, 0}, {0, 1}, {1, 1}, {2, 1}},
+    };
+    shiftedBoundary.deviatemapping_list[{{0, 0}, {2, 1}}] = {
+        {{2, 5}, {2, 6}, {3, 6}, {4, 6}, {5, 6}, {6, 6},
+         {7, 6}, {8, 6}, {9, 6}, {9, 7}},
+    };
+    const std::vector<position> expectedShiftedPath{
+        {2, 4}, {2, 5}, {2, 6}, {3, 6}, {4, 6}, {5, 6},
+        {6, 6}, {7, 6}, {8, 6}, {9, 6}, {9, 7}, {10, 7},
+    };
+    const auto shiftedPaths = shiftedBoundary.orderedPhysicalRoutes(
+        shiftedCoarseRoute, MappingMode::Combinational);
+    if (shiftedPaths.size() != 1 || shiftedPaths.front() != expectedShiftedPath ||
+        shiftedBoundary.physicalCellSites(
+            shiftedCoarseRoute, MappingMode::Combinational).size() !=
+            expectedShiftedPath.size()) {
+        std::cerr << "combinational DRC rejected a connected shifted tile boundary\n";
+        return 40;
+    }
+    try {
+        static_cast<void>(shiftedBoundary.physicalCellSites(
+            shiftedCoarseRoute, MappingMode::Sequential));
+        std::cerr << "combinational boundary relaxation leaked into sequential mode\n";
+        return 41;
+    } catch (const std::runtime_error&) {
+    }
+
     // Two routes with different sources may cross on different layers, but
     // they must never claim the same exact QCA site.  This deliberately makes
     // their ordinary L0 paths overlap inside one coarse tile and verifies the
@@ -519,17 +651,19 @@ int main()
         {{0, 0}, {2, 0}}] = {{{5, 2}, {6, 2}, {7, 2}, {8, 2}, {9, 2}}};
     exactSiteOverlap.deviatemapping_list[
         {{1, 1}, {2, 0}}] = {{{7, 4}, {7, 3}, {7, 2}, {8, 2}, {9, 2}}};
-    try {
-        static_cast<void>(
-            exactSiteOverlap.physicalCellSites(overlappingCoarseRoutes));
-        std::cerr << "layer-aware mapping accepted an exact L0 site shared by different sources\n";
-        return 35;
-    } catch (const std::runtime_error& error) {
-        if (std::string(error.what()).find("different source routes") ==
-            std::string::npos) {
-            std::cerr << "exact-site overlap failed for an unexpected reason: "
-                      << error.what() << '\n';
-            return 36;
+    for (const MappingMode mode : {MappingMode::Combinational, MappingMode::Sequential}) {
+        try {
+            static_cast<void>(
+                exactSiteOverlap.physicalCellSites(overlappingCoarseRoutes, mode));
+            std::cerr << "layer-aware mapping accepted an exact L0 site shared by different sources\n";
+            return 35;
+        } catch (const std::runtime_error& error) {
+            if (std::string(error.what()).find("different source routes") ==
+                std::string::npos) {
+                std::cerr << "exact-site overlap failed for an unexpected reason: "
+                          << error.what() << '\n';
+                return 36;
+            }
         }
     }
 

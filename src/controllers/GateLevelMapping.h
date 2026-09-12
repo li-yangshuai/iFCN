@@ -16,6 +16,7 @@
 #include <vector>
 #include <utility>
 #include <autopr/algorithms/mapping.h>
+#include <autopr/io/ifcnPrimaryOutputs.h>
 using namespace fcngraph;
 class MainWindow;  // 前向声明
 
@@ -88,6 +89,8 @@ private:
     MappingMode mappingMode = MappingMode::Combinational;
     bool mappingModeExplicit = false;
     std::set<std::tuple<unsigned int, unsigned int, int>> emittedPhysicalSites;
+    fcngraph::IfcnPrimaryOutputMetadata primaryOutputs;
+    std::map<position, std::string> primaryOutputCellNames;
 };
 
 

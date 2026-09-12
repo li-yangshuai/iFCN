@@ -32,7 +32,7 @@ public:
     void mutate(Individual &individual);
 
     void reserve_the_best();
-    void select_next_generation() noexcept;
+    void select_next_generation();
     bool gaRun();
 
     //print node_pos

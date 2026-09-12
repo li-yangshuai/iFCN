@@ -26,17 +26,14 @@ __pycache__/
 .coverage
 .idea/
 .vscode/
-.pi/
 .DS_Store
 
-# Generated runs, checkpoints and exports; keep circuit sources (.ifcn/.v/.sv)
+# Generated runs and exports; keep circuit sources (.ifcn/.v/.sv)
 /output/
 /artifacts/
 /experiments/
-/include/gcn_rl_layout/results/
-*_gcn_rl_layout/
+/include/layout_backend/results/
 seed_[0-9]*/
-train_seed_[0-9]*/
 *.pt
 *.pth
 *.qca

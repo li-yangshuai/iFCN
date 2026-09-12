@@ -73,9 +73,6 @@ target_compile_definitions(ifcn_paper_cyclic_pnr PRIVATE IFCN_PROJECT_SOURCE_DIR
 add_executable(ifcn_physical_state_layout app/ifcn_physical_state_layout.cpp)
 target_link_libraries(ifcn_physical_state_layout PRIVATE autopr)
 
-add_executable(ifcn_sequential_clock_experiment
-    app/ifcn_sequential_clock_experiment.cpp)
-target_link_libraries(ifcn_sequential_clock_experiment PRIVATE autopr)
 
 add_executable(ifcn_energy_analysis app/ifcn_energy_analysis.cpp)
 target_link_libraries(ifcn_energy_analysis PRIVATE autopr simon)

@@ -710,7 +710,8 @@ int main(int argc, char **argv)
     {
         const CommandLine command = parseCommandLine(argc, argv);
         Parse parse;
-        parse.parseVerilog(command.input);
+        parse.parseVerilog(command.input,
+                           ifcn::verilog::OutputBoundaryMode::PreserveSequential);
         if (parse.getm_numVertices() == 0)
         {
             throw std::runtime_error("legacy DAG parser produced an empty graph");
@@ -730,7 +731,7 @@ int main(int argc, char **argv)
              {command.spacing, command.spacing + 2, command.spacing + 4})
         {
             graph.sortNodesByFixedLayerOrder(layers, spacing, spacing);
-            if (graph.placeAndRouteLegacyFast())
+            if (graph.routeGraphPlacement())
             {
                 routed = true;
                 break;

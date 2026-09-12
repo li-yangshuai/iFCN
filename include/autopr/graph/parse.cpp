@@ -1,218 +1,46 @@
 #include"parse.h"
+#include <autopr/graph/scalarExpression.h>
 
 namespace fcngraph{
 
-void Parse::parseVerilog(std::string _fileName){
-    std::ifstream file(_fileName);
-    if(file.fail()){
-        std::cout << "failed open! " <<"\n";
-        return ;
-    }
-    std::string fileLineString;
-    std::string fileSemicolonString;
-    while(std::getline(file,fileLineString)){
-        if(fileLineString.empty()){
-            continue;
-        }
-        if(fileLineString.find_last_of(';') == std::string::npos){
-            fileSemicolonString += fileLineString;
-            continue;
-        }
-        fileSemicolonString += fileLineString; 
-        size_t pos;
-        while ((pos = fileSemicolonString.find('\r')) != std::string::npos) {
-            fileSemicolonString.erase(pos, 1);
-        }
-
-        //remove " "
-        fileSemicolonString.erase(std::remove(fileSemicolonString.begin(),fileSemicolonString.end(), ' '),fileSemicolonString.end());
-        verilogParseContainer.push_back(fileSemicolonString);
-        fileSemicolonString.clear();
-    }
-
-    if(verilogParseContainer.empty()) return;
-    if(! is_parseModuleName(verilogParseContainer[0])) return;
-    if(! is_parseInputNode (verilogParseContainer[1])) return;
-    if(! is_parseOutputNode (verilogParseContainer[2])) return;
-    if(! is_parseWireGate(verilogParseContainer[3])) return;
-    if(verilogParseContainer.size() > 4){
-        for(auto i = 4; i < verilogParseContainer.size(); i++){
-            is_parseLogicNode(verilogParseContainer[i]);   
-        }
-    }
-
+void Parse::parseVerilog(std::string fileName, ifcn::verilog::OutputBoundaryMode outputBoundaryMode,
+                        bool allowMajority)
+{
+    std::ifstream file(fileName);
+    if (!file) throw std::runtime_error("Cannot open scalar Verilog file: " + fileName);
+    const auto module = ifcn::verilog::readScalarModule(file);
+    moduleName = module.name;
+    for (const auto& input : module.inputs) insert_input_node(input);
+    for (const auto& output : module.outputs) insert_output_node(output);
+    vec_wire = module.wires;
+    for (const auto& assignment : module.assignments)
+        parse_logicNode_string(assignment.first, assignment.second, outputBoundaryMode, allowMajority);
     layerDivision();
 }
 
-bool Parse::is_parseModuleName(const std::string &_lineString){
-    auto index_1 = _lineString.find("module");
-    if(index_1 == std::string::npos){
-        return false;
-    }
-    auto index_2 = _lineString.find('(');
-    moduleName = _lineString.substr(index_1 + 6, index_2 - index_1 - 6);
-    return true;
+void Parse::parse_logicNode_string(const std::string& nodeName, const std::string& lineString,
+                                  ifcn::verilog::OutputBoundaryMode outputBoundaryMode,
+                                  bool allowMajority)
+{
+    ifcn::verilog::ScalarDagAdapter adapter;
+    adapter.allowMajority = allowMajority;
+    adapter.nodeExists = [&](const std::string& name) { return graphLink->is_inserted(name); };
+    adapter.nameReserved = [&](const std::string& name) {
+        return graphLink->is_inserted(name) || vec_wire.count(name) || vec_output.count(name);
+    };
+    adapter.isPrimaryOutput = [&](const std::string& name) { return vec_output.count(name) != 0; };
+    adapter.addNode = [&](const std::string& name, const std::string& type) {
+        if (type == "and") insert_and_node(name);
+        else if (type == "or") insert_or_node(name);
+        else if (type == "maj") insert_majority_node(name);
+        else if (type == "not") insert_not_node(name);
+        else insert_redundancyNode(name);
+    };
+    adapter.addEdge = [&](const std::string& source, const std::string& target) {
+        insertEdge(source, target);
+    };
+    ifcn::verilog::lowerScalarAssignment(nodeName, lineString, adapter, outputBoundaryMode);
 }
-
-
-bool Parse::is_parseInputNode(const std::string &_lineString){
-
-    if( _lineString.find("input") == std::string::npos)
-        return false;
-    std::string lineString = _lineString;
-    lineString.erase(0, 5);   // delete "input"
-    lineString.pop_back();    // delete ";"
-    auto index_2 = lineString.find_first_of(',');
-    // only one item
-    if(index_2 == std::string::npos){
-        insert_input_node(lineString);
-    }else{
-        //split by ","
-        std::set<std::string> result;
-        boost::split(result, lineString, boost::is_any_of(","));
-        for(const auto &s : result){
-            insert_input_node(s);
-        }
-    }
-    return true;
-}
-
-bool Parse::is_parseOutputNode(const std::string &_lineString){
-    if( _lineString.find("output") == std::string::npos)
-        return false;
-    std::string lineString = _lineString;
-    lineString.erase(0, 6);   // delete "input"
-    lineString.pop_back();    // delete ","
-    auto index_2 = lineString.find_first_of(',');
-    // only one item
-    if(index_2 == std::string::npos){   
-        insert_output_node(lineString); 
-    }else{
-        //split by ","
-        std::set<std::string> result;
-        boost::split(result, lineString, boost::is_any_of(","));
-        for(const auto &s : result){
-            insert_output_node(s);
-        }
-    }
-    return true;
-}
-
-bool Parse::is_parseWireGate (const std::string &_lineString){
-    if( _lineString.find("wire") == std::string::npos)
-        return false;
-    std::string lineString = _lineString;
-    lineString.erase(0, 4);   // delete "input"
-    lineString.pop_back();    // delete ","
-    auto index_2 = lineString.find_first_of(',');
-    // only one item
-    if(index_2 == std::string::npos){   
-        vec_wire.insert(lineString);
-    }else{
-        //split by ","
-        std::set<std::string> result;
-        boost::split(result, lineString, boost::is_any_of(","));
-        for(const auto &s : result){
-            vec_wire.insert(s);
-        }
-    }
-    return true;
-}
-
-void Parse::is_parseLogicNode (const std::string &_lineString){
-    if(_lineString.find("assign") == std::string::npos)
-        return;
-    
-    // get node name
-    std::string lineString = _lineString;
-    lineString.erase(0,6);
-    auto index1 = lineString.find('=');
-    auto nodeName = lineString.substr(0, index1);
-    lineString.erase(0, index1 + 1);
-    lineString.pop_back();
-
-    // logic analysis
-    int num = 0;
-    parse_logicNode_string(nodeName, lineString, num);
-
-}
-
-void Parse::parse_logicNode_string(std::string &nodeName, std::string & lineString, int &_seqNo){
-    if(lineString.find_first_of('(') != std::string::npos){
-        //  assign n5 = (x1 & x2) | (x1 & ~n4) | (x2 & ~n4);
-        insert_majority_node(nodeName);    //n5 is majority gate
-        while( lineString.find_first_of('(') != std::string::npos ){
-            auto index2 = lineString.find_first_of('(');
-            auto index3 = lineString.find_first_of(')');
-            auto len = index3 -index2 - 1;
-            auto and_or_string = lineString.substr(index2 + 1 , len);
-            
-            auto redundance_node_name = nodeName + '_' + std::to_string(_seqNo);
-            check_and_or_node(redundance_node_name, and_or_string);
-            insertEdge(redundance_node_name, nodeName);
-            lineString.erase(index2, len + 2);
-            _seqNo++;
-        }
-        return;
-    }else{
-        check_and_or_node(nodeName, lineString);
-        return;
-    }
-}
-
-inline void Parse::check_and_or_node(const std::string &_nodeName, const std::string &signalName){
-    bool is_only_not_gate = true;
-    for(int i = 0; i < signalName.size(); i++){
-        // ps : assign w6 = ~a & ~w5;
-        if(signalName[i] == '&' || signalName[i] =='|'){
-            auto leftNode = signalName.substr(0,i);
-            auto rightNode = signalName.substr(i+1, signalName.size() - i);
-            switch (signalName[i]){
-                case '&':
-                        check_not_node(leftNode);
-                        check_not_node(rightNode);
-                        insert_and_node(_nodeName);
-                        insertEdge(leftNode, _nodeName);
-                        insertEdge(rightNode, _nodeName);
-                        is_only_not_gate = false;
-                    break;
-                case '|':
-                        check_not_node(leftNode);
-                        check_not_node(rightNode);
-                        insert_or_node(_nodeName);
-                        insertEdge(leftNode, _nodeName);
-                        insertEdge(rightNode, _nodeName);
-                        is_only_not_gate = false;
-                    break;                 
-                default:
-                    break;
-            }
-        }
-    }
-    // ps: assign w1 = ~b;
-    if(is_only_not_gate){
-        check_not_node(signalName);
-        // ~b -> w1
-        insert_redundancyNode(_nodeName);
-        insertEdge(signalName, _nodeName);
-    }
-    return;
-}
-
-inline void Parse::check_not_node(const std::string &_string){
-    if(_string.find('~') == std::string::npos)
-        return;
-    if(_string.find('&') != std::string::npos )
-        return;
-    if(_string.find('|') != std::string::npos )
-        return;
-    auto index1 = _string.find('~');
-    auto notNodeName = _string.substr(index1, _string.size());              // ~node_name
-    auto originalNodeName = _string.substr(index1 + 1, _string.size()-1);  //  node_name
-    insert_not_node(notNodeName);
-    insertEdge(originalNodeName, notNodeName);
-}
-
 
 inline void Parse::insert_input_node(const std::string &_string) {
     vec_input.insert(_string);
@@ -289,9 +117,8 @@ inline void Parse::insert_not_node(const std::string &_string){
     vec_notGate.insert(_string);
     if (graphLink->is_inserted(_string)){
         if(vec_output.find(_string) != vec_output.end()){
-            // if(graphLink->modifyNodeType(_string, "not"))
+            if (graphLink->modifyNodeType(_string, "not"))
                 outputNodesIndex.insert(graphLink->getVertexIndex(_string));
-                // return;
         }
         return;
     }
@@ -435,6 +262,9 @@ void Parse::optimizeBufferNode(){
         //根据名字获取index
         int index1 = graphLink->m_vertexNameIndex.at(in_str);
         // 获取 index1 的扇出和扇入
+        // A primary output remains an observable port even when it also
+        // drives another gate. Removing this alias silently drops that port.
+        if (outputNodesIndex.count(index1)) continue;
         auto indegree_num = graphLink->m_verticesArray[index1].indegree;
         auto outdegree_num = graphLink->m_verticesArray[index1].outdegree;
         if (indegree_num == 1 && outdegree_num == 1) {

@@ -3,14 +3,20 @@
 // exports it before making it available to downstream device mapping.
 #include <autopr/algorithms/astar.h>
 #include <autopr/algorithms/mapping.h>
+#include <autopr/algorithms/combinationalValidation.h>
+#include <autopr/algorithms/irregularLayout.h>
 #include <autopr/graph/circuitGraph.h>
 #include <autopr/graph/parse.h>
 #include <autopr/grid/grid.h>
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <fcntl.h>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <set>
@@ -18,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 using namespace fcngraph;
@@ -33,71 +40,28 @@ std::string quote(const std::string& value) {
     }
     out << '"'; return out.str();
 }
-void orderLayers(std::vector<std::vector<int>>& layers,
-                 const std::vector<std::pair<int,int>>& edges) {
-    std::map<int,std::vector<int>> incoming, outgoing;
-    for (auto edge : edges) { incoming[edge.second].push_back(edge.first); outgoing[edge.first].push_back(edge.second); }
-    auto sweep = [&](bool forward) {
-        std::map<int,double> positions;
-        for (const auto& layer : layers) for (std::size_t i=0;i<layer.size();++i) positions[layer[i]]=i;
-        for (std::size_t offset=0;offset<layers.size();++offset) {
-            auto& layer=layers[forward ? offset : layers.size()-offset-1];
-            const auto& adjacent=forward ? incoming : outgoing;
-            std::map<int,double> score;
-            for (int node:layer) {
-                auto found=adjacent.find(node); double sum=0; std::size_t count=0;
-                if (found!=adjacent.end()) for(int other:found->second) { sum+=positions[other]; ++count; }
-                score[node]=count ? sum/count : positions[node];
-            }
-            std::stable_sort(layer.begin(),layer.end(),[&](int a,int b){return score[a]<score[b];});
-            for(std::size_t i=0;i<layer.size();++i) positions[layer[i]]=i;
-        }
-    };
-    for(int i=0;i<4;++i) { sweep(true); sweep(false); }
+void diagnostics(std::ostream& out, const IrregularLayoutResult& result) {
+    out << ",\"selected_seed\":" << quote(result.selectedSeed)
+        << ",\"search_budget_expired\":" << (result.budgetExpired ? "true" : "false")
+        << ",\"objective\":\"occupied_tile_area_then_physical_cells_then_route_length\""
+        << ",\"metrics\":{\"width\":" << result.metrics.width
+        << ",\"height\":" << result.metrics.height << ",\"area_tiles\":" << result.metrics.area
+        << ",\"physical_cells\":" << result.metrics.physicalCells << "},\"attempts\":[";
+    bool first = true;
+    for (const auto& attempt : result.attempts) {
+        if (!first) out << ',';
+        first = false;
+        out << "{\"seed\":" << quote(attempt.seed) << ",\"valid\":" << (attempt.valid ? "true" : "false")
+            << ",\"budget_expired\":" << (attempt.budgetExpired ? "true" : "false")
+            << ",\"seconds\":" << attempt.elapsedSeconds << ",\"area_tiles\":" << attempt.metrics.area
+            << ",\"physical_cells\":" << attempt.metrics.physicalCells << ",\"error\":" << quote(attempt.error) << '}';
+    }
+    out << ']';
 }
-std::string validateMapping(Parse& parse, CircuitGraph& graph) {
-    NodeLinkMap links;
-    std::set<position> occupied;
-    for(const auto& node:graph.nodeIndex_pos) {
-        if(!occupied.insert(node.second).second) return "multiple nodes share a coordinate";
-        links[{node.second,parse.getNodeType(node.first)}]={{},{}};
-    }
-    std::set<std::pair<int,int>> expected;
-    for(auto edge:parse.getEffectiveEdges()) expected.insert(edge);
-    if(graph.routes.size()!=expected.size()) return "route count does not equal effective-edge count";
-    std::map<unsigned int,std::set<position>> sinkPorts;
-    std::vector<std::vector<position>> geometry;
-    for(const auto& route:graph.routes) {
-        const auto edge=route.first; const auto& path=route.second;
-        if(!expected.count({edge.first,edge.second})) return "unexpected route edge";
-        if(path.size()<2) return "route has fewer than two coordinates";
-        if(!graph.nodeIndex_pos.count(edge.first)||!graph.nodeIndex_pos.count(edge.second)) return "route references missing node";
-        if(path.front()!=graph.nodeIndex_pos.at(edge.first)||path.back()!=graph.nodeIndex_pos.at(edge.second)) return "route endpoints disagree with node positions";
-        if(!sinkPorts[edge.second].insert(path[path.size()-2]).second) return "multiple fanins share a physical sink port";
-        std::set<position> unique;
-        for(std::size_t i=0;i<path.size();++i) {
-            if(!unique.insert(path[i]).second) return "route repeats a coordinate";
-            if(i && std::abs(static_cast<long long>(path[i].first)-path[i-1].first)+std::abs(static_cast<long long>(path[i].second)-path[i-1].second)!=1) return "route is not four-connected";
-        }
-        links[{path.front(),parse.getNodeType(edge.first)}].second.push_back(path[1]);
-        links[{path.back(),parse.getNodeType(edge.second)}].first.push_back(path[path.size()-2]);
-        geometry.push_back(path);
-    }
-    for(auto& node:links) for(auto* ports:{&node.second.first,&node.second.second}) {
-        std::sort(ports->begin(),ports->end()); ports->erase(std::unique(ports->begin(),ports->end()),ports->end());
-    }
-    Mapping mapping;
-    mapping.node_mapping(links,MappingMode::Combinational);
-    mapping.mapping_line(geometry,MappingMode::Combinational);
-    std::string error;
-    if(!mapping.validate_crossovers(&error)) return "device crossover mapping: "+error;
-    return {};
-}
-void snapshot(const std::filesystem::path& output, Parse& parse, CircuitGraph& graph,
+void snapshot(std::ostream& out, Parse& parse, CircuitGraph& graph,
               const GridChessboard& board, const std::vector<std::vector<int>>& layers,
               const std::string& algorithm, bool routed, const std::string& validationError,
-              double elapsed) {
-    std::ofstream out(output); if(!out) throw std::runtime_error("Cannot write native candidate snapshot");
+              double elapsed, const IrregularLayoutResult& result) {
     out << "{\n\"schema\":\"ifcn.native_candidate.v1\",\"algorithm\":" << quote(algorithm)
         << ",\"routed\":" << (routed?"true":"false") << ",\"native_mapping_valid\":" << (validationError.empty()&&routed?"true":"false")
         << ",\"native_validation_error\":" << quote(validationError) << ",\"run_time_s\":" << elapsed << ",\"layers\":[";
@@ -125,40 +89,146 @@ void snapshot(const std::filesystem::path& output, Parse& parse, CircuitGraph& g
         if(!first)out<<',';first=false;
         out << "{\"x\":" << entry.first.first << ",\"y\":" << entry.first.second << ",\"phase\":" << entry.second.getPhase() << '}';
     }
-    const auto& stats=graph.getAdaptiveExpansionStats();
-    out << "],\"expansion\":{\"inserted_rows\":"<<stats.insertedRows<<",\"inserted_columns\":"<<stats.insertedColumns<<",\"accepted_rounds\":"<<stats.acceptedRounds<<"}}\n";
+    out << ']';
+    diagnostics(out, result);
+    out << "}\n";
     if(!out) throw std::runtime_error("Failed writing native candidate snapshot");
 }
-}
-int main(int argc,char** argv) {
+
+void writeExclusiveSnapshot(const std::filesystem::path& output, const std::string& contents) {
+    const auto temporary = std::filesystem::path(output.string() + ".part");
+    const int descriptor = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+    if (descriptor < 0)
+        throw std::runtime_error("Cannot create candidate snapshot without overwriting: " +
+                                 output.string() + ": " + std::strerror(errno));
+    std::size_t offset = 0;
+    while (offset < contents.size()) {
+        const auto count = ::write(descriptor, contents.data() + offset, contents.size() - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            const std::string error = std::strerror(errno);
+            ::close(descriptor);
+            std::filesystem::remove(temporary);
+            throw std::runtime_error("Failed writing candidate snapshot: " + error);
+        }
+        offset += static_cast<std::size_t>(count);
+    }
+    if (::close(descriptor) != 0) {
+        const std::string error = std::strerror(errno);
+        std::filesystem::remove(temporary);
+        throw std::runtime_error("Failed closing candidate snapshot: " + error);
+    }
+    // Publish only complete JSON files. A hard link atomically refuses an
+    // existing destination, unlike rename(), which may replace one.
     try {
-        if(argc!=4) {std::cerr<<"Usage: ifcn_combinational_pnr <compact|june_random> <input.v> <candidate.json>\n";return 2;}
-        const std::string algorithm=argv[1];
-        if(algorithm!="compact"&&algorithm!="june_random") throw std::runtime_error("Unknown native algorithm");
-        Parse parse; parse.parseVerilog(argv[2]);
-        if(!parse.get_input_num()||!parse.get_output_num()) throw std::runtime_error("Circuit must have primary inputs and outputs");
-        parse.optimizeAIOG_DRC(2,2,2,2,2,2);
-        if(algorithm=="june_random") parse.addLayerRedundancyNode(); else parse.optimizeBufferNode();
-        parse.caculateSameLayerNodeRoutePair();
+        std::filesystem::create_hard_link(temporary, output);
+    } catch (...) {
+        std::filesystem::remove(temporary);
+        throw;
+    }
+    std::filesystem::remove(temporary);
+}
+}
+int main(int argc, char** argv) {
+    try {
+        if (argc < 4 || std::string(argv[1]) != "irregular") {
+            std::cerr << "Usage: ifcn_combinational_pnr irregular <input.v> <candidate.json> [--budget seconds] [--attempts count] [--candidates-dir directory]\n";
+            return 2;
+        }
+        IrregularLayoutOptions options;
+        std::filesystem::path candidatesDirectory;
+        for (int i = 4; i < argc; ++i) {
+            const std::string flag = argv[i];
+            if (++i == argc) throw std::runtime_error("Missing value for " + flag);
+            std::size_t parsed = 0;
+            const std::string value = argv[i];
+            if (flag == "--candidates-dir") {
+                if (!candidatesDirectory.empty() || value.empty())
+                    throw std::runtime_error("--candidates-dir requires one nonempty directory path");
+                candidatesDirectory = std::filesystem::absolute(value).lexically_normal();
+                continue;
+            }
+            if (flag == "--budget") options.timeBudgetSeconds = std::stod(value, &parsed);
+            else if (flag == "--attempts") options.maxAttempts = std::stoi(value, &parsed);
+            else throw std::runtime_error("Unknown option: " + flag);
+            if (parsed != value.size()) throw std::runtime_error("Invalid numeric value for " + flag);
+        }
+        const auto started = std::chrono::steady_clock::now();
+        std::size_t candidateNumber = 0;
+        if (!candidatesDirectory.empty()) {
+            if (std::filesystem::exists(candidatesDirectory)) {
+                if (!std::filesystem::is_directory(candidatesDirectory) ||
+                    !std::filesystem::is_empty(candidatesDirectory))
+                    throw std::runtime_error("Candidate directory must be empty; refusing to overwrite: " +
+                                             candidatesDirectory.string());
+            } else {
+                std::filesystem::create_directories(candidatesDirectory);
+            }
+            candidatesDirectory = std::filesystem::weakly_canonical(candidatesDirectory);
+            const auto finalPath = std::filesystem::weakly_canonical(std::filesystem::absolute(argv[3]));
+            if (finalPath.parent_path() == candidatesDirectory &&
+                finalPath.filename().string().rfind("candidate_", 0) == 0)
+                throw std::runtime_error("Final output conflicts with reserved candidate snapshot filenames");
+            options.onCandidate = [&](Parse& parse, const GraphDrawCandidate& candidate,
+                                      const CombinationalLayoutMetrics& metrics, const std::string& seed) {
+                if (!metrics.valid) throw std::runtime_error("Observer received an invalid candidate");
+                GridChessboard board;
+                Astar router(board, false, 240.0);
+                CircuitGraph graph(parse, argv[2], board, router);
+                graph.nodeIndex_pos = candidate.nodePositions;
+                graph.routes = candidate.routes;
+                board.gridMap = candidate.gridCells;
+                std::vector<std::vector<int>> layers;
+                for (const auto& layer : parse.getlayerNodeDivVec()) layers.emplace_back(layer.begin(), layer.end());
+                IrregularLayoutResult observation;
+                observation.success = true;
+                observation.selectedSeed = seed;
+                observation.metrics = metrics;
+                observation.elapsedSeconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - started).count();
+                std::ostringstream data;
+                snapshot(data, parse, graph, board, layers, "irregular", true, {},
+                         observation.elapsedSeconds, observation);
+                std::ostringstream name;
+                name << "candidate_" << std::setw(6) << std::setfill('0') << ++candidateNumber << ".json";
+                writeExclusiveSnapshot(candidatesDirectory / name.str(), data.str());
+            };
+        }
+        const auto result = searchIrregularLayout(argv[2], options,
+            [](const GraphDrawSearchProgress& progress) {
+                if (progress.improved) std::cerr << progress.message << '\n';
+            });
+        if (!result.success || !result.parse) {
+            std::ofstream out(argv[3]);
+            if (!out) throw std::runtime_error("Cannot write failure diagnostic");
+            out << "{\"schema\":\"ifcn.native_candidate.v1\",\"algorithm\":\"irregular\","
+                << "\"routed\":false,\"native_mapping_valid\":false,\"native_validation_error\":"
+                << quote(result.error) << ",\"run_time_s\":" << result.elapsedSeconds
+                << ",\"layers\":[],\"nodes\":[],\"edges\":[],\"routes\":[],\"cells\":[]";
+            diagnostics(out, result);
+            out << "}\n";
+            std::cerr << result.error << '\n';
+            return 10;
+        }
+        auto& parse = *result.parse;
+        GridChessboard board;
+        Astar router(board, false, 240.0);
+        CircuitGraph graph(parse, argv[2], board, router);
+        graph.nodeIndex_pos = result.layout.nodePositions;
+        graph.routes = result.layout.routes;
+        board.gridMap = result.layout.gridCells;
         std::vector<std::vector<int>> layers;
-        for(const auto& layer:parse.getlayerNodeDivVec()) layers.emplace_back(layer.begin(),layer.end());
-        GridChessboard board; Astar router(board,false,algorithm=="compact"?240.0:40.0);
-        router.setAllowInterSourceWireOverlap(false);
-        CircuitGraph graph(parse,argv[2],board,router);
-        graph.setFitnessCallback([](const std::string& m){std::cerr<<m<<'\n';});
-        const auto start=std::chrono::steady_clock::now(); bool routed=false;
-        if(algorithm=="compact") {
-            router.setOccupiedWirePenalty(0.0); orderLayers(layers,parse.getEffectiveEdges());
-            graph.sortNodesByFixedLayerOrder(layers,1,1,2,2);
-            routed=graph.routeCompactRandomClockWithExpansion(4,12,8,240.0,4);
-        } else routed=graph.placeAndRouteJuneRandomClock(4,40.0,24);
-        std::string error;
-        if(!routed) error="Native placement/routing did not find a legal candidate";
-        else if(!graph.validateAssignedRoutePhases(4)) error="Native phase contract validation failed";
-        else error=validateMapping(parse,graph);
-        const double elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
-        snapshot(argv[3],parse,graph,board,layers,algorithm,routed,error,elapsed);
-        if(!error.empty()){std::cerr<<error<<'\n';return 10;}
-        std::cout<<"IFCN_NATIVE_CANDIDATE_READY\n";return 0;
-    } catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
+        for (const auto& layer : parse.getlayerNodeDivVec()) layers.emplace_back(layer.begin(), layer.end());
+        const auto validation = validateCombinationalLayout(parse, graph, 4, 4);
+        std::ofstream out(argv[3]);
+        if (!out) throw std::runtime_error("Cannot write native candidate snapshot");
+        snapshot(out, parse, graph, board, layers, "irregular", result.success,
+                 validation.error, result.elapsedSeconds, result);
+        if (!validation.valid) { std::cerr << validation.error << '\n'; return 10; }
+        std::cout << "IFCN_NATIVE_CANDIDATE_READY\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
 }

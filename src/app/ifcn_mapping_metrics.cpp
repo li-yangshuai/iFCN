@@ -262,6 +262,9 @@ int main(int argc, char **argv)
         std::cerr << "invalid crossover mapping: " << crossoverError << '\n';
         return 4;
     }
+    // A cell count is not a valid result when routes disconnect or different
+    // sources share a physical site, including in combinational mode.
+    auto physicalSites = mapping.physicalCellSites(routePaths, mappingMode);
     double ioContractionSeconds = 0.0;
     if (contractIoPorts) {
         const auto contractionStart = std::chrono::steady_clock::now();
@@ -273,39 +276,28 @@ int main(int argc, char **argv)
     const auto crossCellsByPath = mapping.crossline_list;
     const auto nodeCellsByType = mapping.nodecell_list;
 
-    std::vector<position> routeCells;
-    for (const auto &pathEntry : routeCellsByPath) {
-        for (const auto &segment : pathEntry.second) {
-            routeCells.insert(routeCells.end(), segment.begin(), segment.end());
+    // Optional contraction removes XY sites after the topology has passed
+    // DRC. Count exactly the same retained layer sites as the QCA exporter.
+    if (contractIoPorts) {
+        std::set<position> retained;
+        for (const auto &bucket : nodeCellsByType) {
+            retained.insert(bucket.second.begin(), bucket.second.end());
+        }
+        for (const auto &routes : {routeCellsByPath, crossCellsByPath}) {
+            for (const auto &route : routes) {
+                for (const auto &segment : route.second) {
+                    retained.insert(segment.begin(), segment.end());
+                }
+            }
+        }
+        for (auto site = physicalSites.begin(); site != physicalSites.end();) {
+            if (retained.count(site->xy) == 0) site = physicalSites.erase(site);
+            else ++site;
         }
     }
-
-    std::vector<position> nodeCells;
-    for (const auto &typeEntry : nodeCellsByType) {
-        nodeCells.insert(nodeCells.end(), typeEntry.second.begin(), typeEntry.second.end());
-    }
-
-    std::unordered_set<position, MappingPositionHash> crossCellSet;
     std::size_t crossCount = 0;
-    for (const auto &pathEntry : crossCellsByPath) {
-        crossCount += pathEntry.second.size();
-        for (const auto &segment : pathEntry.second) {
-            crossCellSet.insert(segment.begin(), segment.end());
-        }
-    }
-
-    std::vector<position> countedRouteCells;
-    countedRouteCells.reserve(routeCells.size());
-    std::unordered_set<position, MappingPositionHash> seenRouteCells;
-    for (const position &cell : routeCells) {
-        if (crossCellSet.find(cell) != crossCellSet.end()) {
-            countedRouteCells.push_back(cell);
-        } else if (seenRouteCells.insert(cell).second) {
-            countedRouteCells.push_back(cell);
-        }
-    }
-
-    const std::size_t cellCount = countedRouteCells.size() + nodeCells.size();
+    for (const auto &route : crossCellsByPath) crossCount += route.second.size();
+    const std::size_t cellCount = physicalSites.size();
     std::cout << cellCount << ' ' << crossCount;
     if (printTiming) {
         std::cout << ' ' << std::fixed << std::setprecision(9) << ioContractionSeconds;

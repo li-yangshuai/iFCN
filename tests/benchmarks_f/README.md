@@ -2,10 +2,10 @@
 
 [项目说明](../../README.md) · [English guide](../../README.en.md)
 
-此目录保留布局布线算法所需的 Verilog/SystemVerilog 输入和 `.ifcn` 电路。
+此目录保留布局布线算法所需的 Verilog/SystemVerilog 输入及必要的时序约束。
 QCA、波形、绘图和实验汇总由工具按需生成到构建或输出目录。
 
-This directory retains HDL inputs used by the algorithms and `.ifcn` layouts.
+This directory retains algorithm HDL inputs and required sequential constraints.
 Generate QCA designs, waveforms, figures and experiment summaries in a build or
 output directory.
 
@@ -17,14 +17,12 @@ output directory.
 | `original_TOY/`, `original_large/` | 保留的基准源表示 / Preserved source representations |
 | `SEQUENTIAL/` | 时序前端、状态边界、约束和验证程序 / Sequential inputs, constraints and validators |
 
-初次运行可用 `TOY/xnor2.v`；门级映射样例见
-[`../cell_level_examples/GoodiFCN/`](../cell_level_examples/GoodiFCN/)。
-Pi 集成使用独立的冻结快照 [`../benchmarks_pi/v1/`](../benchmarks_pi/v1/)，
-通过 `python3 integrations/pi/curate_benchmarks.py --check` 从仓库根目录校验。
+初次运行可用 `TOY/xnor2.v`；按算法分类的版图见
+[`../../examples/`](../../examples/)。
+README 的全流程演示使用 [`TOY/xor2_demo.v`](TOY/xor2_demo.v)。
 
-Start with `TOY/xnor2.v`. Gate-mapping examples live in
-`../cell_level_examples/GoodiFCN/`. The Pi integration uses a separate versioned
-snapshot; its checker verifies source hashes and complete truth tables.
+Start with `TOY/xnor2.v`. Layouts are organized by algorithm in
+`../../examples/`. The README walkthrough uses `TOY/xor2_demo.v`.
 
 源基准的历史来源包括 [MNT Bench](https://www.cda.cit.tum.de/mntbench/)、
 [Trindade16](https://ieeexplore.ieee.org/document/7724048)、

@@ -1,4 +1,7 @@
 #include"genetic.h"
+#include <cmath>
+#include <numeric>
+#include <stdexcept>
 
 namespace fcngraph{
 
@@ -7,20 +10,19 @@ void GeneticAlgorithm::setFitnessCallback(const std::function<void(double)> &cal
 }
 
 uint64_t GeneticAlgorithm::getRandomNumber(uint64_t m, uint64_t n){
+    if (m >= n) throw std::invalid_argument("Empty genetic random-index range");
     static std::random_device rd;
     static std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(m, n-1);
+    std::uniform_int_distribution<uint64_t> dis(m, n-1);
     return dis(gen);
 }
 
 void GeneticAlgorithm::crossover(Individual &parent1, Individual &parent2) {
-    assert(parent1.nodeindex_pos.size() == parent2.nodeindex_pos.size() && parent2.nodeindex_pos.size() == genSize);
+    if (genSize < 2 || parent1.nodeindex_pos.size() != genSize || parent2.nodeindex_pos.size() != genSize) return;
 
     uint64_t point1 = getRandomNumber(0, genSize);
-    uint64_t point2 = getRandomNumber(0, genSize);
-    while (point1 == point2) {
-        point2 = getRandomNumber(0, genSize);
-    }
+    uint64_t point2 = getRandomNumber(0, genSize - 1);
+    if (point2 >= point1) ++point2;
     if (point1 > point2) {
         std::swap(point1, point2);
     }
@@ -36,66 +38,53 @@ void GeneticAlgorithm::crossover(Individual &parent1, Individual &parent2) {
         ++it1;
         ++it2;
     }
+    parent1.infoReset();
+    parent2.infoReset();
 }
 
 
 void GeneticAlgorithm::mutate(Individual &individual) {
-    auto sz = static_cast<std::size_t>(genSize / 4);
-    std::set<position> usedPositions;
-
-    // 初始化集合，存储当前所有节点的位置
-    for (const auto& entry : individual.nodeindex_pos) {
-        usedPositions.insert(entry.second);
-    }
-
-    for (std::size_t i = 0; i < sz; ++i) {
-        auto randomIndex = getRandomNumber(0, individual.nodeindex_pos.size());
-        auto it = individual.nodeindex_pos.begin();
-        std::advance(it, randomIndex);
-
-        if (it != individual.nodeindex_pos.end()) {
-            position newPos;
-            do {
-                newPos = chessboard.randomPosition();
-            } while (usedPositions.find(newPos) != usedPositions.end());  // 确保位置不重复
-
-            // 更新位置
-            usedPositions.erase(it->second);  // 从集合中移除旧位置
-            it->second = newPos;  // 更新到新位置
-            usedPositions.insert(newPos);  // 将新位置加入集合
-        }
-    }
+    individual.mutateNodes(std::max<std::size_t>(1, genSize / 4));
 }
 
 void GeneticAlgorithm::reserve_the_best(){
-    auto it = std::max_element(populations.begin(), populations.end());
-    if (it->is_routed) {
-        best_individuals.push_back(*it);
+    Individual* best = nullptr;
+    for (auto& individual : populations) {
+        if (!std::isfinite(individual.getfitness()) || !individual.is_routed || !individual.validateLayout()) continue;
+        if (!best || individual.getfitness() > best->getfitness()) best = &individual;
+    }
+    if (best && (best_individuals.empty() || best->getfitness() > best_individuals.back().getfitness())) {
+        best_individuals.push_back(*best);
         if (fitnessCallback) {
-            fitnessCallback(it->getfitness());  // Call the callback with the fitness value
+            fitnessCallback(best->getfitness());
         }
     }
 }
 
 
-void GeneticAlgorithm::select_next_generation() noexcept {
-    assert(!populations.empty());
+void GeneticAlgorithm::select_next_generation() {
+    if (populations.empty() || populationSize == 0) return;
 
     // Calculate the total fitness of the current population
-    long double fitness_sum = 0.0;
+    long double maximum = 0.0;
     for (const auto& individual : populations) {
-        fitness_sum += individual.getfitness();
+        if (std::isfinite(individual.getfitness())) maximum = std::max(maximum, individual.getfitness());
     }
-    if (fitness_sum == 0) return;  // Prevent division by zero
+    std::vector<long double> weights;
+    for (const auto& individual : populations) {
+        const auto fitness = individual.getfitness();
+        weights.push_back(maximum > 0 ? (std::isfinite(fitness) && fitness > 0 ? fitness / maximum : 0) : 1);
+    }
+    const long double fitness_sum = std::accumulate(weights.begin(), weights.end(), 0.0L);
 
     // Calculate relative fitness and cumulative fitness
-    std::vector<long double> refitness(populationSize, 0.0);
-    std::vector<long double> cfitness(populationSize, 0.0);
-    refitness[0] = populations[0].getfitness() / fitness_sum;
+    std::vector<long double> refitness(populations.size(), 0.0);
+    std::vector<long double> cfitness(populations.size(), 0.0);
+    refitness[0] = weights[0] / fitness_sum;
     cfitness[0] = refitness[0];
 
     for (std::size_t i = 1; i < populations.size(); ++i) {
-        refitness[i] = populations[i].getfitness() / fitness_sum;
+        refitness[i] = weights[i] / fitness_sum;
         cfitness[i] = cfitness[i - 1] + refitness[i];
     }
 
@@ -123,7 +112,7 @@ void GeneticAlgorithm::select_next_generation() noexcept {
     // Optionally keep the best individual if not already included
     if (!best_individuals.empty()) {
         // Make sure the best individual is added to the new generation
-        new_populations.back() = std::move(best_individuals.back());
+        new_populations.back() = best_individuals.back();
     }
 
     // Replace the old population with the new one
@@ -134,18 +123,20 @@ bool GeneticAlgorithm::gaRun(){
     static std::random_device engine;
     static std::uniform_real_distribution<double> dis(0.0, 1.0);
 
-    if(!populations.empty()){
-        populations.clear();
-        best_individuals.clear();
-    }
+    populations.clear();
+    best_individuals.clear();
+    if (!generationSize || !populationSize || !genSize ||
+        !std::isfinite(crossoverRate) || crossoverRate < 0 || crossoverRate > 1 ||
+        !std::isfinite(mutationRate) || mutationRate < 0 || mutationRate > 1) return false;
 
     //产生初代种群
-    for(int i = 0; i < populationSize; i++){
+    for(uint64_t i = 0; i < populationSize; i++){
         populations.push_back(Individual(parse, chessboard, astar));
+        if (populations.back().nodeindex_pos.size() != genSize) return false;
     }
 
     //迭代进化
-    for(int i = 0; i < generationSize; i++){
+    for(uint64_t i = 0; i < generationSize; i++){
         for(auto &individual: populations){
             individual.infoReset();
             individual.computeFitness();
@@ -154,11 +145,9 @@ bool GeneticAlgorithm::gaRun(){
         reserve_the_best();
         select_next_generation();
 
-        for (auto it1 = populations.begin(), it2 = populations.begin() + 1;
-            it1 < populations.end() - 1; it1 += 2, it2 += 2) {
-            if (it2 == populations.end()) break;  // 如果 it2 是末尾，停止循环
+        for (std::size_t index = 0; index + 1 < populations.size(); index += 2) {
             if (dis(engine) < crossoverRate) {
-                crossover(*it1, *it2);
+                crossover(populations[index], populations[index + 1]);
             }
         }
 

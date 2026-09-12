@@ -1,7 +1,7 @@
 /*
 verilog解析结果注意点：
     1. node的总数 <= 输入、输出、与门、或门等等的总和，因为有的节点既是逻辑门又是输出
-    2.禁止使用  assign n5 = x1 | x2 | ~n4; 需要使用  assign n5 = (x1) | (x2) | (~n4),否则无法识别出择多门;
+    2. 标量表达式按 ~、&、^、| 优先级解析；仅三文字的完整两两乘积之和识别为多数门。
     3. max_layer 是从第1层开始计算的
 */
 
@@ -18,6 +18,7 @@ verilog解析结果注意点：
 #include<cassert>
 #include<boost/algorithm/string.hpp>
 #include <memory>
+#include "scalarParseOptions.h"
 
 namespace fcngraph{
 
@@ -27,7 +28,10 @@ namespace fcngraph{
         Parse():graphLink(std::make_shared<CrossGraphLink<AbstractNode>>()) {}
         ~Parse(){}
 
-        void parseVerilog(std::string _fileName);
+        void parseVerilog(std::string _fileName,
+                          ifcn::verilog::OutputBoundaryMode outputBoundaryMode =
+                              ifcn::verilog::OutputBoundaryMode::Combinational,
+                          bool allowMajority = true);
 
         //对外接口，获取电路基本信息
         inline std::string get_moduleName()         {return moduleName;}
@@ -120,16 +124,11 @@ namespace fcngraph{
 
     private:
         //parse verilog file
-        bool is_parseModuleName (const std::string &_lineString);
-        bool is_parseInputNode  (const std::string &_lineString);
-        bool is_parseOutputNode (const std::string &_lineString);
-        bool is_parseWireGate   (const std::string &_lineString);
-        void is_parseLogicNode  (const std::string &_lineString);
-        void parse_logicNode_string(std::string &nodeName, std::string & lineString, int &_seqNo);
+        void parse_logicNode_string(const std::string& nodeName, const std::string& lineString,
+                                    ifcn::verilog::OutputBoundaryMode outputBoundaryMode,
+                                    bool allowMajority);
         
         // create logic node
-        inline void check_not_node(const std::string &_string);
-        inline void check_and_or_node(const std::string &_nodeName, const std::string &signalName);
         inline void insert_input_node       (const std::string &_string);
         inline void insert_output_node      (const std::string &_string);
         inline void insert_or_node          (const std::string &_string);
@@ -150,7 +149,6 @@ namespace fcngraph{
      
     private:
         std::shared_ptr<CrossGraphLink<AbstractNode>>graphLink;
-        std::vector<std::string> verilogParseContainer; 
         std::string moduleName;
         std::set<std::string> vec_input;
         std::set<std::string> vec_output; 

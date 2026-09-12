@@ -135,7 +135,7 @@ int main(int argc, char **argv)
         }
     });
 
-    if (!graph.placeAndRouteJuneRandomClock(4, gridSize, routeOrderRetries)) {
+    if (!graph.routeBufferedGraphvizSeed(4, gridSize, routeOrderRetries)) {
         std::cerr << "June random-clock Graph P&R candidate failed: grid=/"
                   << gridSize << ", A* cost=" << searchCost << ".\n";
         return 10;

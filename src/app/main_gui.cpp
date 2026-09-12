@@ -5,9 +5,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QMenu>
+#include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QToolButton>
 #include <QtGlobal>
 #include <cmath>
 #include <stdexcept>
@@ -453,10 +456,12 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
         const QString inputPath = qEnvironmentVariable("IFCN_UI_SCREENSHOT_INPUT").trimmed();
         const QString viewName = qEnvironmentVariable("IFCN_UI_SCREENSHOT_VIEW").trimmed();
         const QString sourcePath = qEnvironmentVariable("IFCN_UI_SOURCE_FILE").trimmed();
-        const QStringList supportedViews = {"source", "layout", "schematic", "structure", "waveform"};
+        const QStringList supportedViews = {"source", "layout", "schematic", "structure", "waveform",
+                                            "algorithms", "export-menu"};
+        const bool menuCapture = viewName == "algorithms" || viewName == "export-menu";
         if (path.isEmpty() || inputPath.isEmpty() || !supportedViews.contains(viewName)
             || QFileInfo(path).suffix().compare("png", Qt::CaseInsensitive) != 0) {
-            throw std::runtime_error("Set IFCN_UI_SCREENSHOT=<output.png>, IFCN_UI_SCREENSHOT_INPUT=<input>, and IFCN_UI_SCREENSHOT_VIEW=source|layout|schematic|structure|waveform");
+            throw std::runtime_error("Set IFCN_UI_SCREENSHOT=<output.png>, IFCN_UI_SCREENSHOT_INPUT=<input>, and IFCN_UI_SCREENSHOT_VIEW=source|layout|schematic|structure|waveform|algorithms|export-menu");
         }
         const QFileInfo inputInfo(inputPath);
         const QString suffix = inputInfo.suffix().toLower();
@@ -488,10 +493,10 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
             }
             captureWidget = waveform;
             captureWidget->resize(1600, 1040);
-        } else if (viewName == "source") {
+        } else if (viewName == "source" || (menuCapture && suffix == "v")) {
             if (suffix != "v") throw std::runtime_error("Source capture requires a Verilog .v file");
             editor = mainWindow.openVerilogSourceInNewTab(inputText, inputInfo.absoluteFilePath());
-            captureWidget = editor->verilogSourceDock;
+            if (!menuCapture) captureWidget = editor->verilogSourceDock;
             QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
             font.setPointSize(14);
             editor->verilogSourceEditor->setFont(font);
@@ -524,9 +529,40 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
             }
         }
 
+        QMenu *captureMenu = nullptr;
+        QAction *highlightedAction = nullptr;
+        if (menuCapture) {
+            if (viewName == "algorithms") {
+                auto *button = editor->findChild<QToolButton *>(QStringLiteral("primaryAlgorithmButton"));
+                if (button != nullptr) captureMenu = button->menu();
+            } else {
+                for (QAction *action : editor->menuBar()->actions()) {
+                    if (action->text().remove('&') == QStringLiteral("View")) {
+                        captureMenu = action->menu();
+                        break;
+                    }
+                }
+            }
+            if (captureMenu == nullptr || captureMenu->actions().isEmpty()) {
+                throw std::runtime_error("Requested screenshot menu is unavailable");
+            }
+            for (QAction *action : captureMenu->actions()) {
+                const QString label = action->text().remove('&');
+                if ((viewName == "algorithms" && label.startsWith(QStringLiteral("2DDWave")))
+                    || (viewName == "export-menu" && label == QStringLiteral("Save cell-level layout"))) {
+                    highlightedAction = action;
+                    break;
+                }
+            }
+            // Capture the real popup without triggering any menu action. In
+            // particular, this must not start P&R or open a save dialog.
+            captureWidget = captureMenu;
+            captureMenu->popup(mainWindow.mapToGlobal(QPoint(40, 80)));
+        }
+
         // Host the actual dock in its own window for a readable, unclipped view,
         // including its native filename/title bar. Only this batch session changes.
-        if (captureWidget != &mainWindow && viewName != "waveform") {
+        if (captureWidget != &mainWindow && viewName != "waveform" && !menuCapture) {
             auto *captureWindow = new QMainWindow;
             auto *dock = qobject_cast<QDockWidget *>(captureWidget);
             captureWindow->setWindowTitle(dock->windowTitle());
@@ -539,12 +575,13 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
                                   viewName == "source" ? sourceHeight : 900);
         }
         captureWidget->show();
-        QTimer::singleShot(250, captureWidget, [editor, captureWidget, viewName]() {
+        QTimer::singleShot(250, captureWidget, [editor, captureWidget, viewName, captureMenu, highlightedAction]() {
             if (editor != nullptr) {
                 editor->centerViewOnItems();
                 editor->circuitSchematicView->fitToCircuit();
                 if (viewName == "structure") editor->structure3DView->fitToStructure();
             }
+            if (captureMenu != nullptr) captureMenu->setActiveAction(highlightedAction);
             captureWidget->update();
         });
         QTimer::singleShot(800, captureWidget, [&app, captureWidget, path]() {
@@ -626,7 +663,7 @@ int main(int argc,char *argv[])
     const QString automaticSchematicExportPath = environmentPath(
         "IFCN_AUTO_EXPORT_CIRCUIT_SCHEMATIC", "IFCN_EXPORT_CIRCUIT_SCHEMATIC");
     const QString automaticGraphRenderPath = environmentPath(
-        "IFCN_AUTO_GRAPH_RENDER_FILE", "IFCN_COMPACT_GRAPH_INPUT");
+        "IFCN_AUTO_GRAPH_RENDER_FILE", "IFCN_IRREGULAR_INPUT");
     QStringList inputPaths;
     const QStringList commandLine = app.arguments();
     for (int index = 1; index < commandLine.size(); ++index) {
@@ -668,11 +705,11 @@ int main(int argc,char *argv[])
         }
     }
 
-    // Non-interactive production Compact Graph run for CI and reproducible
+    // Non-interactive production Irregular-Clock Graph P&R run for CI and reproducible
     // paper assets.  The handler itself saves and maps the generated IFCN,
     // LaTeX, and cell-level SVG artifacts.
     if (automaticGraphRenderRequested) {
-        qputenv("IFCN_COMPACT_GRAPH_BATCH", QByteArrayLiteral("1"));
+        qputenv("IFCN_IRREGULAR_BATCH", QByteArrayLiteral("1"));
         qputenv("IFCN_NONINTERACTIVE", QByteArrayLiteral("1"));
         QTimer::singleShot(0, &mainWindow,
             [&app, &mainWindow, automaticGraphRenderPath]() {

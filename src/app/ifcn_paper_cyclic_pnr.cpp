@@ -2442,7 +2442,8 @@ int main(int argc, char **argv)
         const auto totalStart = SteadyClock::now();
         const CommandLine command = parseCommandLine(argc, argv);
         Parse parse;
-        parse.parseVerilog(command.input);
+        parse.parseVerilog(command.input,
+                           ifcn::verilog::OutputBoundaryMode::PreserveSequential);
         if (parse.getm_numVertices() == 0)
         {
             throw std::runtime_error("legacy DAG parser produced an empty graph");

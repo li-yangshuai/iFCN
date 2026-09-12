@@ -1,0 +1,44 @@
+#circuit name: xor2_demo
+#algorithm: regular_heuristic_USE
+#mapping mode: combinational
+#primary output nodes: 2
+#phase count: 4
+#clock scheme: USE
+#clock scheme consistency: success
+#layout area: width: 3, height: 3, area: 9
+#mapped qca cells: 56
+#physical output check: not_run
+#source sha256: 32b26243fc74b77e30b9c28ff515ed13cdd62c1035fab1066f32671606f5da9e
+#nodes info
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (0,2);
+1, b, input, (1,1);
+2, y, and, (2,0);
+3, ifcn_tmp_0, or, (1,2);
+4, ifcn_tmp_1, and, (0,1);
+5, ~ifcn_tmp_1, not, (0,0);
+#nodes info
+#paths info
+### {node1, node2} : path ###
+(0,3): (0,2),(1,2);
+(0,4): (0,2),(0,1);
+(1,3): (1,1),(1,2);
+(1,4): (1,1),(0,1);
+(3,2): (1,2),(2,2),(2,1),(2,0);
+(4,5): (0,1),(0,0);
+(5,2): (0,0),(1,0),(2,0);
+#paths info
+#phase map
+### (x,y) : phase ###
+(0,0):2;
+(1,0):3;
+(2,0):0;
+(0,1):1;
+(1,1):0;
+(2,1):3;
+(0,2):0;
+(1,2):1;
+(2,2):2;
+#phase map
+#fixed clock template original origin: (0, 6)
+#validation limitation: physical output truth has not been tested.

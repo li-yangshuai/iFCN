@@ -35,28 +35,6 @@ QScreen *screenForWidget(QWidget *widget)
     return QApplication::primaryScreen();
 }
 
-struct ShiftedPosition {
-    position pos{0, 0};
-    bool valid = false;
-};
-
-ShiftedPosition shiftedPosition(const position &base, int dx, int dy)
-{
-    const auto x = static_cast<long long>(base.first) + dx;
-    const auto y = static_cast<long long>(base.second) + dy;
-    const auto maxCoord = static_cast<long long>(std::numeric_limits<unsigned int>::max());
-    if (x < 0 || y < 0 || x > maxCoord || y > maxCoord) {
-        return {};
-    }
-    return {{static_cast<unsigned int>(x), static_cast<unsigned int>(y)}, true};
-}
-
-bool containsPosition(const std::unordered_set<position, MappingPositionHash> &positions,
-                      const ShiftedPosition &candidate)
-{
-    return candidate.valid && positions.find(candidate.pos) != positions.end();
-}
-
 bool sceneCoordinates(const position &cellPos, int &xCoord, int &yCoord)
 {
     constexpr unsigned int kPitch = 20;
@@ -284,6 +262,8 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
     hasPhysicalPhaseMap = false;
     exactPhysicalPhaseTrace = false;
     metadata.clear();
+    primaryOutputs = {};
+    primaryOutputCellNames.clear();
     currentMappingFilePath = filePath;
     phaseCodecPhaseCount = 4;
     phaseCodecBlockSize = 4;
@@ -347,6 +327,16 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
     while (!in.atEnd()) {
         QString line = in.readLine().trimmed();
         if (line.isEmpty()) continue;
+        try {
+            if (primaryOutputs.observeLine(line.toStdString())) {
+                if (nodeSection || pathSection || phaseSection || physicalPhaseSection)
+                    throw std::runtime_error("IFCN primary output declaration must precede data sections");
+                continue;
+            }
+        } catch (const std::exception &error) {
+            parseError = QString::fromStdString(error.what());
+            break;
+        }
 
         if (physicalPhaseSectionKeyPattern.match(line).hasMatch()) {
             if (!physicalPhaseSectionPattern.match(line).hasMatch()) {
@@ -1301,6 +1291,7 @@ void GateLevelMapping::applyClockSchemePhaseTemplate()
 QString GateLevelMapping::validateParsedRouteGeometry() const
 {
     QHash<QPoint, int> nodeAtCoordinate;
+    QMap<int, QSet<QPoint>> inputPortsBySink;
     for (auto nodeIt = nodes.cbegin(); nodeIt != nodes.cend(); ++nodeIt) {
         nodeAtCoordinate.insert(nodeIt.value().pos, nodeIt.key());
     }
@@ -1321,6 +1312,13 @@ QString GateLevelMapping::validateParsedRouteGeometry() const
             return QStringLiteral("route %1->%2 endpoints do not match its nodes")
                 .arg(edge.first).arg(edge.second);
         }
+        const QPoint inputPort = path[path.size() - 2];
+        auto &sinkPorts = inputPortsBySink[edge.second];
+        if (sinkPorts.contains(inputPort)) {
+            return QStringLiteral("multiple fanins share one physical input port at sink node %1")
+                .arg(edge.second);
+        }
+        sinkPorts.insert(inputPort);
 
         for (qsizetype index = 1; index < path.size(); ++index) {
             const QPoint delta = path[index] - path[index - 1];
@@ -1523,12 +1521,28 @@ bool GateLevelMapping::mappingCellItem(){
         mainWindow->customStatusBar->addMessage(message);
         return false;
     }
-    std::set<PhysicalCellSite> sequentialPhysicalSites;
-    if (mappingMode == MappingMode::Sequential) {
-        // Build the directed layer-aware device topology for crossover-run
-        // pillars and exact-layer ownership DRC. Clocking is deliberately not
-        // solved on these fine sites: every site inherits its coarse tile.
-        sequentialPhysicalSites = mapping.physicalCellSites(circle_line);
+    // Validate and materialize the same layer-aware geometry in every mode.
+    // Exact source ownership and route continuity must hold before any scene
+    // item is created, including for compacted combinational templates.
+    const std::set<PhysicalCellSite> validatedPhysicalSites =
+        mapping.physicalCellSites(circle_line, mappingMode);
+    primaryOutputCellNames.clear();
+    if (primaryOutputs.isExplicit()) {
+        std::map<int, fcngraph::IfcnObservationNode> observationNodes;
+        std::map<std::pair<int, int>, std::vector<position>> observationRoutes;
+        for (auto node = nodes.cbegin(); node != nodes.cend(); ++node)
+            observationNodes.emplace(node.key(), fcngraph::IfcnObservationNode{
+                node->name.toStdString(), node->type.toStdString(), toPosition(node->pos)});
+        for (auto route = routes.cbegin(); route != routes.cend(); ++route) {
+            auto &path = observationRoutes[{route.key().first, route.key().second}];
+            for (const auto &point : route.value()) path.push_back(toPosition(point));
+        }
+        primaryOutputCellNames = fcngraph::resolveIfcnPrimaryOutputCells(
+            primaryOutputs, observationNodes, observationRoutes, mapping);
+        for (const auto &output : primaryOutputCellNames) {
+            if (validatedPhysicalSites.count(PhysicalCellSite(output.first, 0)) == 0)
+                throw std::runtime_error("mapped primary output observation cell is unavailable: " + output.second);
+        }
     }
     auto crossexample = mapping.crossline_list;
     auto nodeexample = mapping.nodecell_list;
@@ -1542,7 +1556,7 @@ bool GateLevelMapping::mappingCellItem(){
         // Clock phases belong to coarse 5x5 mapping tiles.  Validate complete
         // coverage before emitting any scene item so a missing tile cannot
         // leave a partially rendered, silently phase-0 layout behind.
-        for (const PhysicalCellSite &site : sequentialPhysicalSites) {
+        for (const PhysicalCellSite &site : validatedPhysicalSites) {
             const position tile{site.xy.first / 5, site.xy.second / 5};
             const auto phase = positionPhaseMap.find(tile);
             if (phase == positionPhaseMap.end()) {
@@ -1644,56 +1658,13 @@ bool GateLevelMapping::mappingCellItem(){
         }
     }
 
-    std::vector<position> allroutecells;
-    for (auto &pair : routeexample)
-    {
-        for (auto &v : pair.second)
-        {
-            allroutecells.insert(allroutecells.end(), v.begin(), v.end());
-        }
-        
-    }
-    std::vector<position> allnodecells;
-    for (auto &pair : nodeexample)
-    {
-        allnodecells.insert(allnodecells.end(), pair.second.begin(), pair.second.end());
-    }
-
-    std::unordered_set<position, MappingPositionHash> allcrosscellsSet;
-    if(!crossexample.empty())
-    {
-        for (auto &pair : crossexample)
-        {
-            for (auto &v : pair.second)
-            {
-                allcrosscellsSet.insert(v.begin(), v.end());
-            }
-            
-        }
-    }
-
-    // 对于线路元胞，交叉点不去重，非交叉点线路复用时去重。
-    std::vector<position> result;
-    result.reserve(allroutecells.size());
-    std::unordered_set<position, MappingPositionHash> seen;
-    for (auto &p : allroutecells) {
-        const bool isCross = allcrosscellsSet.find(p) != allcrosscellsSet.end();
-        if (isCross || seen.insert(p).second) {
-            result.push_back(p);
-        }
-    }
-    allroutecells = result;
-    std::unordered_set<position, MappingPositionHash> allroutecellsSet(allroutecells.begin(), allroutecells.end());
-
     std::size_t total_cross = 0;
     for (const auto &entry : crossexample) 
     {
         total_cross += entry.second.size();
     }
 
-    const size_t total_count = mappingMode == MappingMode::Sequential
-                                   ? sequentialPhysicalSites.size()
-                                   : allroutecells.size() + allnodecells.size();
+    const size_t total_count = validatedPhysicalSites.size();
     updateMappingMetrics(static_cast<qulonglong>(total_count),
                          static_cast<qulonglong>(total_cross));
     mainWindow->updateLayoutInfoFromMapping(*this);
@@ -1703,21 +1674,21 @@ bool GateLevelMapping::mappingCellItem(){
                           .arg(static_cast<qulonglong>(total_cross));
     mainWindow->printToStatusBar(message);
 
-    if (mappingMode == MappingMode::Sequential) {
+    {
         std::map<position, std::set<int>> layersByXy;
-        for (const PhysicalCellSite &site : sequentialPhysicalSites) {
+        for (const PhysicalCellSite &site : validatedPhysicalSites) {
             layersByXy[site.xy].insert(site.layer);
         }
         for (const auto &entry : layersByXy) {
             const std::set<int> &layers = entry.second;
             if (layers.count(1) != 0 && layers != std::set<int>{0, 1, 2}) {
                 throw std::runtime_error(
-                    "invalid sequential vertical stack at (" +
+                    "invalid mapped vertical stack at (" +
                     std::to_string(entry.first.first) + "," +
                     std::to_string(entry.first.second) + ")");
             }
         }
-        for (const PhysicalCellSite &site : sequentialPhysicalSites) {
+        for (const PhysicalCellSite &site : validatedPhysicalSites) {
             const auto exactKey = std::make_tuple(
                 site.xy.first, site.xy.second, site.layer);
             // Node templates were emitted first so their I/O/fixed function is
@@ -1732,148 +1703,6 @@ bool GateLevelMapping::mappingCellItem(){
                                                  ? CellType::CrossoverCell
                                                  : CellType::NormalCell);
             putCellItem(site.xy, site.layer, cellType, positionPhaseMap);
-        }
-    } else {
-        // Preserve the historical combinational cell materialization.
-        // Cross线路元胞放置
-        std::unordered_set<position, MappingPositionHash> crosscellSet;
-        std::unordered_set<position, MappingPositionHash> verticalcellSet;
-        if(!crossexample.empty())
-        {
-        for(auto &crossline : crossexample)
-        {
-            for(auto &cross : crossline.second)
-            {
-                crosscellSet.insert(cross.begin(), cross.end());
-            }
-        }
-
-        for(auto &crossline : crossexample)
-        {
-            for(auto &cross : crossline.second)
-            {
-                for(auto unit = cross.begin(); unit != cross.end(); unit++)
-                {
-                    if((unit == cross.begin()) || (std::next(unit) == cross.end()))
-                    {
-                        int count = 0;
-                        const position base = *unit;
-                        const auto dir1 = shiftedPosition(base, 0, 1);
-                        const auto dir2 = shiftedPosition(base, 0, -1);
-                        const auto dir3 = shiftedPosition(base, -1, 0);
-                        const auto dir4 = shiftedPosition(base, 1, 0);
-                        count += containsPosition(crosscellSet, dir1) ? 1 : 0;
-                        count += containsPosition(crosscellSet, dir2) ? 1 : 0;
-                        count += containsPosition(crosscellSet, dir3) ? 1 : 0;
-                        count += containsPosition(crosscellSet, dir4) ? 1 : 0;
-
-                        if (count >= 2) 
-                        {  
-                            putCellItem(*unit, 2, CellType::CrossoverCell, positionPhaseMap);
-                        } 
-                        else
-                        {
-                            // 若端点无法直接放置柱点，则跨时钟延伸两个单位元胞。
-                            if(containsPosition(crosscellSet, dir2)
-                            && containsPosition(allroutecellsSet, dir3)
-                            && containsPosition(allroutecellsSet, dir4)
-                            && dir1.valid)
-                            {
-                                putCellItem(*unit, 2, CellType::CrossoverCell, positionPhaseMap);
-                                putCellItem(dir1.pos, 2, CellType::CrossoverCell, positionPhaseMap);
-
-                                auto cellpos3 = shiftedPosition(dir1.pos, 0, 1);
-                                if (cellpos3.valid) {
-                                    putCellItem(cellpos3.pos, 0, CellType::VerticalCell, positionPhaseMap);
-                                    putCellItem(cellpos3.pos, 1, CellType::VerticalCell, positionPhaseMap);
-                                    putCellItem(cellpos3.pos, 2, CellType::VerticalCell, positionPhaseMap);
-                                    verticalcellSet.insert(cellpos3.pos);
-
-                                    crosscellSet.insert(dir1.pos);
-                                    crosscellSet.insert(cellpos3.pos);
-                                }
-                            }
-                            else if (containsPosition(crosscellSet, dir3)
-                            && containsPosition(allroutecellsSet, dir1)
-                            && containsPosition(allroutecellsSet, dir2)
-                            && dir4.valid)
-                            {
-                                putCellItem(*unit, 2, CellType::CrossoverCell, positionPhaseMap);
-                                putCellItem(dir4.pos, 2, CellType::CrossoverCell, positionPhaseMap);
-
-                                auto cellpos3 = shiftedPosition(dir4.pos, 1, 0);
-                                if (cellpos3.valid) {
-                                    putCellItem(cellpos3.pos, 0, CellType::VerticalCell, positionPhaseMap);
-                                    putCellItem(cellpos3.pos, 1, CellType::VerticalCell, positionPhaseMap);
-                                    putCellItem(cellpos3.pos, 2, CellType::VerticalCell, positionPhaseMap);
-                                    verticalcellSet.insert(cellpos3.pos);
-
-                                    crosscellSet.insert(dir4.pos);
-                                    crosscellSet.insert(cellpos3.pos);
-                                }
-                            }
-                            else
-                            {
-                                putCellItem(*unit, 0, CellType::VerticalCell, positionPhaseMap);
-                                putCellItem(*unit, 1, CellType::VerticalCell, positionPhaseMap);
-                                putCellItem(*unit, 2, CellType::VerticalCell, positionPhaseMap);
-                                verticalcellSet.insert(*unit);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        putCellItem(*unit, 2, CellType::CrossoverCell, positionPhaseMap);
-                    }
-                }
-            }
-        }
-        }
-
-        // Normal线路元胞放置
-        if(!routeexample.empty())
-        {
-        for(auto &line : routeexample)
-        {
-            for(auto &unit : line.second)
-            {
-                for(auto &pos : unit)
-                {
-                    if(crosscellSet.find(pos) == crosscellSet.end())
-                    {
-                        putCellItem(pos, 0, CellType::NormalCell, positionPhaseMap);
-                    }
-                    else
-                    {
-                        std::vector<position> tempcross;
-                        tempcross.reserve(unit.size());
-                        for(const auto &v : unit)
-                        {
-                            if(crosscellSet.find(v) != crosscellSet.end())
-                            {
-                                tempcross.push_back(v);
-                            }
-                        }
-                        bool isvertical = false;
-                        for (auto &cell : tempcross)
-                        {
-                            if (verticalcellSet.find(cell) != verticalcellSet.end())
-                            {
-                                isvertical = true;
-                                break;
-                            }
-                        }
-                        if (!isvertical)
-                        {
-                            for(auto &crossPos : tempcross)
-                            {
-                                putCellItem(crossPos, 0, CellType::NormalCell, positionPhaseMap);
-                            }
-                        }
-                    }
-                }
-            }
-        }
         }
     }
 
@@ -1956,6 +1785,20 @@ void GateLevelMapping::putCellItem(position _cellpos, int _celllayer, CellType _
         } else {
             qWarning() << "[GateLevelMapping] Mapped cell outside phase map; using phase 0:"
                        << _cellpos.first << _cellpos.second;
+        }
+    }
+
+    if (_celllayer == 0 && primaryOutputs.isExplicit()) {
+        const auto output = primaryOutputCellNames.find(_cellpos);
+        if (output != primaryOutputCellNames.end()) {
+            if (_cellType == CellType::InputCell || _cellType == CellType::FixedCell_0 ||
+                _cellType == CellType::FixedCell_1)
+                throw std::runtime_error("primary output observation cell is not passive");
+            _cellType = CellType::OutputCell;
+            _name = QString::fromStdString(output->second);
+        } else if (_cellType == CellType::OutputCell) {
+            _cellType = CellType::NormalCell;
+            _name.clear();
         }
     }
 

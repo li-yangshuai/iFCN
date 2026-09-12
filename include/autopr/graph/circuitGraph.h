@@ -33,6 +33,7 @@
 namespace fcngraph {
 
 struct Path;
+struct CombinationalClockProblem;
 
 struct AdaptiveExpansionStats
 {
@@ -53,6 +54,13 @@ public:
     //回调函数
     void setFitnessCallback(const std::function<void(std::string)> &callback);
     void setStageCallback(const std::function<void(const std::string&)> &callback);
+    // Cooperative budget/cancellation check between bounded routing attempts.
+    // A caller holding a valid snapshot can stop further optimization without
+    // waiting for an entire seed search or discarding that snapshot.
+    void setCancellationCallback(std::function<bool()> callback)
+    {
+        cancellationCallback = std::move(callback);
+    }
     
     //生成图
     void processAndGenerateGraph(bool printSVG = false, bool showCircuitLabel = false, bool isBox = false, bool isOGD = false);
@@ -80,12 +88,12 @@ public:
         bool placeAndRoute(int shuffledRouteOrderRetries = 24);
         // Version 1.2 Compact Graph Draw seed router: use bounded route-order
         // repair, then validate with the version1.1 mapping/crossover code.
-        bool placeAndRouteLegacyFast();
+        bool routeGraphPlacement(int phaseCount = 0);
         // Refine an already routed legacy-compatible layout by moving
         // individual non-I/O gates. Logical layers keep their topological
         // order, but gates in the same layer may use independent X/Y
         // coordinates and non-uniform spacing.
-        bool refineLegacyMappedLayout(int phaseCount = 4,
+        bool compactMappedLayout(int phaseCount = 4,
                                       int maxRounds = 8,
                                       int maxEvaluatedMoves = 36,
                                       int shuffledRouteOrderRetries = 8);
@@ -93,7 +101,7 @@ public:
         // is attempted first; persistent failed-edge/port pressure then
         // proposes one transactional row or column cut at a time.  Random
         // clock phases are assigned only after every net is routed.
-        bool routeCompactRandomClockWithExpansion(
+        bool routeWithCapacityExpansion(
             int phaseCount = 4,
             int shuffledRouteOrderRetries = 12,
             int maxExpansionRounds = 8,
@@ -107,11 +115,11 @@ public:
     // post-route irregular clock assignment flow. The geometry follows the
     // June pipeline; phase solving uses the current bounded/validated solver
     // instead of restoring its unbounded million-sample random loop.
-        bool placeAndRouteJuneRandomClock(int phaseCount = 4,
+        bool routeBufferedGraphvizSeed(int phaseCount = 4,
                                           double graphvizGridSize = 40.0,
                                           int shuffledRouteOrderRetries = 24,
                                           int maxSamePhase = -1);
-        bool placeAndRouteJuneRandomClockAnisotropic(
+        bool routeGraphvizSeedAnisotropic(
             int phaseCount = 4,
             double graphvizGridSizeX = 40.0,
             double graphvizGridSizeY = 40.0,
@@ -139,13 +147,13 @@ public:
     void printGroupMapping(const std::map<unsigned int, std::vector<unsigned int>>& groupMapping);
     void printClassifiedRoutes(
         const std::map<unsigned int, std::map<std::pair<unsigned int, unsigned int>, std::vector<position>>>& classifiedRoutes);
-    // 调用SA分配相位
-    bool assignPhases(int phaseCount = 4);
+    // Assign globally synchronized absolute epochs, then project to phases.
+    bool assignPhases(int phaseCount = 4, int maxSamePhase = 4);
 
     bool phaseOptimize(int current_layer, std::vector<fcngraph::Path>& paths, std::vector<int>& start_phases, int phaseCount = 4, int recursion_count = 0); 
     bool assignPhasesFallback(int phaseCount = 4);
     bool assignRouteConstraintPhases(int phaseCount = 4);
-    bool validateAssignedRoutePhases(int phaseCount = 4) const;
+    bool validateAssignedRoutePhases(int phaseCount = 4, int maxSamePhase = 4) const;
 
     // 打印latex结果
     void printLaTex(const std::string &outputPath = std::string(),
@@ -154,11 +162,17 @@ public:
     std::map<int, position> nodeIndex_pos;
     std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> routes;
 private:
+    std::function<bool()> cancellationCallback;
+    bool cancellationRequested() const
+    {
+        return cancellationCallback && cancellationCallback();
+    }
     struct RoutingFailureInfo
     {
         std::vector<std::pair<int, int>> failedEdges;
         std::size_t routedEdges = 0;
         bool routedLayoutRejected = false;
+        bool clockAssignmentRejected = false;
     };
 
     void alignPrimaryIoToBoundaryRows(bool yAxisPointsUp);
@@ -167,7 +181,7 @@ private:
                                bool emitConflictStages,
                                int deterministicPolicyLimit = 6,
                                const std::function<bool()> &acceptRoutedLayout = {});
-    bool validateLegacyMappedLayout();
+    bool validateMappedRoutePorts(bool constrainIoRows = false);
     bool validateJuneRandomClockRoutedLayout(int phaseCount,
                                              int maxSamePhase = -1);
     bool routeAndValidateJuneRandomClock(int phaseCount,
@@ -190,8 +204,12 @@ private:
     std::function<void(std::string)> fitnessCallback;
     std::function<void(const std::string&)> stageCallback;
     AdaptiveExpansionStats adaptiveExpansionStats;
+    bool lastClockAssignmentRejected = false;
 
     bool hasAcceptableAssignedRoutePhases(int phaseCount = 4) const;
+    bool buildCombinationalClockProblem(CombinationalClockProblem &problem,
+                                       std::vector<position> &positions,
+                                       int maxSamePhase) const;
 
 };
 

@@ -1,0 +1,29 @@
+#circuit name: paper_2ddwave_crossing_demo
+#algorithm: irregular
+#mapping mode: combinational
+#primary output nodes: 3
+#phase count: 4
+#clock scheme: irregular
+#clock scheme consistency: success
+#layout area: width: 2, height: 3, area: 6
+#mapped qca cells: 28
+#physical output check: passed_exhaustive
+#nodes info
+0, a, input, (0,0);
+1, b, input, (0,1);
+2, c, input, (0,2);
+3, carry, maj, (1,1);
+#nodes info
+#paths info
+(0,3): (0,0),(1,0),(1,1);
+(1,3): (0,1),(1,1);
+(2,3): (0,2),(1,2),(1,1);
+#paths info
+#phase map
+(0,0):0;
+(1,0):0;
+(0,1):0;
+(1,1):1;
+(0,2):0;
+(1,2):0;
+#phase map

@@ -1,4 +1,5 @@
 #include "autopr/algorithms/astarwithphase.h"
+#include "autopr/algorithms/combinationalClock.h"
 
 #include <algorithm>
 #include <cassert>
@@ -119,10 +120,93 @@ void keepsInterSourceCrossingsSingleAndOrthogonal()
     assert(isStraightAt(vertical->positions, shared.front(), false));
 }
 
+void rejectsFullCycleFaninMismatchAndRepairsTheSameGeometry()
+{
+    fcngraph::CombinationalClockProblem problem;
+    problem.tileCount = 8;
+    problem.primaryInputs = {0, 1};
+    problem.routes = {{0, 2, 3, 4, 5, 7}, {1, 6, 7}};
+    // Both paths pass local 0/+1 modulo-phase checks, but reconverge after
+    // five and one advances respectively: the same gate sees different tokens.
+    std::vector<int> phases{1, 1, 2, 3, 4, 1, 1, 2};
+    std::vector<std::int64_t> epochs;
+    assert(!fcngraph::solveCombinationalClockEpochs(problem, epochs, nullptr, &phases));
+    assert(fcngraph::solveCombinationalClockEpochs(problem, epochs));
+    assert(epochs[0] == 0 && epochs[1] == 0 && epochs[7] >= 1);
+    for (std::size_t i = 0; i < phases.size(); ++i)
+        phases[i] = static_cast<int>(epochs[i] % 4) + 1;
+    assert(fcngraph::solveCombinationalClockEpochs(problem, epochs, nullptr, &phases));
+}
+
+void isolatesDrivenLogicOutputsWithoutChangingPrimaryInputLaunch()
+{
+    fcngraph::CombinationalClockProblem problem;
+    problem.tileCount = 6;
+    problem.primaryInputs = {0};
+    // The first route has a clamped PI; the second starts at a driven gate.
+    problem.routes = {{0, 1, 2}, {2, 3, 4, 5}};
+    std::vector<int> phases{1, 1, 2, 2, 2, 3};
+    std::vector<std::int64_t> epochs;
+    std::string error;
+    assert(!fcngraph::solveCombinationalClockEpochs(problem, epochs, &error, &phases));
+    assert(error.find("output port") != std::string::npos);
+    assert(fcngraph::solveCombinationalClockEpochs(problem, epochs));
+    assert(epochs[0] == 0 && epochs[1] == 0);
+    assert(epochs[2] - epochs[1] == 1); // receiving gate input isolation
+    assert(epochs[3] - epochs[2] == 1); // driven gate output isolation
+    assert(epochs[5] - epochs[4] == 1);
+    for (std::size_t i = 0; i < phases.size(); ++i)
+        phases[i] = static_cast<int>(epochs[i] % 4) + 1;
+    assert(fcngraph::solveCombinationalClockEpochs(problem, epochs, nullptr, &phases));
+}
+
+void requiresLogicAdvancesSynchronizedInputsAndBoundedHolds()
+{
+    fcngraph::CombinationalClockProblem problem;
+    std::vector<std::int64_t> epochs;
+    problem.tileCount = 2;
+    problem.primaryInputs = {0};
+    problem.routes = {{0, 1}};
+    std::vector<int> phases{1, 1};
+    assert(!fcngraph::solveCombinationalClockEpochs(problem, epochs, nullptr, &phases));
+    assert(fcngraph::solveCombinationalClockEpochs(problem, epochs));
+    assert(epochs[1] == 1);
+    problem.primaryInputs = {0, 1};
+    assert(!fcngraph::solveCombinationalClockEpochs(problem, epochs));
+
+    // A nonzero total route delay is insufficient: the final gate port
+    // must be in the preceding clock phase, not the switching gate phase.
+    problem.tileCount = 3;
+    problem.primaryInputs = {0};
+    problem.routes = {{0, 1, 2}};
+    phases = {1, 2, 2};
+    assert(!fcngraph::solveCombinationalClockEpochs(problem, epochs, nullptr, &phases));
+    assert(fcngraph::solveCombinationalClockEpochs(problem, epochs));
+    assert(epochs[2] - epochs[1] == 1);
+
+    problem.tileCount = 4;
+    problem.primaryInputs = {0, 1};
+    problem.routes = {{0, 3, 2}, {1, 2}};
+    phases = {1, 2, 3, 2};
+    assert(!fcngraph::solveCombinationalClockEpochs(problem, epochs, nullptr, &phases));
+
+    problem.tileCount = 6;
+    problem.primaryInputs = {0};
+    problem.routes = {{0, 1, 2, 3, 4, 5}};
+    phases = {1, 1, 1, 1, 1, 2};
+    assert(!fcngraph::solveCombinationalClockEpochs(problem, epochs, nullptr, &phases));
+    assert(fcngraph::solveCombinationalClockEpochs(problem, epochs));
+    assert(epochs[4] - epochs[0] >= 1);
+    assert(epochs[5] - epochs[1] >= 1);
+}
+
 } // namespace
 
 int main()
 {
+    rejectsFullCycleFaninMismatchAndRepairsTheSameGeometry();
+    requiresLogicAdvancesSynchronizedInputsAndBoundedHolds();
+    isolatesDrivenLogicOutputsWithoutChangingPrimaryInputLaunch();
     routesAndAssignsPhasesInOneSearch();
     keepsMultipleFaninsOnDifferentGateSides();
     keepsInterSourceCrossingsSingleAndOrthogonal();

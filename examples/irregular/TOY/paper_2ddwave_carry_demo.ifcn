@@ -1,0 +1,65 @@
+#circuit name: paper_2ddwave_carry_demo
+#algorithm: irregular
+#mapping mode: combinational
+#primary output nodes: 3
+#phase count: 4
+#clock scheme: irregular
+#clock scheme consistency: success
+#layout area: width: 5, height: 7, area: 35
+#mapped qca cells: 164
+#physical output check: passed_exhaustive
+#nodes info
+0, x, input, (0,1);
+1, y, input, (3,1);
+2, z, input, (4,1);
+3, carry, or, (3,6);
+4, or_yz, or, (1,2);
+5, and_yz, and, (4,2);
+6, ~and_yz, not, (3,3);
+8, xor_yz, and, (3,4);
+9, and_x, and, (3,5);
+#nodes info
+#paths info
+(0,9): (0,1),(0,2),(0,3),(0,4),(0,5),(1,5),(2,5),(3,5);
+(1,4): (3,1),(3,2),(2,2),(1,2);
+(1,5): (3,1),(3,2),(4,2);
+(2,4): (4,1),(4,0),(3,0),(2,0),(1,0),(1,1),(1,2);
+(2,5): (4,1),(4,2);
+(4,8): (1,2),(1,3),(1,4),(2,4),(3,4);
+(5,3): (4,2),(4,3),(4,4),(4,5),(4,6),(3,6);
+(5,6): (4,2),(4,3),(3,3);
+(6,8): (3,3),(3,4);
+(8,9): (3,4),(3,5);
+(9,3): (3,5),(3,6);
+#paths info
+#phase map
+(1,0):1;
+(2,0):1;
+(3,0):1;
+(4,0):0;
+(0,1):0;
+(1,1):1;
+(3,1):0;
+(4,1):0;
+(0,2):1;
+(1,2):2;
+(2,2):1;
+(3,2):0;
+(4,2):1;
+(0,3):2;
+(1,3):3;
+(3,3):3;
+(4,3):2;
+(0,4):3;
+(1,4):3;
+(2,4):3;
+(3,4):0;
+(4,4):3;
+(0,5):0;
+(1,5):0;
+(2,5):0;
+(3,5):1;
+(4,5):0;
+(3,6):2;
+(4,6):1;
+#phase map

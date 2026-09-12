@@ -605,7 +605,7 @@ void MainWindow::slotNew()
 
 void MainWindow::slotOpen()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, tr("打开文件"), "/home/lys/projects/github/iFCN/",
+    QString fileName = QFileDialog::getOpenFileName(this, tr("打开文件"), QDir::currentPath(),
                                                     tr("QCA/iFCN files (*.qca *.ifcn);;All file (*)"));
     if (fileName.isEmpty()) {
         return;

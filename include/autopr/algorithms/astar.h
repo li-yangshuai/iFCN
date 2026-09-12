@@ -23,6 +23,7 @@ public:
                           minimum.second <= maximum.second;
     }
     void clearSearchBounds() { hasSearchBounds = false; }
+    bool searchBoundsEnabled() const { return hasSearchBounds; }
 
     inline void reset(){
         inDirections.clear();

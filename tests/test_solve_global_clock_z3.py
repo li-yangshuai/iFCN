@@ -10,8 +10,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-import solve_global_clock_z3 as backend  # noqa: E402
+sys.path.insert(0, str(ROOT / "src/python"))
+from ifcn.sequential import solve_global_clock_z3 as backend  # noqa: E402
 
 
 class ScriptedSolver:

@@ -1,3 +1,2 @@
-# Frozen benchmark hashes include their original line endings and whitespace.
+# Preserve the original line endings of benchmark Verilog sources.
 tests/benchmarks_f/**/*.v -text
-tests/benchmarks_pi/v1/** -text -whitespace

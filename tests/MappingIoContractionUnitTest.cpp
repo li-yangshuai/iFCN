@@ -36,7 +36,7 @@ void contracts_input_to_the_logic_frontier()
 {
     NodeLinkMap nodes;
     nodes[{{0, 0}, "input"}] = {{}, {{0, 1}}};
-    nodes[{{0, 3}, "maj"}] = {{{0, 2}}, {}};
+    nodes[{{0, 3}, "maj"}] = {{{0, 2}, {1, 3}, {0, 4}}, {}};
 
     Mapping mapping;
     mapping.node_mapping(nodes);
@@ -63,8 +63,8 @@ void stops_input_on_its_first_fanout()
 {
     NodeLinkMap nodes;
     nodes[{{0, 0}, "input"}] = {{}, {{1, 0}}};
-    nodes[{{3, 0}, "maj"}] = {{{2, 0}}, {}};
-    nodes[{{2, 2}, "maj"}] = {{{2, 1}}, {}};
+    nodes[{{3, 0}, "maj"}] = {{{2, 0}, {4, 0}, {3, 1}}, {}};
+    nodes[{{2, 2}, "maj"}] = {{{2, 1}, {1, 2}, {3, 2}}, {}};
 
     Mapping mapping;
     mapping.node_mapping(nodes);
@@ -88,7 +88,7 @@ void never_consumes_a_crossover()
 {
     NodeLinkMap nodes;
     nodes[{{0, 0}, "input"}] = {{}, {{1, 0}}};
-    nodes[{{3, 0}, "maj"}] = {{{2, 0}}, {}};
+    nodes[{{3, 0}, "maj"}] = {{{2, 0}, {4, 0}, {3, 1}}, {}};
 
     Mapping mapping;
     mapping.node_mapping(nodes);
@@ -107,7 +107,7 @@ void accepts_a_legal_crossover_edge_as_io()
 {
     NodeLinkMap nodes;
     nodes[{{0, 0}, "input"}] = {{}, {{1, 0}}};
-    nodes[{{3, 0}, "maj"}] = {{{2, 0}}, {}};
+    nodes[{{3, 0}, "maj"}] = {{{2, 0}, {4, 0}, {3, 1}}, {}};
 
     Mapping mapping;
     mapping.node_mapping(nodes);
@@ -126,22 +126,24 @@ void accepts_a_legal_crossover_edge_as_io()
 void contracts_output_back_toward_its_driver()
 {
     NodeLinkMap nodes;
-    nodes[{{0, 0}, "maj"}] = {{}, {{1, 0}}};
-    nodes[{{3, 0}, "output"}] = {{{2, 0}}, {}};
+    // Leave room for three distinct MAJ input sides and its right-hand output.
+    // Translating the original output stem preserves the contraction distance.
+    nodes[{{1, 1}, "maj"}] = {{{0, 1}, {1, 0}, {1, 2}}, {{2, 1}}};
+    nodes[{{4, 1}, "output"}] = {{{3, 1}}, {}};
 
     Mapping mapping;
     mapping.node_mapping(nodes);
     RouteCellMap routes;
-    auto& segment = routes[{{0, 0}, {3, 0}}].emplace_back();
-    for (unsigned int x = 5; x <= 14; ++x) {
-        segment.emplace_back(x, 2);
+    auto& segment = routes[{{1, 1}, {4, 1}}].emplace_back();
+    for (unsigned int x = 10; x <= 19; ++x) {
+        segment.emplace_back(x, 7);
     }
 
     const auto stats = mapping.contract_io_ports(nodes, routes);
     require(stats.moved_outputs == 1, "the primary output was not contracted");
-    require(contains(mapping.nodecell_list["output"], {5, 2}),
+    require(contains(mapping.nodecell_list["output"], {10, 7}),
             "the output did not reach its driver frontier");
-    require(mapping.io_terminal_origins().at({5, 2}) == position{3, 0},
+    require(mapping.io_terminal_origins().at({10, 7}) == position{4, 1},
             "the moved output lost its original name owner");
 }
 

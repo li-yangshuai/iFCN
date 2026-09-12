@@ -102,9 +102,12 @@ namespace fcngraph{
         // Reconstruct one directed, 4-neighbour physical-cell path for every
         // coarse route passed to mapping_line().  This is a geometry/export
         // view; sequential clock constraints remain on the ordered coarse
-        // tiles and never count these fine-cell steps.
+        // tiles and never count these fine-cell steps. Combinational templates
+        // may shift a tile boundary crossing, so their paths follow the actual
+        // emitted cells. The default preserves the original strict tile view.
         std::vector<std::vector<position>> orderedPhysicalRoutes(
-            const std::vector<std::vector<position>>& coarseRoutes) const;
+            const std::vector<std::vector<position>>& coarseRoutes,
+            MappingMode mode = MappingMode::Sequential) const;
         // Expand ordered physical geometry through the exact exported QCA
         // layers.  These extra layer sites do not create clock occurrences.
         // Lifted crossover segments use layer 2 and their entry/exit pillars
@@ -112,13 +115,15 @@ namespace fcngraph{
         // therefore adjacent in the realized three-dimensional cell graph.
         std::vector<std::vector<PhysicalCellSite>>
         orderedLayerAwarePhysicalRoutes(
-            const std::vector<std::vector<position>>& coarseRoutes) const;
+            const std::vector<std::vector<position>>& coarseRoutes,
+            MappingMode mode = MappingMode::Sequential) const;
         // Exact layer-aware sites emitted by the mapping state before I/O
         // contraction.  This mirrors the QCAD exporter: node/ordinary wire
         // cells are on layer 0, crossover corridors on layer 2, and pillar
         // endpoints occupy layers 0, 1 and 2.
         std::set<PhysicalCellSite> physicalCellSites(
-            const std::vector<std::vector<position>>& coarseRoutes) const;
+            const std::vector<std::vector<position>>& coarseRoutes,
+            MappingMode mode = MappingMode::Sequential) const;
         bool validate_crossovers(std::string* error = nullptr) const;
         void routepos_Deviate(std::vector<position>& _oneroutepos_list);
         void deviate_mapping(std::map<std::pair<position, position>, std::vector<std::pair<position, std::string>>>& _deviate_list);

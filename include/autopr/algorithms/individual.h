@@ -3,6 +3,7 @@
 #include "autopr/graph/parse.h"
 #include "astar.h"
 #include "phaseSolver.h"
+#include "combinationalValidation.h"
 
 namespace fcngraph {
 
@@ -51,6 +52,9 @@ public:
         is_synced(other.is_synced),   // 拷贝is_synced状态
         nodeindex_pos(other.nodeindex_pos), // 仅拷贝nodeindex_pos数据
         routes(other.routes),         // 拷贝routes
+        layer_length(other.layer_length),
+        cross_nodes_pos(other.cross_nodes_pos),
+        validation_error(other.validation_error),
         layerRoutesLength(other.layerRoutesLength)
     {
 
@@ -65,6 +69,9 @@ public:
             nodeindex_pos = other.nodeindex_pos;
             layerRoutesLength = other.layerRoutesLength;
             routes = other.routes;
+            layer_length = other.layer_length;
+            cross_nodes_pos = other.cross_nodes_pos;
+            validation_error = other.validation_error;
         }
         return *this;
     }
@@ -119,6 +126,8 @@ public:
         layer_length.clear();
         nodeindex_pos.clear();
         layerRoutesLength.clear();
+        cross_nodes_pos.clear();
+        validation_error.clear();
     }
 
     void infoReset(){
@@ -131,6 +140,8 @@ public:
         routes.clear();
         layer_length.clear();
         layerRoutesLength.clear();
+        cross_nodes_pos.clear();
+        validation_error.clear();
     }
     
     void add_placement_value_to();
@@ -139,6 +150,9 @@ public:
     void add_area_value_to();
     void caculate_crossover_value();
     void computeFitness();
+    bool validateLayout();
+    void mutateNodes(std::size_t count);
+    bool placeClockReachableNodes(std::size_t variation = 0);
 
 
     bool is_placed;
@@ -150,7 +164,10 @@ public:
     std::map<std::pair<unsigned int, unsigned int>, std::vector<position>> routes;
 
     std::vector<position> cross_nodes_pos;
+    std::string validation_error;
 private:
+    bool findUnusedPosition(const std::set<position>& used, position& result, bool primaryInput) const;
+    std::int64_t primaryInputDiagonal() const;
     Parse &parse;
     GridChessboard &chessboard;
     Astar &astar;

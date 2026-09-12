@@ -344,21 +344,21 @@ void MainWindow::createActions()
     connect(normalGraphAction, &QAction::triggered,
             verilogHandler, &VerilogHandler::handleNormalGraphDrawLayout);
 
-    auto *graphAction = placeRouteMenu->addAction(tr("Compact Graph Draw P&&R (recommended)"));
+    auto *graphAction = placeRouteMenu->addAction(tr("Irregular-Clock Graph P&&R (recommended)"));
     graphAction->setStatusTip(
-        tr("Run area-first graph drawing, integrated phase-aware routing, and legality-checked compaction"));
+        tr("Select the smallest legal irregular-clock layout using shared routing, physical mapping checks, and compaction"));
     connect(graphAction, &QAction::triggered,
             verilogHandler, &VerilogHandler::handleGraphRender);
 
     placeRouteButton = new QToolButton(this);
     placeRouteButton->setObjectName(QStringLiteral("primaryAlgorithmButton"));
     placeRouteButton->setDefaultAction(graphAction);
-    placeRouteButton->setText(tr("Compact Graph Draw"));
+    placeRouteButton->setText(tr("Irregular-Clock Graph P&&R"));
     placeRouteButton->setMenu(placeRouteMenu);
     placeRouteButton->setPopupMode(QToolButton::MenuButtonPopup);
     placeRouteButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     placeRouteButton->setMinimumWidth(156);
-    placeRouteButton->setToolTip(tr("Run Compact Graph Draw; use the arrow for Heuristic or fixed-clock 2DDWave P&R"));
+    placeRouteButton->setToolTip(tr("Run Irregular-Clock Graph P&R; use the arrow for Heuristic or fixed-clock 2DDWave P&R"));
     connect(verilogHandler, &VerilogHandler::operationStarted,
             placeRouteButton, [this](const QString &, const QString &) {
         if (placeRouteButton != nullptr) {

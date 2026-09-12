@@ -27,13 +27,9 @@ public:
     // 公开接口
     void handleParseVerilogFile();
     void handleGraphRender();  // 新增的函数
-    void handleGcnRlLayout();
     void handleNormalGraphDrawLayout();
     void runHeuristicLayoutForFile(const QString &filePath);
     void runGraphRenderForFile(const QString &filePath);
-    void runGcnRlLayoutForFile(const QString &filePath,
-                               bool quietStatusMessages = false,
-                               bool forceLiveTraining = false);
     void runNormalGraphDrawLayoutForFile(const QString &filePath,
                                          bool quietStatusMessages = false,
                                          bool generateVisualizations = false,
@@ -51,7 +47,6 @@ private:
 
     bool isOptimizeNOTNode = false;
     bool heuristicLayoutRunning = false;
-    bool gcnRlLayoutRunning = false;
     int optimizeNOTNode_time = 1;
 
     void mappingCellItem(std::map<unsigned int, position>& _node_pos, 

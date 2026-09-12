@@ -1,0 +1,37 @@
+#circuit name: toggle_ff_cut
+#mapping mode: sequential
+#flow: sampled-state physical-feedback P&R experiment v0
+#status: physical feedback retained; state device uncharacterized
+#phase count: 4
+#phase granularity: tile
+#tile phase drc scope: ordered_route_tiles
+#max same phase tiles: 4
+#observed max same phase tile run: 1
+#initiation interval epochs: 4
+#mapped unique xy sites: 19
+#mapped qca cells: 19
+#mapped layer cell records: 19
+#physical feedback route: d(t) -> ~q(t+1), distance=1
+
+#nodes info
+### nodeIndex, nodeName, nodeType, nodePosition ###
+1, d, output, (4,6);
+2, ~q, not, (4,5);
+#nodes info
+
+#paths info
+### {node1, node2} : path ###
+#iteration_distance=1
+(1,2): (4,6),(3,6),(3,5),(4,5);
+#iteration_distance=0
+(2,1): (4,5),(4,6);
+#paths info
+
+#phase map
+### authoritative clock tile (x,y) : zero-based phase ###
+### every mapped QCA cell in this tile inherits the same phase ###
+(3,5): 2;
+(3,6): 1;
+(4,5): 3;
+(4,6): 0;
+#phase map

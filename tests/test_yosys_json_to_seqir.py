@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline contract tests for scripts/yosys_json_to_seqir.py."""
+"""Offline contract tests for src/python/ifcn/sequential/yosys_json_to_seqir.py."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-SCRIPT = REPOSITORY / "scripts" / "yosys_json_to_seqir.py"
+SCRIPT = REPOSITORY / "src/python/ifcn/sequential/yosys_json_to_seqir.py"
 FIXTURE = REPOSITORY / "tests" / "fixtures" / "sequential" / "toggle_ff.semantic.yosys.json"
 CANONICAL_FIXTURE = (
     REPOSITORY / "tests" / "fixtures" / "sequential" / "toggle_ff.canonical.yosys.json"

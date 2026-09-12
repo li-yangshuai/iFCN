@@ -11,9 +11,9 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = REPOSITORY_ROOT / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
+SUPPORT = REPOSITORY_ROOT / "tests/support"
+if str(SUPPORT) not in sys.path:
+    sys.path.insert(0, str(SUPPORT))
 
 import validate_sequential_energy_waveform as validator  # noqa: E402
 

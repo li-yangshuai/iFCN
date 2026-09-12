@@ -26,8 +26,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 set(IFCN_Z3_ROOT "" CACHE PATH "Optional extracted Z3 package root")
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" -c
-            "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import solve_global_clock_z3 as backend; backend.load_z3(Path(sys.argv[2]))"
-            "${PROJECT_SOURCE_DIR}/scripts" "${IFCN_Z3_ROOT}"
+            "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from ifcn.sequential import solve_global_clock_z3 as backend; backend.load_z3(Path(sys.argv[2]))"
+            "${PROJECT_SOURCE_DIR}/src/python" "${IFCN_Z3_ROOT}"
     RESULT_VARIABLE IFCN_Z3_IMPORT_RESULT
     OUTPUT_QUIET ERROR_QUIET)
 if(IFCN_Z3_IMPORT_RESULT EQUAL 0)
@@ -39,7 +39,7 @@ endif()
 add_test(
     NAME negotiated_router_regression
     COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/include/gcn_rl_layout/tests/test_negotiated_router.py")
+            "${PROJECT_SOURCE_DIR}/include/layout_backend/tests/test_negotiated_router.py")
 
 add_executable(simulation_metrics_tests SimulationMetricsUnitTest.cpp)
 target_link_libraries(simulation_metrics_tests PRIVATE simon)
@@ -54,6 +54,34 @@ add_executable(mapping_crossover_tests MappingCrossoverUnitTest.cpp)
 target_include_directories(mapping_crossover_tests PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(mapping_crossover_tests PRIVATE autopr)
 add_test(NAME mapping_crossover_regression COMMAND mapping_crossover_tests)
+
+add_executable(verilog_expression_tests VerilogExpressionUnitTest.cpp
+    ${PROJECT_SOURCE_DIR}/include/layout_backend/src/parse/Parse.cpp)
+target_include_directories(verilog_expression_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include/layout_backend/src/parse
+    ${PROJECT_SOURCE_DIR}/include/layout_backend/src/chessboard)
+target_compile_definitions(verilog_expression_tests PRIVATE
+    IFCN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(verilog_expression_tests PRIVATE autopr)
+add_test(NAME verilog_expression_semantics_regression COMMAND verilog_expression_tests)
+set_tests_properties(verilog_expression_semantics_regression PROPERTIES TIMEOUT 30)
+
+add_executable(irregular_layout_tests IrregularLayoutUnitTest.cpp)
+target_include_directories(irregular_layout_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
+target_link_libraries(irregular_layout_tests PRIVATE autopr gvc cgraph)
+add_test(NAME irregular_layout_incumbent_regression COMMAND irregular_layout_tests)
+set_tests_properties(irregular_layout_incumbent_regression PROPERTIES TIMEOUT 15)
+add_test(NAME irregular_candidate_export_regression
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/test_irregular_candidate_export.py"
+            --binary $<TARGET_FILE:ifcn_combinational_pnr>)
+set_tests_properties(irregular_candidate_export_regression PROPERTIES TIMEOUT 45)
+add_executable(heuristic_layout_tests HeuristicLayoutUnitTest.cpp)
+target_include_directories(heuristic_layout_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
+target_link_libraries(heuristic_layout_tests PRIVATE autopr gvc cgraph)
+add_test(NAME heuristic_layout_validation_regression COMMAND heuristic_layout_tests)
+set_tests_properties(heuristic_layout_validation_regression PROPERTIES TIMEOUT 30)
 
 add_test(
     NAME sequential_ifcn_mapping_metadata_regression
@@ -70,23 +98,46 @@ add_test(
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/test_ifcn_energy_fixed_polarization.py"
             $<TARGET_FILE:ifcn_energy_analysis>
-            "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/TOY/xor2_graph_pr_layout/xor2_graph_pr_layout.ifcn")
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/routing/xor2_legacy.ifcn")
 set_tests_properties(energy_fixed_polarization_export_regression
                      PROPERTIES TIMEOUT 15)
 
 add_test(
-    NAME sequential_paired_energy_runner_regression
+    NAME packed_phase_export_regression
     COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/test_benchmark_sequential_paired_energy.py")
-set_tests_properties(sequential_paired_energy_runner_regression
-                     PROPERTIES TIMEOUT 15)
+            "${PROJECT_SOURCE_DIR}/tests/test_ifcn_packed_phase_export.py"
+            $<TARGET_FILE:ifcn_energy_analysis>)
+set_tests_properties(packed_phase_export_regression PROPERTIES TIMEOUT 30)
 
 add_test(
-    NAME sequential_paired_energy_summary_regression
+    NAME primary_output_mapping_regression
     COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/test_summarize_sequential_paired_energy.py")
-set_tests_properties(sequential_paired_energy_summary_regression
-                     PROPERTIES TIMEOUT 15)
+            "${PROJECT_SOURCE_DIR}/tests/test_ifcn_primary_outputs.py"
+            --energy-binary $<TARGET_FILE:ifcn_energy_analysis>
+            --gui-binary $<TARGET_FILE:fcnx_gui>
+            --simulation-binary $<TARGET_FILE:ifcn_physical_benchmark>)
+set_tests_properties(primary_output_mapping_regression PROPERTIES TIMEOUT 30)
+
+add_test(
+    NAME gate_template_physical_regression
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/test_gate_template_physical.py"
+            --energy-binary $<TARGET_FILE:ifcn_energy_analysis>
+            --simulation-binary $<TARGET_FILE:ifcn_physical_benchmark>)
+set_tests_properties(gate_template_physical_regression PROPERTIES TIMEOUT 180)
+
+foreach(IFCN_PHYSICAL_CASE IN ITEMS xor2 xnor2 mux21 majority)
+    add_test(
+        NAME combinational_physical_${IFCN_PHYSICAL_CASE}
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/test_combinational_physical_waveform.py"
+                --case ${IFCN_PHYSICAL_CASE}
+                --pnr-binary $<TARGET_FILE:ifcn_combinational_pnr>
+                --energy-binary $<TARGET_FILE:ifcn_energy_analysis>
+                --simulation-binary $<TARGET_FILE:ifcn_physical_benchmark>)
+    set_tests_properties(combinational_physical_${IFCN_PHYSICAL_CASE}
+                        PROPERTIES TIMEOUT 240)
+endforeach()
 
 add_test(
     NAME sequential_energy_waveform_validation_regression
@@ -122,13 +173,6 @@ add_test(
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/test_run_sequential_rtl_experiments.py")
 set_tests_properties(sequential_rtl_runner_regression PROPERTIES TIMEOUT 15)
-
-add_test(
-    NAME sequential_experiment_aggregator_regression
-    COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/test_aggregate_sequential_experiments.py")
-set_tests_properties(sequential_experiment_aggregator_regression
-                     PROPERTIES TIMEOUT 15)
 
 add_executable(physical_state_macro_tests PhysicalStateMacroUnitTest.cpp)
 target_include_directories(physical_state_macro_tests PRIVATE
@@ -227,7 +271,7 @@ set_tests_properties(
 add_test(
     NAME sequential_cyclic_compact_area_z3_rank0
     COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/scripts/solve_global_clock_z3.py"
+            "${PROJECT_SOURCE_DIR}/src/python/ifcn/sequential/solve_global_clock_z3.py"
             "${SEQUENTIAL_COMPACT_ENABLE_CLOCK_PROBLEM}"
             "${SEQUENTIAL_COMPACT_ENABLE_PHASE_SOLUTION}"
             --summary "${SEQUENTIAL_COMPACT_ENABLE_Z3_SUMMARY}"
@@ -368,11 +412,11 @@ add_test(
 set_tests_properties(stochastic_compact_graph_buffered_fallback_regression
                      PROPERTIES TIMEOUT 45)
 add_test(
-    NAME stochastic_compact_graph_anisotropic_regression
+    NAME stochastic_compact_graph_anisotropic_clock_rejection_regression
     COMMAND stochastic_compact_graph_tests
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/RCA2.v"
-            --graphviz-xy-fallback 35 36 420 0 3000)
-set_tests_properties(stochastic_compact_graph_anisotropic_regression
+            --graphviz-xy-failure 35 36 420 0 3000)
+set_tests_properties(stochastic_compact_graph_anisotropic_clock_rejection_regression
                      PROPERTIES TIMEOUT 90)
 add_test(
     NAME stochastic_compact_graph_adaptive_compact_regression
@@ -396,12 +440,12 @@ if(EXISTS "${IFCN_OGDF_TEST_ORDERER}")
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/OgdfCrossingOrderRegression.cmake")
 endif()
 add_test(
-    NAME stochastic_compact_graph_small_maj_xor_regression
+    NAME stochastic_compact_graph_small_maj_xor_clock_regression
     COMMAND stochastic_compact_graph_tests
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/xor2.v"
             --graphviz-xy 52 72 480 10 96)
 add_test(
-    NAME stochastic_compact_graph_small_maj_xnor_regression
+    NAME stochastic_compact_graph_small_maj_xnor_clock_regression
     COMMAND stochastic_compact_graph_tests
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/xnor2.v"
             --graphviz-xy 56 72 420 8 84)
@@ -419,14 +463,48 @@ add_test(
     NAME stochastic_compact_graph_small_toy_xnor_regression
     COMMAND stochastic_compact_graph_tests
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/TOY/xnor2.v"
-            --graphviz-xy 40 68 420 8 64)
+            --adaptive-compact 12 8 240)
+# The old quantized seed cannot isolate both sides of each driven gate.
+# Keep its rejection covered alongside the legal bounded expansion above.
+add_test(
+    NAME stochastic_compact_graph_small_toy_xnor_clock_rejection_regression
+    COMMAND stochastic_compact_graph_tests
+            "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/TOY/xnor2.v"
+            --graphviz-xy-failure 40 68 420 8 64)
 set_tests_properties(
-    stochastic_compact_graph_small_maj_xor_regression
-    stochastic_compact_graph_small_maj_xnor_regression
+    stochastic_compact_graph_small_maj_xor_clock_regression
+    stochastic_compact_graph_small_maj_xnor_clock_regression
     stochastic_compact_graph_small_mux_regression
     stochastic_compact_graph_small_maj_adder_regression
     stochastic_compact_graph_small_toy_xnor_regression
+    stochastic_compact_graph_small_toy_xnor_clock_rejection_regression
     PROPERTIES TIMEOUT 15)
+
+set_tests_properties(
+    stochastic_compact_graph_small_maj_xor_clock_regression
+    stochastic_compact_graph_small_maj_xnor_clock_regression
+    PROPERTIES TIMEOUT 30)
+
+# This reconvergent XOR needs successive capacity cuts: the first complete
+# geometry still cannot give every gate port a preceding hold phase.
+add_test(NAME stochastic_compact_graph_gate_port_expansion_regression
+    COMMAND stochastic_compact_graph_tests
+        "${PROJECT_SOURCE_DIR}/tests/fixtures/clocked_xor.v"
+        --adaptive-compact 12 8 240)
+set_tests_properties(stochastic_compact_graph_gate_port_expansion_regression
+    PROPERTIES TIMEOUT 30)
+
+# Keep the infeasible TOY/RCA2 seeds above and exercise legal buffered
+# production geometry as well. Successful seeds also have explicit negative
+# gate-boundary clock mutations checked by the integration test.
+foreach(IFCN_BUFFERED_CLOCK_CASE IN ITEMS xor2 xnor2)
+    add_test(NAME june_buffered_${IFCN_BUFFERED_CLOCK_CASE}_clock_regression
+        COMMAND stochastic_compact_graph_tests
+            "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/${IFCN_BUFFERED_CLOCK_CASE}.v"
+            --keep-buffers 40 40 24)
+    set_tests_properties(june_buffered_${IFCN_BUFFERED_CLOCK_CASE}_clock_regression
+        PROPERTIES TIMEOUT 30)
+endforeach()
 
 add_executable(legacy_graphviz_renderer_tests LegacyGraphvizRendererUnitTest.cpp)
 target_include_directories(legacy_graphviz_renderer_tests PRIVATE
@@ -464,7 +542,7 @@ set(IFCN_PHYSICAL_SMOKE_PREFIX "${IFCN_RUNTIME_FIXTURE_DIR}/xor2")
 set(IFCN_PHYSICAL_SMOKE_DESIGN "${IFCN_PHYSICAL_SMOKE_PREFIX}_energy_input.qca")
 add_test(NAME physical_smoke_fixture_generation
     COMMAND $<TARGET_FILE:ifcn_energy_analysis>
-            "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/TOY/xor2_graph_pr_layout/xor2_graph_pr_layout.ifcn"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/routing/xor2_legacy.ifcn"
             "${IFCN_PHYSICAL_SMOKE_PREFIX}" --qca-only)
 set_tests_properties(physical_smoke_fixture_generation
     PROPERTIES FIXTURES_SETUP physical_smoke_design TIMEOUT 15)
@@ -485,7 +563,7 @@ add_test(
 add_test(
     NAME physical_benchmark_rejects_missing_design
     COMMAND $<TARGET_FILE:ifcn_physical_benchmark>
-            "${PROJECT_SOURCE_DIR}/tests/cell_level_examples/does-not-exist.qca")
+            "${IFCN_RUNTIME_FIXTURE_DIR}/does-not-exist.qca")
 set_tests_properties(physical_benchmark_rejects_missing_design
                      PROPERTIES WILL_FAIL TRUE)
 
@@ -555,24 +633,31 @@ endif()
 #target_link_libraries(energy simon)
 #target_compile_definitions(energy PUBLIC "TESTCASE=\"${CMAKE_CURRENT_SOURCE_DIR}/benchmark\"")
 
-add_test(NAME pi_layout_artifact_validation_regression
+add_test(NAME layout_artifact_validation_regression
     COMMAND ${Python3_EXECUTABLE}
-            "${PROJECT_SOURCE_DIR}/tests/test_ifcn_agent_layout_validation.py")
-set_tests_properties(pi_layout_artifact_validation_regression PROPERTIES TIMEOUT 15)
+            "${PROJECT_SOURCE_DIR}/tests/test_layout_validation.py")
+set_tests_properties(layout_artifact_validation_regression PROPERTIES TIMEOUT 15)
 
 foreach(IFCN_PYTHON_TEST IN ITEMS
         test_yosys_json_to_seqir
-        test_validate_sequential_paper_benchmark
-        test_ifcn_agent)
+        test_workflow
+        test_benchmark_irregular_layout
+        test_verify_routed_logic
+        test_scalar_logic)
     add_test(NAME ${IFCN_PYTHON_TEST}
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${IFCN_PYTHON_TEST}.py")
     set_tests_properties(${IFCN_PYTHON_TEST} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(IFCN_LAYOUT_TEST IN ITEMS stochastic_clock ifcn_layout_dataset)
+foreach(IFCN_LAYOUT_TEST IN ITEMS stochastic_clock)
     add_test(NAME ${IFCN_LAYOUT_TEST}_regression
         COMMAND "${Python3_EXECUTABLE}"
-                "${PROJECT_SOURCE_DIR}/include/gcn_rl_layout/tests/test_${IFCN_LAYOUT_TEST}.py")
+                "${PROJECT_SOURCE_DIR}/include/layout_backend/tests/test_${IFCN_LAYOUT_TEST}.py")
     set_tests_properties(${IFCN_LAYOUT_TEST}_regression PROPERTIES TIMEOUT 30)
 endforeach()
+
+# Reproducible benchmark adapter; this invokes the production GUI heuristic.
+add_executable(heuristic_layout_driver HeuristicLayoutDriver.cpp)
+target_include_directories(heuristic_layout_driver PRIVATE "${PROJECT_SOURCE_DIR}/include")
+target_link_libraries(heuristic_layout_driver PRIVATE autopr Qt5::Core gvc cgraph)

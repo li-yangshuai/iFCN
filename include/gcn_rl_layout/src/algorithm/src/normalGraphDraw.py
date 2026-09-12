@@ -3,6 +3,7 @@ from src.gcn_model_less_node import (
     visualize_strict_right_down,
     TDDwave_generate,
     normal_graph_generate_2ddwave,
+    safe_torch_device,
     visualize_layered_graph_sorted,
     strict_right_down_layout_max_fanin_right,
 )
@@ -54,7 +55,7 @@ class NormalGraphDraw:
                 self.routing_padding,
                 self.max_same_phase,
             )
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = safe_torch_device()
         self._node_id_to_idx = {}
         self._node_coord = {}
         self._coord_set = set()
@@ -101,6 +102,10 @@ class NormalGraphDraw:
         self.phase_conflict_count = 0
         self.last_failed_pairs = {}
         self._stage_snapshot_counter = 0
+        self._stage_snapshot_dir = None
+        self._stage_snapshot_last_tex = None
+        self._stage_initial_route_recorded = False
+        self._stage_conflict_repair_recorded = False
         self.layers_per_row = max(
             1, int(os.environ.get("IFCN_LAYERS_PER_ROW", "1"))
         )
@@ -277,9 +282,28 @@ class NormalGraphDraw:
         with open(tex_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
 
+    def _prepare_stage_snapshots(self, snapshot_dir):
+        self._stage_snapshot_counter = 0
+        self._stage_snapshot_last_tex = None
+        self._stage_initial_route_recorded = False
+        self._stage_conflict_repair_recorded = False
+        self._stage_snapshot_dir = os.path.abspath(snapshot_dir) if snapshot_dir else None
+        if not self._stage_snapshot_dir:
+            return
+
+        os.makedirs(self._stage_snapshot_dir, exist_ok=True)
+        circuit_stem = os.path.splitext(self.parse.fileName)[0]
+        prefix = f"{circuit_stem}_"
+        # A rerun may produce a different number of frames. Remove only this
+        # circuit's generated TeX frames so stale snapshots are not mistaken
+        # for part of the new optimization trajectory.
+        for entry in os.listdir(self._stage_snapshot_dir):
+            if entry.startswith(prefix) and entry.endswith(".tex"):
+                os.remove(os.path.join(self._stage_snapshot_dir, entry))
+
     def _snapshot_stage_tex(self, snapshot_dir, stage_name, failed_pairs=None):
         if not snapshot_dir:
-            return
+            return False
         os.makedirs(snapshot_dir, exist_ok=True)
         idx = int(self._stage_snapshot_counter)
         safe_stage = "".join(
@@ -288,10 +312,47 @@ class NormalGraphDraw:
         )
         circuit_stem = os.path.splitext(self.parse.fileName)[0]
         filename = f"{circuit_stem}_{idx:02d}_{safe_stage}"
-        self._stage_snapshot_counter += 1
         iFCN_Lab.MapChessboard.outputTexFile(self.mapChessboard, filename, snapshot_dir)
         tex_path = os.path.join(snapshot_dir, f"{filename}.tex")
         self._highlight_failed_endpoints_in_tex(tex_path, failed_pairs)
+        with open(tex_path, "r", encoding="utf-8") as f:
+            rendered_tex = f.read()
+        if rendered_tex == self._stage_snapshot_last_tex:
+            os.remove(tex_path)
+            return False
+        self._stage_snapshot_last_tex = rendered_tex
+        self._stage_snapshot_counter += 1
+        return True
+
+    def _snapshot_routing_change(self, stage_name, failed_pairs=None):
+        snapshot_dir = getattr(self, "_stage_snapshot_dir", None)
+        if not snapshot_dir:
+            return False
+        return self._snapshot_stage_tex(
+            snapshot_dir,
+            stage_name,
+            failed_pairs=failed_pairs,
+        )
+
+    def _snapshot_initial_routing(self, failed_pairs):
+        if getattr(self, "_stage_initial_route_recorded", False):
+            return False
+        self._stage_initial_route_recorded = True
+        return self._snapshot_routing_change(
+            f"stage3_initial_routing_failed_{len(failed_pairs or {})}",
+            failed_pairs=failed_pairs,
+        )
+
+    def _snapshot_conflict_repair_placement(self, failed_pairs):
+        if getattr(self, "_stage_conflict_repair_recorded", False):
+            return False
+        self._stage_conflict_repair_recorded = True
+        self.place_all_nodes_on_chessboard()
+        return self._snapshot_routing_change(
+            "stage4_conflict_repair_expanded_placement_"
+            f"failed_{len(failed_pairs or {})}",
+            failed_pairs=failed_pairs,
+        )
 
     # Backward-compatible alias: stage snapshots now export tex layouts instead of heatmaps.
     def _snapshot_stage_heatmap(self, snapshot_dir, stage_name, failed_pairs=None):
@@ -4041,6 +4102,7 @@ class NormalGraphDraw:
         self.route_expansion_exhausted = False
         self.place_all_nodes_on_chessboard()
         failed_pairs = self.sequence_route_all_edges(verbose=verbose)
+        self._snapshot_initial_routing(failed_pairs)
         if not failed_pairs:
             self._last_route_priority = set()
             self._last_route_reverse_priority = False
@@ -4119,6 +4181,8 @@ class NormalGraphDraw:
                     )
                 )
             self._refresh_fanin_directions_for_current_coords()
+            if getattr(self, "_stage_snapshot_dir", None):
+                self._snapshot_conflict_repair_placement(failed_pairs)
 
             # Alternate failed-first and global congestion order.  Failed-first
             # opens the new local corridor; the global order prevents that edge
@@ -4330,7 +4394,7 @@ class NormalGraphDraw:
         self.clock_template_ok = False
         self.clock_template_conflict_count = 0
         self._sync_legacy_phase_status()
-        self._stage_snapshot_counter = 0
+        self._prepare_stage_snapshots(snapshot_dir)
         self.route_expansion_history = []
         self.route_expansion_exhausted = False
         self.route_incompatibility_reason = ""
@@ -4352,6 +4416,9 @@ class NormalGraphDraw:
         # 1) Graphviz+sifting order has already been computed.  Materialize a
         # compact placement whose every fanout remains strictly right/down.
         self.caculate_rough_placement()
+        if self._stage_snapshot_dir:
+            self.place_all_nodes_on_chessboard()
+            self._snapshot_routing_change("stage1_initial_placement")
         if not self.skip_port_reservation:
             self.caculate_ports_reservation()
         port_legalization_moves = self.legalize_right_down_ports()
@@ -4365,6 +4432,10 @@ class NormalGraphDraw:
                 )
             )
 
+        if self._stage_snapshot_dir:
+            self.place_all_nodes_on_chessboard()
+            self._snapshot_routing_change("stage2_port_reserved_placement")
+
         # 2) Route, and on every failure insert rows/columns selected from the
         # failed endpoint pressure map.  Legacy finite repair/global-move knobs
         # are accepted for CLI compatibility but no longer terminate a plateau.
@@ -4372,7 +4443,7 @@ class NormalGraphDraw:
         failed_pairs = self.route_until_success(verbose=verbose)
         self._snapshot_stage_heatmap(
             snapshot_dir,
-            "stage2_route_{}".format("success" if not failed_pairs else "exhausted"),
+            "stage5_route_{}".format("success" if not failed_pairs else "exhausted"),
             failed_pairs=failed_pairs,
         )
         if failed_pairs:
@@ -4422,12 +4493,12 @@ class NormalGraphDraw:
                     if compact_reductions > 0:
                         self._snapshot_stage_heatmap(
                             snapshot_dir,
-                            f"stage4_compacted_{compact_reductions}",
+                            f"stage7_compacted_{compact_reductions}",
                             failed_pairs=failed_pairs,
                         )
                     self._snapshot_stage_heatmap(
                         snapshot_dir,
-                        "stage4_legal_cell_layout",
+                        "stage7_legal_cell_layout",
                         failed_pairs=failed_pairs,
                     )
                     self._record_failed_pairs(failed_pairs)
@@ -4452,7 +4523,7 @@ class NormalGraphDraw:
             failed_pairs = self.route_until_success(verbose=False)
             self._snapshot_stage_heatmap(
                 snapshot_dir,
-                f"stage3_template_expand_{template_round + 1}_failed_{len(failed_pairs)}",
+                f"stage6_template_expand_{template_round + 1}_failed_{len(failed_pairs)}",
                 failed_pairs=failed_pairs,
             )
             if failed_pairs:
@@ -4464,7 +4535,7 @@ class NormalGraphDraw:
         self._sync_legacy_phase_status()
         self._snapshot_stage_heatmap(
             snapshot_dir,
-            f"stage3_template_expansion_exhausted_{len(conflicts)}",
+            f"stage6_template_expansion_exhausted_{len(conflicts)}",
             failed_pairs=failed_pairs,
         )
         self._record_failed_pairs(failed_pairs)

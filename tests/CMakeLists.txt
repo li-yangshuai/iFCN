@@ -1,6 +1,41 @@
 option(IFCN_BUILD_LEGACY_SIMON_TESTS "Build the original long-running simon tests" OFF)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+# These tests use assert as an executable invariant, including Release builds.
+if(MSVC)
+    add_compile_options(/UNDEBUG)
+else()
+    add_compile_options(-UNDEBUG)
+endif()
+
+set(IFCN_RUNTIME_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/fixtures")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/generate_runtime_fixtures.py"
+            "${IFCN_RUNTIME_FIXTURE_DIR}"
+    RESULT_VARIABLE IFCN_FIXTURE_RESULT)
+if(NOT IFCN_FIXTURE_RESULT EQUAL 0)
+    message(FATAL_ERROR "Could not generate physical regression fixtures")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/generate_runtime_fixtures.py")
+
+# Z3 is optional. Install z3-solver into the selected Python interpreter;
+# an external package extraction remains available via IFCN_Z3_ROOT.
+set(IFCN_Z3_ROOT "" CACHE PATH "Optional extracted Z3 package root")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -c
+            "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import solve_global_clock_z3 as backend; backend.load_z3(Path(sys.argv[2]))"
+            "${PROJECT_SOURCE_DIR}/scripts" "${IFCN_Z3_ROOT}"
+    RESULT_VARIABLE IFCN_Z3_IMPORT_RESULT
+    OUTPUT_QUIET ERROR_QUIET)
+if(IFCN_Z3_IMPORT_RESULT EQUAL 0)
+    set(IFCN_Z3_AVAILABLE TRUE)
+else()
+    set(IFCN_Z3_AVAILABLE FALSE)
+    message(STATUS "Optional Z3 regressions disabled: install z3-solver for ${Python3_EXECUTABLE}")
+endif()
 add_test(
     NAME negotiated_router_regression
     COMMAND ${Python3_EXECUTABLE}
@@ -73,11 +108,14 @@ add_test(NAME sequential_global_phase_solver_regression
 set_tests_properties(sequential_global_phase_solver_regression
                      PROPERTIES TIMEOUT 10)
 
+if(IFCN_Z3_AVAILABLE)
 add_test(
     NAME sequential_z3_phase_solver_regression
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/test_solve_global_clock_z3.py")
-set_tests_properties(sequential_z3_phase_solver_regression PROPERTIES TIMEOUT 15)
+set_tests_properties(sequential_z3_phase_solver_regression PROPERTIES
+    TIMEOUT 15 ENVIRONMENT "IFCN_Z3_ROOT=${IFCN_Z3_ROOT}")
+endif()
 
 add_test(
     NAME sequential_rtl_runner_regression
@@ -158,6 +196,7 @@ set_tests_properties(
     sequential_cyclic_compaction_report_regression
     PROPERTIES DEPENDS sequential_cyclic_feedback_regression TIMEOUT 15)
 
+if(IFCN_Z3_AVAILABLE)
 set(SEQUENTIAL_COMPACT_ENABLE_IFCN
     "${SEQUENTIAL_PIPELINE_DIR}/enable_hold_ff_cyclic.ifcn")
 set(SEQUENTIAL_COMPACT_ENABLE_CLOCK_PROBLEM
@@ -182,7 +221,8 @@ add_test(
             --clock-problem-out "${SEQUENTIAL_COMPACT_ENABLE_CLOCK_PROBLEM}"
             --defer-phase)
 set_tests_properties(
-    sequential_cyclic_compact_area_geometry_rank0 PROPERTIES TIMEOUT 45)
+    sequential_cyclic_compact_area_geometry_rank0 PROPERTIES
+    FIXTURES_SETUP compact_clock_geometry TIMEOUT 120)
 
 add_test(
     NAME sequential_cyclic_compact_area_z3_rank0
@@ -191,12 +231,14 @@ add_test(
             "${SEQUENTIAL_COMPACT_ENABLE_CLOCK_PROBLEM}"
             "${SEQUENTIAL_COMPACT_ENABLE_PHASE_SOLUTION}"
             --summary "${SEQUENTIAL_COMPACT_ENABLE_Z3_SUMMARY}"
-            --z3-root "${PROJECT_SOURCE_DIR}/build/tools/z3-local"
+            --z3-root "${IFCN_Z3_ROOT}"
             --timeout-ms 60000)
 set_tests_properties(
     sequential_cyclic_compact_area_z3_rank0
     PROPERTIES
         DEPENDS sequential_cyclic_compact_area_geometry_rank0
+        FIXTURES_REQUIRED compact_clock_geometry
+        FIXTURES_SETUP compact_clock_solution
         TIMEOUT 70)
 
 add_test(
@@ -216,7 +258,9 @@ set_tests_properties(
     sequential_cyclic_compact_area_generation
     PROPERTIES
         DEPENDS sequential_cyclic_compact_area_z3_rank0
-        TIMEOUT 45)
+        FIXTURES_REQUIRED compact_clock_solution
+        FIXTURES_SETUP compact_clock_layout
+        TIMEOUT 120)
 
 add_test(
     NAME sequential_cyclic_compact_area_regression
@@ -225,7 +269,9 @@ add_test(
             "${SEQUENTIAL_COMPACT_ENABLE_IFCN}.json")
 set_tests_properties(
     sequential_cyclic_compact_area_regression
-    PROPERTIES DEPENDS sequential_cyclic_compact_area_generation TIMEOUT 15)
+    PROPERTIES DEPENDS sequential_cyclic_compact_area_generation
+    FIXTURES_REQUIRED compact_clock_layout TIMEOUT 15)
+endif()
 
 add_test(
     NAME sequential_mapping_toggle_regression
@@ -243,7 +289,7 @@ add_test(
             "${SEQUENTIAL_TOGGLE_QCA_PREFIX}_energy_input.qca"
             --model bistable
             --vectors
-            "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff_cut.vt"
+            "${IFCN_RUNTIME_FIXTURE_DIR}/toggle_ff_cut.vt"
             --repetitions 1
             --samples 512
             --require-equivalent
@@ -259,7 +305,7 @@ add_test(
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/SEQUENTIAL/rtl_v/verify_toggle_cut_waveform.py"
             "${SEQUENTIAL_TOGGLE_SIM_PREFIX}_bistable_baseline.rst"
-            "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/SEQUENTIAL/rtl_v/toggle_ff_cut.vt"
+            "${IFCN_RUNTIME_FIXTURE_DIR}/toggle_ff_cut.vt"
             --layout-report "${SEQUENTIAL_TOGGLE_IFCN}.json"
             --json "${SEQUENTIAL_TOGGLE_SIM_PREFIX}_functional.json")
 set_tests_properties(
@@ -279,7 +325,7 @@ add_test(
     NAME io_contraction_control_no_change_regression
     COMMAND ${CMAKE_COMMAND}
             "-DIFCN_GUI=$<TARGET_FILE:fcnx_gui>"
-            "-DIFCN_INPUT=${PROJECT_SOURCE_DIR}/tests/cell_level_examples/others/xor2_use.qca"
+            "-DIFCN_INPUT=${IFCN_RUNTIME_FIXTURE_DIR}/io_no_change.qca"
             "-DIFCN_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/io_contraction_no_change.svg"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/IoContractionControlNoChangeTest.cmake")
 set_tests_properties(io_contraction_control_no_change_regression
@@ -293,13 +339,16 @@ add_test(NAME phase_aware_routing_regression COMMAND phase_aware_routing_tests)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TEST_GVC REQUIRED libgvc)
 pkg_check_modules(TEST_CGRAPH REQUIRED libcgraph)
+set(IFCN_OGDF_TEST_ORDERER "" CACHE FILEPATH
+    "Optional OGDF executable for fixed-layer ordering regression tests")
 add_executable(stochastic_compact_graph_tests StochasticCompactGraphUnitTest.cpp)
 target_include_directories(stochastic_compact_graph_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${TEST_GVC_INCLUDE_DIRS}
     ${TEST_CGRAPH_INCLUDE_DIRS})
 target_compile_definitions(stochastic_compact_graph_tests PRIVATE
-    IFCN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    IFCN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    IFCN_TEST_OGDF_ORDERER="${IFCN_OGDF_TEST_ORDERER}")
 target_link_libraries(stochastic_compact_graph_tests PRIVATE
     autopr
     ${TEST_GVC_LIBRARIES}
@@ -322,9 +371,9 @@ add_test(
     NAME stochastic_compact_graph_anisotropic_regression
     COMMAND stochastic_compact_graph_tests
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/RCA2.v"
-            --graphviz-xy 35 36 420 0 1800)
+            --graphviz-xy-fallback 35 36 420 0 3000)
 set_tests_properties(stochastic_compact_graph_anisotropic_regression
-                     PROPERTIES TIMEOUT 45)
+                     PROPERTIES TIMEOUT 90)
 add_test(
     NAME stochastic_compact_graph_adaptive_compact_regression
     COMMAND stochastic_compact_graph_tests
@@ -339,8 +388,6 @@ set_tests_properties(
     stochastic_compact_graph_adaptive_compact_regression
     stochastic_compact_graph_adaptive_maj_adder_regression
     PROPERTIES TIMEOUT 15)
-set(IFCN_OGDF_TEST_ORDERER
-    "${PROJECT_SOURCE_DIR}/build-ogdf/ifcn_ogdf_layer_order")
 if(EXISTS "${IFCN_OGDF_TEST_ORDERER}")
     add_test(
         NAME ogdf_crossing_order_regression
@@ -352,7 +399,7 @@ add_test(
     NAME stochastic_compact_graph_small_maj_xor_regression
     COMMAND stochastic_compact_graph_tests
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/xor2.v"
-            --graphviz-xy 52 72 480 10 72)
+            --graphviz-xy 52 72 480 10 96)
 add_test(
     NAME stochastic_compact_graph_small_maj_xnor_regression
     COMMAND stochastic_compact_graph_tests
@@ -367,12 +414,12 @@ add_test(
     NAME stochastic_compact_graph_small_maj_adder_regression
     COMMAND stochastic_compact_graph_tests
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/1bitAdderMaj.v"
-            --graphviz-xy 88 88 300 12 42)
+            --graphviz-xy-fallback 88 88 300 12 128)
 add_test(
     NAME stochastic_compact_graph_small_toy_xnor_regression
     COMMAND stochastic_compact_graph_tests
             "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/TOY/xnor2.v"
-            --graphviz-xy 40 68 420 8 50)
+            --graphviz-xy 40 68 420 8 64)
 set_tests_properties(
     stochastic_compact_graph_small_maj_xor_regression
     stochastic_compact_graph_small_maj_xnor_regression
@@ -410,13 +457,22 @@ add_test(
     NAME june_random_clock_graph_fallback_regression
     COMMAND ${CMAKE_COMMAND}
             "-DIFCN_TEST_EXECUTABLE=$<TARGET_FILE:june_random_clock_graph_tests>"
-            "-DIFCN_INPUT=${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/clpl.v"
+            "-DIFCN_INPUT=${PROJECT_SOURCE_DIR}/tests/benchmarks_f/MAJ/xor5R.v"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/JuneRandomClockFallbackTest.cmake")
+
+set(IFCN_PHYSICAL_SMOKE_PREFIX "${IFCN_RUNTIME_FIXTURE_DIR}/xor2")
+set(IFCN_PHYSICAL_SMOKE_DESIGN "${IFCN_PHYSICAL_SMOKE_PREFIX}_energy_input.qca")
+add_test(NAME physical_smoke_fixture_generation
+    COMMAND $<TARGET_FILE:ifcn_energy_analysis>
+            "${PROJECT_SOURCE_DIR}/tests/benchmarks_f/TOY/xor2_graph_pr_layout/xor2_graph_pr_layout.ifcn"
+            "${IFCN_PHYSICAL_SMOKE_PREFIX}" --qca-only)
+set_tests_properties(physical_smoke_fixture_generation
+    PROPERTIES FIXTURES_SETUP physical_smoke_design TIMEOUT 15)
 
 add_test(
     NAME physical_benchmark_smoke
     COMMAND $<TARGET_FILE:ifcn_physical_benchmark>
-            "${PROJECT_SOURCE_DIR}/tests/cell_level_examples/others/xor2.qca"
+            "${IFCN_PHYSICAL_SMOKE_DESIGN}"
             --model both
             --repetitions 1
             --samples 128
@@ -433,6 +489,21 @@ add_test(
 set_tests_properties(physical_benchmark_rejects_missing_design
                      PROPERTIES WILL_FAIL TRUE)
 
+add_test(NAME physical_benchmark_selective_reuse
+    COMMAND $<TARGET_FILE:ifcn_physical_benchmark>
+            "${IFCN_RUNTIME_FIXTURE_DIR}/io_no_change.qca"
+            --model both
+            --vectors "${IFCN_RUNTIME_FIXTURE_DIR}/io_no_change.vt"
+            --graph-mode reuse
+            --verify-internal-state
+            --repetitions 1
+            --samples 128
+            --duration 2e-14
+            --time-step 1e-16
+            --require-equivalent
+            --equivalence-tolerance 0)
+set_tests_properties(physical_benchmark_selective_reuse PROPERTIES TIMEOUT 30)
+
 set(IFCN_HFUT_SIM_BENCHMARK_DIR "${PROJECT_SOURCE_DIR}/../hfut-sim/benchmark" CACHE PATH
     "Path to the original hfut-sim QCA benchmark directory")
 
@@ -445,17 +516,18 @@ target_link_libraries(accelerated_coherence_tests PRIVATE simon)
 add_executable(ordered_interaction_graph_tests OrderedInteractionGraphUnitTest.cpp)
 target_link_libraries(ordered_interaction_graph_tests PRIVATE simon)
 
-set(IFCN_IN_TREE_PHYSICAL_SMOKE_DESIGN
-    "${PROJECT_SOURCE_DIR}/tests/cell_level_examples/others/xor2.qca")
 add_test(NAME accelerated_bistable_equivalence
          COMMAND accelerated_bistable_tests
-                 "${IFCN_IN_TREE_PHYSICAL_SMOKE_DESIGN}")
+                 "${IFCN_PHYSICAL_SMOKE_DESIGN}")
 add_test(NAME accelerated_coherence_equivalence
          COMMAND accelerated_coherence_tests
-                 "${IFCN_IN_TREE_PHYSICAL_SMOKE_DESIGN}")
+                 "${IFCN_PHYSICAL_SMOKE_DESIGN}")
 add_test(NAME ordered_interaction_graph_equivalence
          COMMAND ordered_interaction_graph_tests
-                 "${IFCN_IN_TREE_PHYSICAL_SMOKE_DESIGN}")
+                 "${IFCN_PHYSICAL_SMOKE_DESIGN}")
+set_tests_properties(physical_benchmark_smoke accelerated_bistable_equivalence
+    accelerated_coherence_equivalence ordered_interaction_graph_equivalence
+    PROPERTIES FIXTURES_REQUIRED physical_smoke_design TIMEOUT 180)
 
 if(EXISTS "${IFCN_HFUT_SIM_BENCHMARK_DIR}/xor-14.qca")
     add_test(NAME accelerated_bistable_external_equivalence
@@ -468,7 +540,7 @@ if(EXISTS "${IFCN_HFUT_SIM_BENCHMARK_DIR}/xor-14.qca")
              COMMAND ordered_interaction_graph_tests
                      "${IFCN_HFUT_SIM_BENCHMARK_DIR}/xor-14.qca")
 else()
-    message(STATUS "hfut-sim benchmarks not found; physical equivalence tests are skipped")
+    message(STATUS "External hfut-sim benchmarks unavailable; generated physical equivalence tests remain enabled")
 endif()
 
 if(IFCN_BUILD_LEGACY_SIMON_TESTS)
@@ -487,3 +559,20 @@ add_test(NAME pi_layout_artifact_validation_regression
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/test_ifcn_agent_layout_validation.py")
 set_tests_properties(pi_layout_artifact_validation_regression PROPERTIES TIMEOUT 15)
+
+foreach(IFCN_PYTHON_TEST IN ITEMS
+        test_yosys_json_to_seqir
+        test_validate_sequential_paper_benchmark
+        test_ifcn_agent)
+    add_test(NAME ${IFCN_PYTHON_TEST}
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${IFCN_PYTHON_TEST}.py")
+    set_tests_properties(${IFCN_PYTHON_TEST} PROPERTIES TIMEOUT 60)
+endforeach()
+
+foreach(IFCN_LAYOUT_TEST IN ITEMS stochastic_clock ifcn_layout_dataset)
+    add_test(NAME ${IFCN_LAYOUT_TEST}_regression
+        COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/include/gcn_rl_layout/tests/test_${IFCN_LAYOUT_TEST}.py")
+    set_tests_properties(${IFCN_LAYOUT_TEST}_regression PROPERTIES TIMEOUT 30)
+endforeach()

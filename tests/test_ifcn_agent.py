@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from ifcn_agent_frontend import normalize_verilog
 from ifcn_agent import check_pnr, energy_summary, execute, qca_interface_report, run_pnr
+import ifcn_agent as agent
 
 
 def evaluate(node, values):
@@ -198,6 +199,44 @@ for i in range(100):
         calls, report, _ = self.run_policy("auto", InterruptedError, expect_error=True)
         self.assertEqual(calls, ["normal_2ddwave"])
         self.assertEqual(report["attempts"][0]["status"], "cancelled")
+
+
+class RunStatusTests(unittest.TestCase):
+    def test_completion_published_before_lock_release_is_not_interrupted(self):
+        with tempfile.TemporaryDirectory(prefix="ifcn-status-test-") as temporary:
+            path = Path(temporary)
+            manifest = {"schema": agent.SCHEMA, "status": "running", "stages": {}}
+            agent.write_json(path / "manifest.json", manifest)
+            worker_lock = agent.lock_run(path)
+            original_lock_run = agent.lock_run
+
+            def finish_before_lock_probe(run_path):
+                nonlocal worker_lock
+                manifest["status"] = "completed"
+                agent.write_json(path / "manifest.json", manifest)
+                os.close(worker_lock)
+                worker_lock = None
+                return original_lock_run(run_path)
+
+            try:
+                # Reproduce completion exactly at the old read/probe race
+                # boundary, without relying on scheduler timing or sleeps.
+                with patch.object(agent, "lock_run", side_effect=finish_before_lock_probe):
+                    result = agent.status(path)
+                self.assertEqual(result["status"], "completed")
+                self.assertFalse(result["active"])
+            finally:
+                if worker_lock is not None:
+                    os.close(worker_lock)
+
+    def test_unlocked_running_manifest_is_still_reported_as_interrupted(self):
+        with tempfile.TemporaryDirectory(prefix="ifcn-status-test-") as temporary:
+            path = Path(temporary)
+            agent.write_json(path / "manifest.json",
+                             {"schema": agent.SCHEMA, "status": "running", "stages": {}})
+            result = agent.status(path)
+            self.assertEqual(result["status"], "interrupted")
+            self.assertFalse(result["active"])
 
 
 class JobTests(unittest.TestCase):

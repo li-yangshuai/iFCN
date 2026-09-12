@@ -45,9 +45,11 @@ def digest(path):
 
 
 def configuration():
-    build = Path(os.environ.get("IFCN_BUILD_DIR", str(ROOT / "build-release"))).resolve()
+    default_build = ROOT / "build-release" if (ROOT / "build-release").is_dir() else ROOT / "build"
+    build = Path(os.environ.get("IFCN_BUILD_DIR", str(default_build))).resolve()
+    local_python = ROOT / "include/gcn_rl_layout/myenv/bin/python"
     return {"root": str(ROOT), "build_dir": str(build),
-            "python": os.environ.get("IFCN_PYTHON", str(ROOT / "include/gcn_rl_layout/myenv/bin/python")),
+            "python": os.environ.get("IFCN_PYTHON", str(local_python) if local_python.is_file() else sys.executable),
             "backend": str(ROOT / "scripts/ifcn_agent_backend.py"),
             "energy_binary": str(build / "ifcn_energy_analysis"),
             "simulation_binary": str(build / "ifcn_physical_benchmark"),
@@ -84,7 +86,7 @@ def doctor(deep=False):
                               "optimizes_area": False},
               "experimental_backends": {"genetic": "not_integrated", "gcn_ppo": "not_integrated", "memory_policy": "not_integrated"},
               "combinational": {"supported": True, "input": "Single-module scalar assign netlist; ~ & | ^ and parentheses; ANSI/non-ANSI scalar ports"},
-              "sequential": {"supported": False, "status": "reserved", "reference": str(ROOT / "handoff.md")},
+              "sequential": {"supported": False, "status": "reserved", "reference": str(ROOT / "docs/sequential-design.md")},
               "functional_signoff": "not_provided", "deep_probe": "not_requested"}
     report["logic_validation"] = {"method": "exhaustive scalar source vs routed DAG", "max_inputs": 11,
                                   "unverifiable_small_input": "reject candidate", "larger_input": "explicitly not performed"}
@@ -161,13 +163,21 @@ def tail(path, limit=3000):
 
 
 def status(path):
-    manifest = load_run(path)
+    fd = None
     active = False
     try:
         fd = lock_run(path)
-        os.close(fd)
     except ValueError:
         active = True
+    try:
+        # A worker publishes its terminal manifest before releasing this
+        # lock. Read after the probe so a just-finished worker cannot be
+        # mistaken for an interruption using an earlier running snapshot.
+        # When acquired, keep the lock through the read to exclude resume.
+        manifest = load_run(path)
+    finally:
+        if fd is not None:
+            os.close(fd)
     manifest["active"] = active
     if manifest["status"] in {"queued", "running"} and not active:
         manifest["status"] = "interrupted"

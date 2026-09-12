@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import os
 import unittest
 from pathlib import Path
 
@@ -125,7 +126,7 @@ class Z3ClockBackendTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         try:
-            cls.z3 = backend.load_z3(backend.DEFAULT_Z3_ROOT)
+            cls.z3 = backend.load_z3(Path(os.environ.get("IFCN_Z3_ROOT", backend.DEFAULT_Z3_ROOT)))
         except backend.SolveError as error:
             raise unittest.SkipTest(str(error))
 

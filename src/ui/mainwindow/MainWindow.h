@@ -24,8 +24,6 @@
 #include <simon/simon.hpp>
 #include <QTableWidget>
 #include <QSet>
-#include "ui/widgets/CircuitItem.h"
-#include "ui/widgets/Arrow.h"
 #include "ui/widgets/waveformwindow.h"
 #include "controllers/SimulationManager.h"
 #include <QPainter>

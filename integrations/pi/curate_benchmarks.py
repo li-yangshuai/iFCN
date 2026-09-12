@@ -2,7 +2,7 @@
 """Freeze scalar combinational benchmark sources without changing originals.
 
 Use --check to verify the published snapshot, source hashes, complete truth
-tables, and evidence registry without writing files. This deliberately small
+tables without writing files. This deliberately small
 parser is a truth-table oracle for the supported scalar subset, not a complete
 Verilog frontend or a device-level functional verifier.
 """
@@ -22,6 +22,16 @@ ROOT = Path(__file__).resolve().parents[2]
 VERSION = "v1"
 SNAPSHOT = ROOT / "tests" / "benchmarks_pi" / VERSION
 FOLDERS = ("TOY", "MAJ")
+# Versioned membership must not change when other algorithms add new examples.
+V1_SOURCES = {
+    "TOY": ("1bitAdderAOIG", "1bitAdderMaj", "RCA2", "b1_r2", "clpl",
+            "mux21", "mux41", "newtag", "par_check", "par_gen",
+            "paper_2ddwave_carry_demo", "paper_2ddwave_crossing_demo",
+            "paper_2ddwave_xor_demo", "t", "xnor2", "xor2", "xor5R"),
+    "MAJ": ("1bitAdderAOIG", "1bitAdderMaj", "RCA2", "clpl", "mux41",
+            "newtag", "par_check", "par_gen", "t", "xnor2", "xor2",
+            "xor5R", "xor5_r1"),
+}
 
 
 def sha(data: bytes) -> str:
@@ -234,7 +244,8 @@ def semantic_label(case_id: str) -> tuple[str, str]:
 def build_manifest() -> tuple[dict, dict[str, bytes], dict[str, bytes]]:
     cases, files, originals = [], {}, {}
     for folder in FOLDERS:
-        for source in sorted((ROOT / "tests" / "benchmarks_f" / folder).glob("*.v")):
+        for name in sorted(V1_SOURCES[folder]):
+            source = ROOT / "tests" / "benchmarks_f" / folder / f"{name}.v"
             case_id = f"{folder}/{source.stem}"
             source_relpath = source.relative_to(ROOT).as_posix()
             original = source.read_bytes()
@@ -330,50 +341,13 @@ def build_manifest() -> tuple[dict, dict[str, bytes], dict[str, bytes]]:
     return manifest, files, originals
 
 
-def evidence_entry(entry_id, category, paths, permitted, excluded, reason, provenance=None):
-    return {
-        "id": entry_id, "eligibility": category,
-        "artifacts": [
-            {"relpath": path, "role": "dynamic_documentation_reference", "integrity_policy": "not_part_of_historical_result_hashes"}
-            if Path(path).suffix == ".md"
-            else {"relpath": path, "role": "historical_result", "sha256": sha((ROOT / path).read_bytes())}
-            for path in paths
-        ],
-        "permitted_claims": permitted, "excluded_claims": excluded,
-        "reason": reason, "provenance": provenance or [],
-        "new_benchmark_performance_source": False,
-    }
-
-
-def build_evidence_registry() -> dict:
-    provenance = [{"relpath": "paper/data/experiment_results_README.md", "lines": [3, 10], "meaning": "Explicit superseded legality audit; regenerate CSV, Table 1 and comparison curve before publication."}]
-    entries = [
-        evidence_entry("small_compaction_superseded", "superseded_exclude", ["paper/data/small_compaction_results.csv"], ["Archive provenance only"], ["Current area improvement", "Current legal layout success rates", "New benchmark efficacy"], "The 2026-07-20 provenance note supersedes the 2026-07-18 endpoint checker; shared fanin input-side conflicts were not rejected.", provenance),
-        evidence_entry("large_fiction_unvalidated", "unvalidated_exclude", ["paper/data/large_fiction_results.csv"], ["Archive provenance only"], ["Current area improvement", "Fair runtime comparison", "New benchmark efficacy"], "The provenance note excludes old large layouts from efficacy claims because they were not rerun under the hard endpoint-port checker; baseline and proposed runtime scopes also differ.", [{"relpath": "paper/data/experiment_results_README.md", "lines": [19, 34]}]),
-        evidence_entry("phase_pr_historical", "recheck_required", ["experiments/phase_pr/phase_pr_results.csv", "experiments/phase_pr/ifcn_mapping_stats.csv"], ["Historical routing and device-export records exist"], ["Frozen-v1 success rates", "Device functional equivalence", "Validated power"], "Historical suite membership differs from v1 and no v1 source hash binding exists. Re-run against frozen inputs and current legality checks before use as performance data."),
-        evidence_entry("gcn_rl_historical", "recheck_required", ["tests/benchmarks_f/TOY/gcn_rl_ui_memory_only_qca_summary.json", "tests/benchmarks_f/TOY/gcn_rl_memory_retrain_rca2_xor5R_summary.json"], ["Historical GCN-RL routing and QCA exports exist"], ["Frozen-v1 success rates", "Held-out generalization", "Validated power"], "Runs reuse trained layout memory and some source logic/filenames differ from frozen-v1. The summaries explicitly did not run power analysis."),
-        evidence_entry("physical_ifcn36", "numerical_engine_comparison_only", ["experiments/physical_ifcn_all36_smoke/summary.json", "experiments/physical_ifcn_all36_smoke/results.csv"], ["Baseline/accelerated numerical trace agreement and recorded timing under the documented smoke protocol"], ["Verilog-to-device functional equivalence", "LLM autonomy", "Default-duration simulator performance", "Power accuracy"], "The comparison uses existing QCA layouts and compares two implementations of the same numerical model; it does not align outputs to RTL truth tables."),
-        evidence_entry("physical_hfut25", "numerical_engine_comparison_only", ["experiments/physical_hfut_all25_preliminary/summary.json", "experiments/physical_hfut_all25_preliminary/results.csv"], ["Baseline/accelerated numerical trace agreement and recorded preliminary timing under that protocol"], ["Verilog-to-device functional equivalence", "LLM autonomy", "Default-duration simulator performance", "Power accuracy"], "The documentation labels this a shortened non-default preliminary protocol. It is separate from v1 end-to-end evaluation.", [{"relpath": "docs/clock_zone_simulation.md", "lines": [117, 143]}]),
-        evidence_entry("gcn_rl_energy", "energy_unconverged", ["tests/benchmarks_f/TOY/1bitAdderAOIG_gcn_rl_layout/1bitAdderAOIG_rl_layout_energy.txt", "tests/benchmarks_f/TOY/1bitAdderMaj_gcn_rl_layout/1bitAdderMaj_rl_layout_energy.txt", "tests/benchmarks_f/TOY/gcn_rl_ui_sequential_power_summary.json"], ["The energy export stage produced model reports"], ["Converged dissipated energy", "Validated average power", "Power optimization benefit"], "Time-step and warm-up convergence are not established. Existing error terms are large relative to bath energy and the first reported cycle dominates; a successful command does not validate physical accuracy."),
-        evidence_entry("pi_sdk_smoke", "tool_integration_only", ["integrations/pi/VALIDATION.md"], ["Documented Pi SDK extension integration and tool-chain smoke result"], ["Actual LLM autonomous design success", "Verilog-to-device functional equivalence", "Converged power"], "The validation explicitly states the tools were exercised without a paid LLM and the numerical comparison is not RTL truth-table alignment."),
-    ]
-    return {
-        "schema_version": 1, "benchmark_version": VERSION,
-        "scope": "Eligibility of historical evidence for a new iFCN Pi manuscript. These are records of prior outputs, not freshly measured performance.",
-        "default_for_unlisted_artifacts": "excluded_until_explicitly_audited",
-        "new_performance_policy": "Generate new results from frozen v1 sources, record source and executable hashes plus complete commands, and pass current legality/functional checks. No listed historical artifact supplies new-v1 performance numbers.",
-        "entries": entries,
-    }
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="Read-only verification of existing frozen files and registry")
+    parser.add_argument("--check", action="store_true", help="Read-only verification of existing frozen files")
     args = parser.parse_args()
     manifest, files, originals = build_manifest()
     payloads = dict(files)
     payloads[f"tests/benchmarks_pi/{VERSION}/manifest.json"] = encoded(manifest)
-    payloads[f"tests/benchmarks_pi/{VERSION}/evidence_eligibility.json"] = encoded(build_evidence_registry())
     existing_manifest = SNAPSHOT / "manifest.json"
     # v1 is immutable after creation: source drift must not silently rewrite it.
     if existing_manifest.exists() and existing_manifest.read_bytes() != payloads[f"tests/benchmarks_pi/{VERSION}/manifest.json"]:

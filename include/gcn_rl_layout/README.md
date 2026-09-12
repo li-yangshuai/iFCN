@@ -1,24 +1,81 @@
-# Graphviz+sifting + RL Layout Backend
+# Graphviz / GCN / PPO 布局后端
 
-这个目录是 iFCN GUI 使用的第二 Layout/P&R 后端，保留的是运行链路需要的代码：
+[返回中文首页](../../README.md) · [English overview](../../README.en.md#optional)
 
-- `src/algorithm/main/train_layout_ppo.py`: Graphviz dot/mincross + 精确增益 sifting warm start 和 PPO/RL 压缩主入口。
-- `src/algorithm/main/train_universal_graph_ppo.py`: 多电路、冻结随机时钟场、动态图动作的通用 GNN+PPO 训练入口。
-- `src/algorithm/main/evaluate_universal_graph_ppo.py`: 在独立电路与独立 clock seeds 上对比 policy 和 warm-start baseline。
-- `scripts/gui_universal_agent_runner.py`: GUI 的通用记忆智能体推理、严格随机时钟验证和 `.ifcn` 导出入口。
-- `scripts/gui_gcn_rl_runner.py`: GUI 调用入口，支持多个 seed 并行训练并选最优结果。
-- `src/algorithm/main/test_randomPhase.py`: Graphviz+sifting 排序、自适应布局、相位感知布线基础实现。
-- `src/algorithm/main/test_normal_graph_draw.py`: 面向 2DDWave 时钟方案的 normal graph draw P&R 入口。
-- `src/algorithm/src`: Python 侧解析、Graphviz+sifting（并保留旧 GCN API 兼容层）和 `.ifcn` 导出工具。
-- `src/algorithm/src/stochastic_clock.py`: 先采样后冻结的因果随机时钟场与多场景鲁棒指标。
-- `src/algorithm/src/universal_graph_policy.py`: 面向任意电路规模和动态动作候选的有向图 actor/critic。
-- `src/parse`、`src/chessboard`、`lib/bindings`: 独立 pybind 后端源码。
+本目录维护 iFCN 的可选 Python 布局布线后端、C++ Python 扩展，以及图策略训练与推理代码。
+当前桌面工具栏默认是 **Compact Graph Draw**，下拉菜单包含 **Heuristic P&R** 与
+**2DDWave Fixed-Clock P&R**。其中 2DDWave 使用本目录的 Python 后端；GCN/PPO 和记忆策略
+通过命令行运行，当前工具栏不提供 `Universal AI P&R` 入口。
 
-通用随机时钟模型目前已具备多电路共享策略、IFCN 拓扑检索记忆、GRU 工作记忆、
-冻结 phase 场 exact router、learned route priority、ragged PPO、Python absolute-stage
-后验 DRC 和多场景 mean+CVaR 反馈。桌面 GUI 已接入训练后的 checkpoint 推理和严格
-合法导出；更大规模 held-out 电路的成功率、面积和延迟仍需继续训练与评估。
-设计、现状审计和接入顺序见 `UNIVERSAL_STOCHASTIC_CLOCK.md`。
+目录和脚本名称中的 `gui_` 保留兼容含义：runner 仍可独立调用，生成的 `.ifcn` 可在桌面中打开。
+基础 C++ GUI、Compact Graph 和物理仿真无需安装本模块；使用 Python 布局器时再配置依赖。
+所有命令从 **iFCN 仓库根目录** 执行。
+
+## 代码入口
+
+| 路径 | 功能 |
+| --- | --- |
+| `src/algorithm/main/test_normal_graph_draw.py` | 固定 2DDWave 图布局与布线 |
+| `src/algorithm/main/test_randomPhase.py` | 自适应放置与相位感知布线基础实现 |
+| `src/algorithm/main/train_layout_ppo.py` | Graphviz/sifting warm start 与逐电路 PPO 压缩 |
+| `src/algorithm/main/train_universal_graph_ppo.py` | 多电路、冻结随机时钟场、动态图动作的通用 GNN/PPO 训练 |
+| `src/algorithm/main/evaluate_universal_graph_ppo.py` | 独立电路和独立时钟种子上的 policy / warm-start 对比 |
+| `scripts/gui_universal_agent_runner.py` | 通用记忆策略推理、严格随机时钟验证与 `.ifcn` 导出 |
+| `scripts/gui_gcn_rl_runner.py` | 多种子并行逐电路训练与结果选择 |
+| `src/algorithm/src/` | Python 解析、排序、布局导出、图策略、随机时钟与检索记忆 |
+| `src/parse/`, `src/chessboard/`, `lib/bindings/` | `iFCN_Lab` 的 C++ 解析、路由与 pybind11 源码 |
+
+通用策略包含跨电路共享参数、IFCN 拓扑检索记忆、GRU 工作记忆、冻结相位场精确布线、
+学习到的路径优先级、ragged PPO、Python absolute-stage 后验检查，以及多场景 mean/CVaR 反馈。
+这些实现能力不代表已保证任意新电路的成功率、面积或延迟；泛化能力需要独立训练与评估。
+详细模型与阶段审计见 [UNIVERSAL_STOCHASTIC_CLOCK.md](UNIVERSAL_STOCHASTIC_CLOCK.md)；
+其中历史实验与 GUI 接入记录不作为当前工具栏说明。
+
+## 安装依赖并构建扩展
+
+先安装仓库首页列出的基础构建依赖，然后创建 Python 环境。以下使用 CPU 版 PyTorch：
+
+```bash
+TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu \
+  bash include/gcn_rl_layout/scripts/setup_python_env.sh
+include/gcn_rl_layout/myenv/bin/python -m pip install pybind11
+
+cmake -S . -B build-rl -DCMAKE_BUILD_TYPE=Release \
+  -DIFCN_BUILD_GCN_RL_BINDINGS=ON \
+  -DPython3_EXECUTABLE="$PWD/include/gcn_rl_layout/myenv/bin/python" \
+  -Dpybind11_DIR="$(include/gcn_rl_layout/myenv/bin/python -m pybind11 --cmakedir)"
+cmake --build build-rl --target iFCN_Lab -j2
+```
+
+安装脚本添加 PyTorch、PyTorch Geometric、scikit-learn、Matplotlib 与 NetworkX。
+可用 `TORCH_INDEX_URL` 选择与本机兼容的 GPU wheel 源；脚本默认源为 CUDA 12.8。
+若复用已配置的系统包，可同时设置 `IFCN_GCN_RL_USE_SYSTEM_SITE=1` 与
+`IFCN_GCN_RL_SKIP_TORCH_INSTALL=1`。通过 `IFCN_GCN_RL_VENV` 可改变虚拟环境目录。
+
+扩展仅生成到构建目录的 `python/lib/`，上例为 `build-rl/python/lib/iFCN_Lab*.so`，不会复制到源码目录。
+后端自动发现仓库的 `build-rl/python/lib/`、`build/python/lib/` 与
+`include/gcn_rl_layout/build/python/lib/`。自定义构建目录可使用优先级最高的显式设置：
+
+```bash
+export IFCN_GCN_RL_BINDINGS_DIR=/path/to/build/python/lib
+```
+
+也可将 `/path/to/build/python` 添加到 `PYTHONPATH`。解释器与扩展必须使用兼容的 Python ABI；
+切换解释器后应重新配置并构建。扩展、虚拟环境、checkpoint 和训练结果均为本地生成文件。
+
+桌面 Python 后端依次查找：
+
+1. `IFCN_GCN_RL_PYTHON` 环境变量；
+2. 当前后端目录的 `myenv/bin/python`；
+3. 系统 `python3`；
+4. 系统 `python`。
+
+显式指定当前工程的后端与解释器：
+
+```bash
+export IFCN_GCN_RL_ROOT="$PWD/include/gcn_rl_layout"
+export IFCN_GCN_RL_PYTHON="$PWD/include/gcn_rl_layout/myenv/bin/python"
+```
 
 ## 当前确定性布局布线闭环
 
@@ -40,117 +97,104 @@ sifting 交叉优化、固定分层右下可达放置、端口预留、RightDown
 失败后在拥塞端点和跨距中部插入行列并完整重布线；成功后使用同样的由外向内收缩，
 每一个收缩候选都重新执行相位感知布线和端口方向校验。
 
-全电路 2DDWave 回归命令：
+## 批量布局
+
+运行 2DDWave 基准，输出放在构建目录：
 
 ```bash
-python3 include/gcn_rl_layout/scripts/run_all_normal_graph_layouts.py \
-  --include-generated-sources --jobs 2 \
-  --output-root include/gcn_rl_layout/results/<experiment-name>
+include/gcn_rl_layout/myenv/bin/python \
+  include/gcn_rl_layout/scripts/run_all_normal_graph_layouts.py \
+  --benchmark-root tests/benchmarks_f/TOY --jobs 2 \
+  --output-root build/artifacts/normal_2ddwave
 ```
 
-目录内会保存逐电路 IFCN、encoded IFCN、日志和 JSON，以及聚合 CSV、JSON、Markdown
-和可单独编译的 LaTeX 长表。
+输出包含逐电路 `.ifcn`、时钟编码布局、日志、JSON，以及聚合 CSV、JSON、Markdown 和
+可单独编译的 LaTeX 长表。扩大 `--benchmark-root` 前先检查小规模运行结果与时间预算。
 
-将 2DDWave 未通过项按相同电路清单转入随机时钟复测：
+按同一电路清单将 2DDWave 失败项转入随机时钟复测：
 
 ```bash
-python3 include/gcn_rl_layout/scripts/run_random_clock_fallbacks.py \
-  --normal-results include/gcn_rl_layout/results/<experiment-name>/layout_results.json \
-  --output-root include/gcn_rl_layout/results/<experiment-name>/random_clock_fallback
+include/gcn_rl_layout/myenv/bin/python \
+  include/gcn_rl_layout/scripts/run_random_clock_fallbacks.py \
+  --normal-results build/artifacts/normal_2ddwave/layout_results.json \
+  --output-root build/artifacts/random_clock_fallback
 ```
 
-回退脚本同样隔离每个进程、限制单边 A* 状态数和单电路时间，并保留失败/超时，
-不会把部分路由 IFCN 计为合法成功。
+批量 runner 隔离进程并限制搜索/运行预算，保留失败与超时；部分路由不能计为合法成功。
+这些 Python 随机时钟流程与原生 `ifcn_combinational_pnr june_random` 是不同的可选入口。
 
-最小通用训练示例：
+## 通用策略：训练、评估与推理
+
+### 训练
 
 ```bash
 include/gcn_rl_layout/myenv/bin/python \
   include/gcn_rl_layout/src/algorithm/main/train_universal_graph_ppo.py \
   --benchmarks tests/benchmarks_f/TOY/xor2.v tests/benchmarks_f/TOY/xnor2.v \
-  --clock-mode stochastic-bands \
+  --clock-mode stochastic-bands --device cpu \
   --episodes 2000 --episodes-per-update 16 \
-  --exact-feedback-interval 10 --exact-field-samples 4
+  --exact-feedback-interval 10 --exact-field-samples 4 \
+  --output-dir build/artifacts/universal_graph_ppo
 ```
 
-在训练集之外的电路与时钟种子上独立评估（`--require-unseen` 会阻止误用训练电路）：
+这是流程示例，训练耗时与显卡、搜索预算和电路规模有关。仓库不携带已训练权重；
+`universal_graph_ppo_best_exact.pt` 只有在训练获得对应的精确评估结果后才可用。
+
+### 独立评估
 
 ```bash
 include/gcn_rl_layout/myenv/bin/python \
   include/gcn_rl_layout/src/algorithm/main/evaluate_universal_graph_ppo.py \
-  --checkpoint include/gcn_rl_layout/results/universal_graph_ppo/universal_graph_ppo.pt \
+  --checkpoint build/artifacts/universal_graph_ppo/universal_graph_ppo.pt \
   --benchmark-glob 'tests/benchmarks_f/IWLS93/*.v' \
-  --clock-field-samples 32 --require-unseen
+  --clock-field-samples 32 --require-unseen \
+  --output-dir build/artifacts/universal_evaluation
 ```
 
-这里不再保存 benchmark、批量实验结果或虚拟环境。GUI 会把用户选择的 Verilog 作为输入，
-输出写到源文件旁边的 `<name>_gcn_rl_layout/` 目录，生成 `<name>_rl_layout.ifcn` 后自动载入版图。
+`--require-unseen` 检查评估电路是否出现在 checkpoint 的训练元数据中。还需选择独立时钟种子，
+并分别记录成功率、失败/超时、面积和延迟；对训练电路的成功不能作为泛化结论。
 
-## Python 环境
+### 推理与严格导出
 
-`fcnx_gui` 本体是 C++/Qt 程序，但工具栏的 `Universal AI P&R` 会在后台启动本目录的
-Python 后端。默认查找顺序是：
-
-1. 环境变量 `IFCN_GCN_RL_PYTHON`
-2. `include/gcn_rl_layout/myenv/bin/python`
-3. 系统 `python3`
-4. 系统 `python`
-
-当前工程不会再默认回退到其他工程目录。建议在本目录创建本地环境：
+使用已经训练好的 checkpoint：
 
 ```bash
-cd include/gcn_rl_layout
-./scripts/setup_python_env.sh
+include/gcn_rl_layout/myenv/bin/python \
+  include/gcn_rl_layout/scripts/gui_universal_agent_runner.py \
+  --benchmark tests/benchmarks_f/TOY/xnor2.v \
+  --checkpoint build/artifacts/universal_graph_ppo/universal_graph_ppo.pt \
+  --output-dir build/artifacts/universal_inference \
+  --device cpu --clock-field-samples 8 --require-legal
 ```
 
-如果机器不使用 CUDA 12.8，可以指定 PyTorch wheel 源，例如 CPU 版本：
+runner 默认启用 `--require-legal`；只有完成布线和相位合法性检查的结果才能作为严格成功导出。
+检查结果中的 `strict_success`，不要将降级候选或策略回退误报为策略成功。
+输出 `.ifcn` 可在桌面打开；对其进行器件映射和物理功能验证仍是后续步骤。
+
+| 参数 | 含义 |
+| --- | --- |
+| `--device auto|cpu|cuda` | 选择运行设备，`auto` 优先使用可用 CUDA |
+| `--checkpoint` | 指定权重路径；使用构建目录时建议显式指定 |
+| `--clock-field-samples` | 冻结时钟场样本数 |
+| `--policy-trials` / `--steps-per-episode` | 候选试验数与策略步数 |
+| `--exact-eval-timeout-sec` | 精确布线评估超时 |
+| `--retrieval-memory` / `--retrieval-top-k` | 检索记忆及邻居数 |
+| `--no-allow-exact-memory-retrieval` | 禁止检索相同拓扑的示例 |
+
+`--checkpoint auto` 查找 `IFCN_UNIVERSAL_AGENT_CHECKPOINT` 或后端结果目录下的
+`universal_graph_ppo_best_exact.pt`；不会自动找到任意构建目录中的权重。
+逐电路的 legacy PPO 仍由 `train_layout_ppo.py` / `gui_gcn_rl_runner.py` 提供，
+其固定输入/动作结构与通用图策略不同，checkpoint 不能任意互换。
+
+## 测试与输出管理
+
+基础 CTest 注册了不需要 ML 权重的路由/时钟/解析等回归；完整 Python 算法测试需要本模块依赖。
+测试目录同时包含 unittest 类与 pytest 函数，使用 pytest 进行完整收集：
 
 ```bash
-TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu ./scripts/setup_python_env.sh
+include/gcn_rl_layout/myenv/bin/python -m pip install pytest
+include/gcn_rl_layout/myenv/bin/python -m pytest include/gcn_rl_layout/tests
 ```
 
-如果系统 Python 里已经装好了 PyTorch，也可以复用系统包，只补齐其他依赖：
-
-```bash
-IFCN_GCN_RL_USE_SYSTEM_SITE=1 IFCN_GCN_RL_SKIP_TORCH_INSTALL=1 ./scripts/setup_python_env.sh
-```
-
-注意：较新的显卡需要匹配的 CUDA/PyTorch wheel。默认脚本会在当前 `myenv` 内安装
-`TORCH_INDEX_URL` 指向的 PyTorch，不会依赖系统 Python 里的 PyTorch。
-
-也可以显式指定 GUI 使用的解释器：
-
-```bash
-export IFCN_GCN_RL_PYTHON=/home/lys/projects/github/iFCN/include/gcn_rl_layout/myenv/bin/python
-./build/fcnx_gui
-```
-
-## GUI 参数
-
-点击 `Universal AI P&R` 后会弹出分组参数窗口。默认页是通用智能体推理：
-
-- GPU/CPU：默认 `Auto (CUDA first)`，有 CUDA 时优先用 GPU。
-- `Fast preview / Balanced / High quality`：控制随机时钟样本、策略试验数、GRU 步数和 exact timeout。
-- checkpoint：默认 `auto`，自动选择最新 `universal_graph_ppo_best_exact.pt`。
-- causal clock mode、clock-aligned start、retrieval top-k 和同拓扑记忆检索。
-- 每个候选都经过 exact routing；只有 `strict_success=true` 才导出并加载 `.ifcn`。
-
-`Legacy PPO (advanced)` 页保留旧版逐电路训练的 runs/workers、Graphviz/sifting 搜索预算、
-RL episodes、PPO 参数、repair/pack 和旧 action memory，供对照实验使用。
-
-## 可选构建 Python 扩展
-
-如果本目录没有 `src/algorithm/lib/iFCN_Lab*.so`，需要从 iFCN 源码树构建扩展：
-
-```bash
-cmake -S . -B build -DIFCN_BUILD_GCN_RL_BINDINGS=ON \
-  -Dpybind11_DIR=/path/to/python/site-packages/pybind11/share/cmake/pybind11
-cmake --build build --target iFCN_Lab
-```
-
-也可以用环境变量指定当前工程内的后端和 Python：
-
-```bash
-export IFCN_GCN_RL_ROOT=/home/lys/projects/github/iFCN/include/gcn_rl_layout
-export IFCN_GCN_RL_PYTHON=/home/lys/projects/github/iFCN/include/gcn_rl_layout/myenv/bin/python
-```
+请将输出显式写入 `build/artifacts/` 或其他忽略目录；不要提交模型、虚拟环境、扩展二进制、
+波形和批量实验结果。电路样例来自仓库的 `.ifcn` 与必要 Verilog 输入。

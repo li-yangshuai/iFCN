@@ -562,7 +562,7 @@ def markdown_report(metrics: Sequence[Mapping[str, object]],
                     cf=1000.0 * float(c["candidate_median_seconds"]), cs=float(c["speedup"])))
         lines.append("")
     lines.extend([
-        "\* TOY/xor5R 使用保留的 xor5_r1 随机时钟版图；两者五输入真值表 32/32 全部相同。", "",
+        r"\* TOY/xor5R 使用保留的 xor5_r1 随机时钟版图；两者五输入真值表 32/32 全部相同。", "",
         "## 汇总与检查", "",
     ])
     for model in ("bistable", "coherence"):

@@ -649,13 +649,26 @@ std::vector<std::pair<int,int>> RightDownAStar::routeWithDirs(
 
     if (firstStepAvailable) {
         std::vector<std::pair<int,int>> directPath;
-        if (tryDirectMonotoneRoute(start, goal, firstStep, preGoal, directPath)) {
+        const bool hasDirectPath =
+            tryDirectMonotoneRoute(start, goal, firstStep, preGoal, directPath);
+        const bool directPathIsEmpty = hasDirectPath && std::all_of(
+            directPath.begin() + 1, directPath.end() - 1,
+            [this](const std::pair<int,int>& coord) {
+                return board.getGridCellCapacityAtCoord(coord) == MAX_CELL_CAPACITY;
+            });
+        // An empty direct path is already optimal. Otherwise let the
+        // congestion-aware search avoid consuming another wire's capacity;
+        // endpoint directions and occupied-gate checks remain mandatory.
+        if (directPathIsEmpty) {
             return commitPath(directPath);
         }
 
         std::vector<std::pair<int,int>> dpPath;
         if (tryDynamicProgrammingRoute(start, goal, firstStep, preGoal, dpPath)) {
             return commitPath(dpPath);
+        }
+        if (hasDirectPath) {
+            return commitPath(directPath);
         }
     }
 

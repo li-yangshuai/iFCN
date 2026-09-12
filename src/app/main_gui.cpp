@@ -467,7 +467,7 @@ int main(int argc,char *argv[])
     mainWindow.show();
     if (!automaticExportRequested && !automaticGraphRenderRequested) {
         for (const QString &inputPath : inputPaths) {
-            mainWindow.openFileInNewTab(inputPath, true);
+            mainWindow.openFileInNewTab(inputPath);
         }
     }
 

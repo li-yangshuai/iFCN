@@ -1,0 +1,3 @@
+# Frozen benchmark hashes include their original line endings and whitespace.
+tests/benchmarks_f/**/*.v -text
+tests/benchmarks_pi/v1/** -text -whitespace

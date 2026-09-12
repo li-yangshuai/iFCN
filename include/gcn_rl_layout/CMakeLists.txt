@@ -39,10 +39,7 @@ target_link_libraries(iFCN_Lab PRIVATE
     Python3::Python
 )
 
-add_custom_command(TARGET iFCN_Lab POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/algorithm/lib
-    COMMAND ${CMAKE_COMMAND} -E copy
-            $<TARGET_FILE:iFCN_Lab>
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/algorithm/lib/$<TARGET_FILE_NAME:iFCN_Lab>
+set_target_properties(iFCN_Lab PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python/lib"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python/lib"
 )

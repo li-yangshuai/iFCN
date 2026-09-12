@@ -1,72 +1,70 @@
-# Prerequisites
-# Local Pi workflow outputs (inputs, waveforms and native backend logs).
-/output/pi-runs/
-/output/pi-validation/
+# Out-of-source builds and native binaries
+build/
+build-*/
+cmake-build-*/
+CMakeUserPresets.json
 *.d
-
-# Compiled Object files
-*.slo
-*.lo
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
+*.a
+*.lib
 *.so
 *.dylib
 *.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
 *.exe
 *.out
 *.app
-*.pdf
-*.gz
+
+# Local environments, caches, editor and agent state
+.venv/
+venv/
+myenv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+.idea/
+.vscode/
+.pi/
+.DS_Store
+
+# Generated runs, checkpoints and exports; keep circuit sources (.ifcn/.v/.sv)
+/output/
+/artifacts/
+/experiments/
+/include/gcn_rl_layout/results/
+*_gcn_rl_layout/
+seed_[0-9]*/
+train_seed_[0-9]*/
+*.pt
+*.pth
+*.qca
+*.rst
+*.vt
+*.vcd
+*.flog
+*_energy.txt
+*_energy*.json
+*_energy*.csv
+*_energy*.png
+*_summary.json
+*_summary.csv
+/tests/**/*.svg
+/tests/**/*.png
+/tests/**/*.gif
+
+# LaTeX and figure exports
 *.tex
+*.pdf
 *.aux
-*.fdb_latexmk
-*.fls
 *.log
 *.xdv
-
-# Generated multi-run placement dumps.  Paper benchmark fixtures under
-# tests/**/stage_tex are intentionally not covered by these root-specific
-# rules.
-/seed_[0-9]*/
-/include/gcn_rl_layout/seed_[0-9]*/
-/**/train_seed_[0-9]*/
-
-
-
-
-
-debug/
-build/
-build-*/
-.idea/
-cmake-build-debug/
-cmake-build-release/
-docs/
-!docs/
-docs/*
-!docs/clock_zone_simulation.md
-!docs/clock_zone_simulation.tex
-experiments/
-include/gcn_rl_layout/results/
-include/gcn_rl_layout/myenv/
-__pycache__/
-*.pyc
-*_gcn_rl_layout/
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.bbl
+*.blg
+*.toc
+*.lof
+*.lot

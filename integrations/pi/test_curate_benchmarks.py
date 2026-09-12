@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -110,9 +111,10 @@ class CurationTests(unittest.TestCase):
         self.assertEqual(rewritten, 10)
 
     def test_yosys_syntax_and_structural_checks(self):
-        yosys = C.ROOT / "build/tools/yosys-local/usr/bin/yosys"
-        if not yosys.is_file():
-            self.skipTest("Optional existing local Yosys runtime is not present")
+        executable = os.environ.get("IFCN_YOSYS") or shutil.which("yosys")
+        if not executable:
+            self.skipTest("Optional Yosys is not available; set IFCN_YOSYS or install it on PATH")
+        yosys = Path(executable).resolve()
         prefix = yosys.parent.parent
         env = dict(os.environ)
         libraries = [prefix / "lib", prefix / "lib64", *sorted((prefix / "lib").glob("*-linux-gnu"))]

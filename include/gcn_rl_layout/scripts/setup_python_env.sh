@@ -17,7 +17,7 @@ fi
 
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 if [[ "${IFCN_GCN_RL_SKIP_TORCH_INSTALL:-0}" != "1" ]]; then
-  "${VENV_DIR}/bin/python" -m pip install torch torchvision torchaudio --index-url "${TORCH_INDEX_URL}"
+  "${VENV_DIR}/bin/python" -m pip install torch --index-url "${TORCH_INDEX_URL}"
 fi
 "${VENV_DIR}/bin/python" -m pip install torch_geometric scikit-learn matplotlib networkx
 

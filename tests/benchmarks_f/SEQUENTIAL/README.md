@@ -16,7 +16,7 @@ phase/epoch solution with `II=4`.
 
 The maintained flow contract, implementation map, commands, experiment
 results, and known limitations are documented in the repository-level
-[`handoff.md`](../../../handoff.md).
+[时序设计说明](../../../docs/sequential-design.md).
 
 Generated JSON, logs, waveforms, IFCN files, and images must be written under a
 build directory rather than committed beside these source fixtures.

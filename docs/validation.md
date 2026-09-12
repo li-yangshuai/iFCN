@@ -32,6 +32,7 @@ verification. Current workspace additions are included as supported source.
 |---|---|
 | GUI、全部原生 CLI 和 C++ 测试构建 / GUI, native CLIs and C++ tests | Passed |
 | CTest | **58/58 passed**, including 3 optional external hfut dataset checks |
+| Committed-source archive → fresh build → standalone CTest | **55/55 passed**, no historical build or untracked source dependencies |
 | Standalone Python unit discovery under `tests/` | **91 passed** |
 | Optional GCN/layout pytest suite | **113 passed**, including 5 subtests |
 | Pi integration unit tests | **18 passed** |
@@ -40,6 +41,15 @@ verification. Current workspace additions are included as supported source.
 | Native automation: parse → P&R → mapping → simulation | Completed |
 | Python XOR → 2DDWave layout → device mapping | Passed, 0 failed routes |
 | Optional existing OGDF orderer regression | Passed; separate executable, not a fresh OGDF build |
+
+最后独立验证使用代码提交 `304deef` 的 `git archive` 快照，完整构建后运行
+55 项测试，全部通过。相同快照中的可选 Python 测试通过 113 项，扩展从外部
+构建目录加载。此后的提交仅补充本验证记录。
+
+The final independent check used a `git archive` snapshot of code commit
+`304deef`. All targets rebuilt and all 55 standalone tests passed. The optional
+Python suite also passed all 113 tests from that snapshot, loading its native
+extension from an external build. Subsequent commits only update this record.
 
 物理检查包含 Bistable/Coherence 基线与加速实现、选择性输入、复用耦合图、
 完整内部轨迹及映射后的临时 QCA。示例的最大数值误差为零。时序检查覆盖

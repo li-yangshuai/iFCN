@@ -10,7 +10,7 @@
 
 [C++17](CMakeLists.txt) · [Qt 5](src/CMakeLists.txt) · [CMake](CMakeLists.txt) · [MIT](LICENSE)
 
-[快速开始](#quickstart) · [算法](#algorithms) · [图形界面](#gui) · [命令行](#cli) · [可选模块](#optional) · [测试](#testing)
+[快速开始](#quickstart) · [XOR 全流程](#xor-walkthrough) · [算法](#algorithms) · [图形界面](#gui) · [命令行](#cli) · [可选模块](#optional) · [测试](#testing)
 
 </div>
 
@@ -18,7 +18,7 @@
 
 iFCN 是面向场耦合纳米计算（Field-Coupled Nanocomputing，FCN）的研究与开发工具。项目提供 Qt 桌面编辑器、多个自动布局布线后端、门级到 QCA 单元级映射，以及 Bistable、Coherence 和能量分析引擎。桌面工具和命令行工具共用核心算法，便于交互设计与可重复的批量验证。
 
-> **仓库约定：** 电路样例保留 `.ifcn` 与算法必需的 Verilog/SystemVerilog 输入；`.qca`、波形、图片、日志、模型权重和实验报告按需生成，写入 `build*/` 或 `output/`。源码、测试、运行资源与文档正常保留。
+> **仓库约定：** 电路样例保留 `.ifcn` 与算法必需的 Verilog/SystemVerilog 输入；`.qca`、波形、日志、模型权重和原始实验结果按需生成，写入 `build*/` 或 `output/`。源码、测试、运行资源与文档正常保留；`docs/images/` 中精选的演示图片随 README 维护，其余生成图片留在输出目录。
 
 <a id="overview"></a>
 ## 能做什么
@@ -85,7 +85,7 @@ cmake --build build -j2
 ./build/fcnx_gui tests/cell_level_examples/GoodiFCN/xor2_gate_level_pr.ifcn
 ```
 
-也可在界面中打开上述文件，或选择 `tests/benchmarks_f/TOY/xnor2.v` 开始组合电路布局。第一次使用建议先完成小电路的布局、映射和仿真，再增加电路规模。
+也可在界面中打开上述文件，或选择 `tests/benchmarks_f/TOY/xnor2.v` 开始组合电路布局。第一次使用可按下面的 [XOR 全流程](#xor-walkthrough) 完成布局、映射和仿真，再增加电路规模。
 
 ### 构建选项
 
@@ -95,6 +95,92 @@ cmake --build build -j2
 | `IFCN_BUILD_GCN_RL_BINDINGS` | `OFF` | 构建 Python 调用的 `iFCN_Lab` 扩展 |
 | `IFCN_BUILD_OGDF_ORDERER` | `OFF` | 构建可选 OGDF 层内排序程序 |
 | `IFCN_BUILD_LEGACY_SIMON_TESTS` | `OFF` | 构建原始长耗时 simon 测试程序 |
+
+<a id="xor-walkthrough"></a>
+## 跟着一个 XOR 走完整个流程
+
+以下七个阶段来自同一个两输入 XOR 实例的实际运行：从 [Verilog 源码](integrations/pi/examples/xor2.v) 出发，经 Compact Graph 布局布线、器件映射，再进入仿真和能量分析。图片保留了各阶段的真实界面或导出结果。
+
+| 本次运行 | 结果 |
+| --- | --- |
+| 输入 / 输出 | `a`、`b` → `y = a ^ b` |
+| 时钟版图 | 5 × 5 个时钟网格，四相位 |
+| 器件映射 | 导出 106 个物理 QCA 单元 |
+| 源逻辑与布线 DAG 等价性 | 4 / 4 组输入通过 |
+
+### 01 · 写入 Verilog
+
+在源码编辑器中打开 `integrations/pi/examples/xor2.v`。这个小电路只有两个输入和一个输出，适合观察每一步怎样改变电路的表示。
+
+```verilog
+module xor2(input a, input b, output y);
+assign y = a ^ b;
+endmodule
+```
+
+![XOR Verilog 源码编辑器](docs/images/xor2/01-source.png)
+
+### 02 · 解析逻辑图
+
+解析器将表达式转换为逻辑节点和连线。下图由实际解析得到的 DAG 经 Graphviz 导出，可沿 `a`、`b` 到 `y` 检查信号关系；随后对全部四组输入验证源逻辑与布线 DAG 的布尔等价性。
+
+![由 XOR 实际解析结果导出的逻辑 DAG](docs/images/xor2/02-logic.png)
+
+### 03 · 布局、布线与相位
+
+Compact Graph 后端放置节点、连接路径并分配时钟相位。原生原理图视图展示布线结果，本次使用 5 × 5 的四相位时钟网格。
+
+![XOR 布局布线与时钟相位原理图](docs/images/xor2/03-routing.png)
+
+### 04 · 映射为 QCA 单元
+
+将 `.ifcn` 中的门和路径映射为物理单元，在主画布检查端口、连线和交叉结构。本次实际导出 106 个 QCA 单元；门级时钟网格数与物理单元数是不同的度量。
+
+![XOR 映射后的原生 QCA 单元画布](docs/images/xor2/04-device.png)
+
+### 05 · 查看分层结构
+
+切换到原生 3D 结构视图，观察同一版图的单元层次及相位分布。它与二维画布对应，方便从另一个角度检查映射结果。
+
+![XOR 原生分层 3D 结构视图](docs/images/xor2/05-structure.png)
+
+### 06 · 运行仿真并查看波形
+
+在原生波形窗口查看 `a`、`b` 和 `y` 的极化轨迹。本次 Bistable 运行包含 2,048 个样本，各样本迭代均收敛；在相同输入和参数下，基线与加速 Bistable、Coherence 的最大绝对误差均为 0。
+
+波形横轴为存储样本序号；Coherence 存储 3,008 个样本，实际执行 800,000 步 RK4 积分。
+
+![XOR 原生物理仿真波形窗口](docs/images/xor2/06-waveform.png)
+
+<details>
+<summary>查看 Coherence 波形</summary>
+
+![XOR 原生 Coherence 波形窗口](docs/images/xor2/06-coherence.png)
+
+</details>
+
+### 07 · 阅读能量报告
+
+对同一物理版图运行能量分析，下图从实际报告绘制七个周期的统计，并同时展示数值残差。本次结果包含明显的启动瞬态，可结合逐周期变化阅读能量与残差。
+
+![根据 XOR 实际能量报告绘制的周期统计与数值残差](docs/images/xor2/07-energy.png)
+
+这里分别检查了源逻辑与布线 DAG 的布尔等价性，以及同一物理模型下两种引擎的数值一致性；器件的时序和功能签核仍需独立验证。
+
+### 一条命令复现
+
+先完成[基础构建](#quickstart)和 [Python 环境及扩展配置](#optional)，再从仓库根目录运行：
+
+```bash
+include/gcn_rl_layout/myenv/bin/python scripts/run_readme_demo.py \
+  --build-dir build \
+  --python include/gcn_rl_layout/myenv/bin/python \
+  --bindings-dir build-rl/python/lib \
+  --output-dir output/readme-demo \
+  --screenshots
+```
+
+运行结束后查看 `output/readme-demo/summary.json`；原始电路、波形、报告和截图也保存在该输出目录。README 使用的精选图片单独维护在 `docs/images/xor2/`，重新运行不会把原始实验结果混入文档资源。
 
 <a id="algorithms"></a>
 ## 算法与运行边界
@@ -337,7 +423,7 @@ iFCN/
 ├── examples/                    # 整理后的其他 .ifcn 版图
 ├── scripts/                     # 转换、批量运行、验证与统计
 ├── integrations/pi/             # 可选自动化接口
-├── docs/                        # 维护中的工程说明
+├── docs/                        # 工程说明与精选演示图片
 └── build*/ / output/            # 本地生成；不纳入版本控制
 ```
 
@@ -348,7 +434,7 @@ iFCN/
 | `.qca` | 外部兼容输入、映射后的物理版图 | 按需导入或生成，写入输出目录 |
 | `.vt` / `.rst` | 选择性输入向量 / 仿真波形 | 运行时生成或作为用户输入保存在仓库外 |
 | `.json` / `.csv` / `.txt` | 参数、指标、报告 | 实验输出写入构建目录；源码配置按用途维护 |
-| `.svg` / `.pdf` / `.png` / `.tex` | 图形与可编辑导出 | 写入输出目录；应用图标属于运行资源 |
+| `.svg` / `.pdf` / `.png` / `.tex` | 图形与可编辑导出 | 原始导出写入输出目录；精选文档图片保留在 `docs/images/`，应用图标属于运行资源 |
 | `.pt` / `.so` / 虚拟环境 | 权重、扩展与依赖 | 在本地安装或训练，不提交 |
 
 GUI 的部分工作流在输入文件旁生成结果；需要严格隔离时，先把工作副本放到 `build/artifacts/`，或改用显式输出路径的 CLI。提交前运行 `git status --short`，确认没有混入结果、缓存和机器专属配置。

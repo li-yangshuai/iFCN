@@ -10,7 +10,7 @@ Connect Verilog and `.ifcn` circuits to logic graphs, device layouts, clocks, si
 
 [C++17](CMakeLists.txt) · [Qt 5](src/CMakeLists.txt) · [CMake](CMakeLists.txt) · [MIT](LICENSE)
 
-[Quick start](#quickstart) · [Algorithms](#algorithms) · [Desktop workflows](#gui) · [Command line](#cli) · [Optional modules](#optional) · [Tests](#testing)
+[Quick start](#quickstart) · [XOR walkthrough](#xor-walkthrough) · [Algorithms](#algorithms) · [Desktop workflows](#gui) · [Command line](#cli) · [Optional modules](#optional) · [Tests](#testing)
 
 </div>
 
@@ -18,7 +18,7 @@ Connect Verilog and `.ifcn` circuits to logic graphs, device layouts, clocks, si
 
 iFCN is a research and development tool for Field-Coupled Nanocomputing (FCN). It provides a Qt desktop editor, several placement and routing backends, gate-to-QCA-cell mapping, and Bistable, Coherence, and energy analysis engines. The desktop application and command-line tools share core algorithms for interactive design and repeatable batch validation.
 
-> **Repository convention:** Circuit examples retain `.ifcn` files and Verilog/SystemVerilog inputs required by the algorithms. Generate `.qca` files, waveforms, images, logs, model weights, and experiment reports under `build*/` or `output/`. Source code, tests, runtime resources, and documentation remain in version control.
+> **Repository convention:** Circuit examples retain `.ifcn` files and Verilog/SystemVerilog inputs required by the algorithms. Generate `.qca` files, waveforms, logs, model weights, and raw experiment results under `build*/` or `output/`. Source code, tests, runtime resources, and documentation remain in version control. Selected demonstration images under `docs/images/` are maintained with the README; other generated images stay in output directories.
 
 <a id="overview"></a>
 ## Capabilities
@@ -85,7 +85,7 @@ Large translation units can consume substantial memory during parallel compilati
 ./build/fcnx_gui tests/cell_level_examples/GoodiFCN/xor2_gate_level_pr.ifcn
 ```
 
-You can also open this file through the desktop interface, or select `tests/benchmarks_f/TOY/xnor2.v` for combinational placement and routing. Start with a small circuit and complete layout, mapping, and simulation before increasing the circuit size.
+You can also open this file through the desktop interface, or select `tests/benchmarks_f/TOY/xnor2.v` for combinational placement and routing. Follow the [XOR walkthrough](#xor-walkthrough) below to complete layout, mapping, and simulation before increasing the circuit size.
 
 ### Build options
 
@@ -95,6 +95,92 @@ You can also open this file through the desktop interface, or select `tests/benc
 | `IFCN_BUILD_GCN_RL_BINDINGS` | `OFF` | Build the Python-facing `iFCN_Lab` extension |
 | `IFCN_BUILD_OGDF_ORDERER` | `OFF` | Build the optional OGDF layer-ordering tool |
 | `IFCN_BUILD_LEGACY_SIMON_TESTS` | `OFF` | Build the original long-running simon test executable |
+
+<a id="xor-walkthrough"></a>
+## Follow one XOR through the complete flow
+
+These seven stages come from an actual run of the same two-input XOR: [Verilog source](integrations/pi/examples/xor2.v), Compact Graph placement and routing, device mapping, simulation, and energy analysis. Each image shows the corresponding application view or exported result.
+
+| This run | Result |
+| --- | --- |
+| Inputs / output | `a`, `b` → `y = a ^ b` |
+| Clock layout | 5 × 5 clock tiles, four phases |
+| Device mapping | 106 exported physical QCA cells |
+| Source logic versus routed DAG | All 4 input combinations pass |
+
+### 01 · Enter the Verilog source
+
+Open `integrations/pi/examples/xor2.v` in the source editor. With just two inputs and one output, this circuit makes it easy to follow each change in representation.
+
+```verilog
+module xor2(input a, input b, output y);
+assign y = a ^ b;
+endmodule
+```
+
+![XOR Verilog in the source editor](docs/images/xor2/01-source.png)
+
+### 02 · Parse the logic graph
+
+The parser turns the expression into logic nodes and connections. This Graphviz export comes from the actual parsed DAG, showing the signal relationships from `a` and `b` to `y`. All four input combinations are then checked for Boolean equivalence between the source logic and the routed DAG.
+
+![Logic DAG exported from the actual XOR parse result](docs/images/xor2/02-logic.png)
+
+### 03 · Place, route, and assign phases
+
+The Compact Graph backend places nodes, connects their routes, and assigns clock phases. The native schematic view shows the routed result, using a 5 × 5 four-phase clock layout in this run.
+
+![Native XOR placement, routing, and clock-phase schematic](docs/images/xor2/03-routing.png)
+
+### 04 · Map to QCA cells
+
+Map the gates and routes in `.ifcn` to physical cells, then inspect ports, wires, and crossovers on the main canvas. This run exports 106 QCA cells; gate-level clock tiles and physical cells are different measures.
+
+![Mapped XOR QCA cells on the native application canvas](docs/images/xor2/04-device.png)
+
+### 05 · Inspect the layered structure
+
+Switch to the native 3D structure view to inspect the cell layers and phase distribution of the same layout. It corresponds to the two-dimensional canvas and offers another view of the mapping result.
+
+![Native layered 3D view of the XOR layout](docs/images/xor2/05-structure.png)
+
+### 06 · Simulate and inspect waveforms
+
+Inspect the polarization traces for `a`, `b`, and `y` in the native waveform window. The Bistable run contains 2,048 samples, with every sample converged. Under matching inputs and parameters, the maximum absolute difference between baseline and accelerated results is 0 for both Bistable and Coherence.
+
+The horizontal axis indexes stored samples; Coherence stores 3,008 samples from 800,000 RK4 integration steps.
+
+![XOR physical simulation in the native waveform window](docs/images/xor2/06-waveform.png)
+
+<details>
+<summary>View Coherence waveform</summary>
+
+![XOR Coherence simulation in the native waveform window](docs/images/xor2/06-coherence.png)
+
+</details>
+
+### 07 · Read the energy report
+
+Run energy analysis on the same physical layout. This plot uses the actual report to show seven cycles together with the numerical residual. The run includes a substantial startup transient; the per-cycle view helps interpret both the energy and residual.
+
+![Per-cycle statistics and numerical residual from the actual XOR energy report](docs/images/xor2/07-energy.png)
+
+These checks establish Boolean equivalence between the source logic and routed DAG, and numerical agreement between two engines using the same physical model. Device timing and functional signoff require separate validation.
+
+### Reproduce it with one command
+
+Complete the [base build](#quickstart) and [Python environment and extension setup](#optional), then run from the repository root:
+
+```bash
+include/gcn_rl_layout/myenv/bin/python scripts/run_readme_demo.py \
+  --build-dir build \
+  --python include/gcn_rl_layout/myenv/bin/python \
+  --bindings-dir build-rl/python/lib \
+  --output-dir output/readme-demo \
+  --screenshots
+```
+
+Read `output/readme-demo/summary.json` after the run; the same output directory contains the raw circuits, waveforms, reports, and screenshots. Selected README images are maintained separately in `docs/images/xor2/`, so rerunning the example keeps raw experiment results out of the documentation assets.
 
 <a id="algorithms"></a>
 ## Algorithms and scope
@@ -337,7 +423,7 @@ iFCN/
 ├── examples/                    # Additional organized .ifcn layouts
 ├── scripts/                     # Conversion, batch runs, validation, summaries
 ├── integrations/pi/             # Optional automation interface
-├── docs/                        # Maintained engineering documentation
+├── docs/                        # Engineering notes and selected demo images
 └── build*/ / output/            # Local generated files; not versioned
 ```
 
@@ -348,7 +434,7 @@ iFCN/
 | `.qca` | Compatible external input or mapped physical layout | Import or generate on demand into an output directory |
 | `.vt` / `.rst` | Selective input vectors / simulation waveforms | Generate at runtime or keep user-provided inputs outside the repository |
 | `.json` / `.csv` / `.txt` | Parameters, metrics, reports | Put experiment outputs in build directories; maintain source configuration by purpose |
-| `.svg` / `.pdf` / `.png` / `.tex` | Graphics and editable exports | Use output directories; application icons are runtime resources |
+| `.svg` / `.pdf` / `.png` / `.tex` | Graphics and editable exports | Put raw exports in output directories; retain selected documentation images under `docs/images/` and application icons as runtime resources |
 | `.pt` / `.so` / virtual environments | Weights, extensions, dependencies | Install or train locally; do not commit |
 
 Some GUI workflows write results beside the input. For strict separation, place a working copy under `build/artifacts/`, or use a CLI with explicit output paths. Run `git status --short` before committing to check for generated results, caches, and machine-specific settings.

@@ -44,12 +44,13 @@ verification. Current workspace additions are included as supported source.
 
 最后独立验证使用代码提交 `304deef` 的 `git archive` 快照，完整构建后运行
 55 项测试，全部通过。相同快照中的可选 Python 测试通过 113 项，扩展从外部
-构建目录加载。此后的提交仅补充本验证记录。
+构建目录加载。这些结果对应仓库合并与清理时的代码快照。
 
 The final independent check used a `git archive` snapshot of code commit
 `304deef`. All targets rebuilt and all 55 standalone tests passed. The optional
 Python suite also passed all 113 tests from that snapshot, loading its native
-extension from an external build. Subsequent commits only update this record.
+extension from an external build. These results describe the source snapshot
+used for repository consolidation and cleanup.
 
 物理检查包含 Bistable/Coherence 基线与加速实现、选择性输入、复用耦合图、
 完整内部轨迹及映射后的临时 QCA。示例的最大数值误差为零。时序检查覆盖
@@ -61,6 +62,39 @@ inputs, reusable interaction graphs and internal-state trajectories. Example
 comparisons have zero maximum numerical error. Sequential checks cover feedback,
 global clock solving, Z3, mapping metadata and waveforms. GUI checks include
 offscreen export and clean termination of the IO-contraction control.
+
+## README 全流程案例 / README walkthrough
+
+新增的 [XOR 案例](../README.md#xor-walkthrough)通过
+[`scripts/run_readme_demo.py`](../scripts/run_readme_demo.py) 从源码完整重跑，
+完成解析、Compact Graph 布局布线、器件映射、两种物理仿真和能量分析。
+随后直接从原生 Qt 窗口截取六张截图，并从实际 DAG 和能量报告绘制两张图。
+八张精选图片保存在 [`docs/images/xor2/`](images/xor2/)，原始输出留在忽略目录。
+
+The [XOR walkthrough](../README.en.md#xor-walkthrough) was replayed end to end
+with the reproducible runner, including both baseline/accelerated simulation
+pairs and energy analysis. Six native Qt captures and two data-derived figures
+were generated successfully and visually inspected.
+
+| 检查 / Check | 结果 / Result |
+|---|---|
+| Compact layout / clock legality | Passed; 5 × 5 tiles, four phases |
+| Source-to-routed-DAG Boolean equivalence | 4/4 input vectors passed |
+| Exported physical design | 106 QCA cells |
+| Bistable baseline vs accelerated | 2,048 samples; maximum absolute error 0; all samples converged |
+| Coherence baseline vs accelerated | 800,000 RK4 steps, 3,008 stored samples; maximum absolute error 0 |
+| Independent replay | Identical DAG, layout, QCA and simulation waveform hashes |
+| Energy model | Completed; 7 counted cycles; initial transient and residual shown in the figure |
+| Native screenshot mode | Five views passed; missing, truncated, incompatible inputs and failed image save returned errors |
+| Existing GUI regression checks | 2/2 passed: mapping metadata and IO-contraction control |
+| Bilingual documentation | Seven stages, eight images; local image links verified |
+
+本次界面修改修正了波形标签的实际最小值和最大值显示。新增截图模式按需启用，
+原有自动截图入口也已验证通过。能量结果用于展示分析流程；尚未检验时间步长收敛。
+
+Waveform labels now show the actual trace extrema. The new capture mode is opt-in;
+the existing screenshot entry point was also checked. Energy results demonstrate
+the analysis workflow; time-step convergence has not been tested.
 
 ## 修复与可复现性 / Fixes and reproducibility
 

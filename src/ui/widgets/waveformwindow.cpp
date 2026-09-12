@@ -140,7 +140,9 @@ void WaveformWindow::addTreeItem()
             double minValue = *minMaxPair.first;
             double maxValue = *minMaxPair.second;
 
-            QString labelText = "max: 1.00e+000\n" + signalName + "\nmin: -1.00e+000";
+            const QString labelText = QString("max: %1\n%2\nmin: %3")
+                .arg(QString::number(maxValue, 'e', 3), signalName,
+                     QString::number(minValue, 'e', 3));
             PlotWidget *plotWidget = new PlotWidget(labelText, colors[0], vecX, it.value(), minValue, maxValue);
             plotLayout->addWidget(plotWidget);
             plotWidgets.append(plotWidget);
@@ -172,7 +174,9 @@ void WaveformWindow::addTreeItem()
             double minValue = *minMaxPair.first;
             double maxValue = *minMaxPair.second;
 
-            QString labelText = "max: 9.54e-001\n" + signalName + "\nmin: -9.54e-001";
+            const QString labelText = QString("max: %1\n%2\nmin: %3")
+                .arg(QString::number(maxValue, 'e', 3), signalName,
+                     QString::number(minValue, 'e', 3));
             PlotWidget *plotWidget = new PlotWidget(labelText, colors[1], vecX, it.value(), minValue, maxValue);
             plotLayout->addWidget(plotWidget);
             plotWidgets.append(plotWidget);
@@ -209,7 +213,9 @@ void WaveformWindow::addTreeItem()
             // qDebug()<< vecX.size() << "\n";
             // qDebug()<< vecY.size() << "\n";
 
-            QString labelText = "max: 9.80e-002\n" + signalName + "\nmin: 3.80e-023";
+            const QString labelText = QString("max: %1\n%2\nmin: %3")
+                .arg(QString::number(maxValue, 'e', 3), signalName,
+                     QString::number(minValue, 'e', 3));
             PlotWidget *plotWidget = new PlotWidget(labelText, colors[2], vecX, it.value(), minValue, maxValue);
             plotLayout->addWidget(plotWidget);
             plotWidgets.append(plotWidget);
@@ -614,4 +620,3 @@ void WaveformWindow::mouseDoubleClickEvent(QMouseEvent *event)
 
     QMainWindow::mouseDoubleClickEvent(event);
 }
-

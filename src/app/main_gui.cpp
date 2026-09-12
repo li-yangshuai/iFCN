@@ -1,17 +1,28 @@
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
+#include <QDockWidget>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QPlainTextEdit>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QtGlobal>
+#include <cmath>
+#include <stdexcept>
 #include "ui/mainwindow/MainWindow.h"
 #include "ui/mainwindow/TabbedMainWindow.h"
+#include "ui/widgets/CircuitSchematicView.h"
+#include "ui/widgets/LayeredStructure3DView.h"
 
 namespace {
 bool consoleLoggingEnabled()
 {
+    if (qEnvironmentVariableIsSet("IFCN_UI_SCREENSHOT_INPUT")
+        || qEnvironmentVariableIsSet("IFCN_UI_SCREENSHOT_VIEW")) {
+        return true;
+    }
     const char *value = std::getenv("IFCN_ENABLE_CONSOLE_LOG");
     if (value == nullptr) {
         return false;
@@ -376,6 +387,180 @@ QLabel {
 }
 )IFCN");
 }
+
+QString readScreenshotInput(const QString &path)
+{
+    QFile input(path);
+    if (!QFileInfo(path).isFile() || !input.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        throw std::runtime_error(QStringLiteral("Cannot read screenshot input: %1")
+                                     .arg(path).toStdString());
+    }
+    const QString text = QString::fromUtf8(input.readAll());
+    if (text.trimmed().isEmpty()) {
+        throw std::runtime_error("Screenshot input is empty");
+    }
+    return text;
+}
+
+// The interactive waveform reader assumes complete, nonempty trace blocks.
+// Validate batch inputs before handing them to that existing reader.
+bool validScreenshotWaveform(const QString &text)
+{
+    int samples = 0;
+    int traces = 0;
+    int traceSamples = 0;
+    bool inTrace = false;
+    bool inData = false;
+    bool sawData = false;
+    const QRegularExpression whitespace(QStringLiteral("\\s+"));
+    for (const QString &rawLine : text.split('\n')) {
+        const QString line = rawLine.trimmed();
+        if (line.startsWith(QStringLiteral("number_samples="))) {
+            bool ok = false;
+            samples = line.mid(15).toInt(&ok);
+            if (!ok || samples <= 0) return false;
+        } else if (line == QStringLiteral("[TRACE]")) {
+            if (inTrace || samples <= 0) return false;
+            inTrace = true;
+            sawData = false;
+            traceSamples = 0;
+        } else if (line == QStringLiteral("[TRACE_DATA]")) {
+            if (!inTrace || inData || sawData) return false;
+            inData = true;
+            sawData = true;
+        } else if (line == QStringLiteral("[#TRACE_DATA]")) {
+            if (!inData || traceSamples != samples) return false;
+            inData = false;
+        } else if (line == QStringLiteral("[#TRACE]")) {
+            if (!inTrace || inData || !sawData || traceSamples != samples) return false;
+            inTrace = false;
+            ++traces;
+        } else if (inData) {
+            for (const QString &value : line.split(whitespace, Qt::SkipEmptyParts)) {
+                bool ok = false;
+                const double number = value.toDouble(&ok);
+                if (!ok || !std::isfinite(number) || ++traceSamples > samples) return false;
+            }
+        }
+    }
+    return traces > 0 && !inTrace && !inData;
+}
+
+void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
+{
+    try {
+        const QString path = qEnvironmentVariable("IFCN_UI_SCREENSHOT").trimmed();
+        const QString inputPath = qEnvironmentVariable("IFCN_UI_SCREENSHOT_INPUT").trimmed();
+        const QString viewName = qEnvironmentVariable("IFCN_UI_SCREENSHOT_VIEW").trimmed();
+        const QString sourcePath = qEnvironmentVariable("IFCN_UI_SOURCE_FILE").trimmed();
+        const QStringList supportedViews = {"source", "layout", "schematic", "structure", "waveform"};
+        if (path.isEmpty() || inputPath.isEmpty() || !supportedViews.contains(viewName)
+            || QFileInfo(path).suffix().compare("png", Qt::CaseInsensitive) != 0) {
+            throw std::runtime_error("Set IFCN_UI_SCREENSHOT=<output.png>, IFCN_UI_SCREENSHOT_INPUT=<input>, and IFCN_UI_SCREENSHOT_VIEW=source|layout|schematic|structure|waveform");
+        }
+        const QFileInfo inputInfo(inputPath);
+        const QString suffix = inputInfo.suffix().toLower();
+        const QString inputText = readScreenshotInput(inputPath);
+        const QString sourceText = sourcePath.isEmpty() ? QString() : readScreenshotInput(sourcePath);
+        if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
+            throw std::runtime_error("Cannot create screenshot output directory");
+        }
+
+        MainWindow *editor = nullptr;
+        QWidget *captureWidget = &mainWindow;
+        if (viewName == "waveform") {
+            if (suffix != "rst" || !validScreenshotWaveform(inputText)) {
+                throw std::runtime_error("Waveform capture requires a complete simulation .rst file");
+            }
+            auto *waveform = new WaveformWindow(nullptr, inputInfo.absoluteFilePath());
+            if (waveform->findChildren<PlotWidget *>().isEmpty()) {
+                delete waveform;
+                throw std::runtime_error("Waveform input contains no visible signal traces");
+            }
+            for (PlotWidget *plot : waveform->findChildren<PlotWidget *>()) {
+                int labelWidth = 180;
+                for (const QString &line : plot->label->text().split('\n')) {
+                    labelWidth = qMax(labelWidth, plot->label->fontMetrics().horizontalAdvance(line) + 12);
+                }
+                plot->label->setFixedWidth(labelWidth);
+                plot->customPlot->axisRect()->setMargins(QMargins(5, 36, 5, 5));
+                plot->customPlot->replot();
+            }
+            captureWidget = waveform;
+            captureWidget->resize(1600, 1040);
+        } else if (viewName == "source") {
+            if (suffix != "v") throw std::runtime_error("Source capture requires a Verilog .v file");
+            editor = mainWindow.openVerilogSourceInNewTab(inputText, inputInfo.absoluteFilePath());
+            captureWidget = editor->verilogSourceDock;
+            QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+            font.setPointSize(14);
+            editor->verilogSourceEditor->setFont(font);
+        } else {
+            if (suffix != "ifcn" && suffix != "qca") {
+                throw std::runtime_error("Layout views require an .ifcn or .qca file");
+            }
+            editor = mainWindow.openFileInNewTab(inputInfo.absoluteFilePath());
+            bool hasCells = false;
+            for (const auto &layer : editor->layers) hasCells = hasCells || !layer.isEmpty();
+            for (const auto &layer : editor->scene->fastCellsByLayer()) hasCells = hasCells || !layer.isEmpty();
+            if (!hasCells) throw std::runtime_error("Screenshot input did not load any circuit cells");
+            if (!sourcePath.isEmpty()) {
+                editor->setVerilogSourceContent(sourceText, QFileInfo(sourcePath).absoluteFilePath());
+            }
+            if (viewName == "layout") {
+                editor->phaseCodecDock->hide();
+                if (editor->circuitSchematicView->scene()->items().isEmpty()) {
+                    editor->circuitSchematicDock->hide();
+                }
+            }
+            if (viewName == "schematic") {
+                if (editor->circuitSchematicView->scene()->items().isEmpty()) {
+                    throw std::runtime_error("Input has no gate-level schematic");
+                }
+                captureWidget = editor->circuitSchematicDock;
+            } else if (viewName == "structure") {
+                editor->phaseCodec3DButton->click();
+                captureWidget = editor->structure3DDock;
+            }
+        }
+
+        // Host the actual dock in its own window for a readable, unclipped view,
+        // including its native filename/title bar. Only this batch session changes.
+        if (captureWidget != &mainWindow && viewName != "waveform") {
+            auto *captureWindow = new QMainWindow;
+            auto *dock = qobject_cast<QDockWidget *>(captureWidget);
+            captureWindow->setWindowTitle(dock->windowTitle());
+            captureWindow->addDockWidget(Qt::LeftDockWidgetArea, dock);
+            captureWidget = captureWindow;
+            const int sourceHeight = editor == nullptr ? 360 : qBound(320,
+                (editor->verilogSourceEditor->document()->blockCount() + 4)
+                    * editor->verilogSourceEditor->fontMetrics().lineSpacing() + 100, 900);
+            captureWidget->resize(viewName == "source" ? 1200 : 1400,
+                                  viewName == "source" ? sourceHeight : 900);
+        }
+        captureWidget->show();
+        QTimer::singleShot(250, captureWidget, [editor, captureWidget, viewName]() {
+            if (editor != nullptr) {
+                editor->centerViewOnItems();
+                editor->circuitSchematicView->fitToCircuit();
+                if (viewName == "structure") editor->structure3DView->fitToStructure();
+            }
+            captureWidget->update();
+        });
+        QTimer::singleShot(800, captureWidget, [&app, captureWidget, path]() {
+            if (!captureWidget->grab().save(path, "PNG")) {
+                qCritical() << "Cannot save screenshot:" << path;
+                app.exit(3);
+                return;
+            }
+            qInfo() << "Screenshot saved:" << QFileInfo(path).absoluteFilePath();
+            app.exit(0);
+        });
+    } catch (const std::exception &error) {
+        qCritical() << "Screenshot failed:" << error.what();
+        app.exit(2);
+    }
+}
 } // namespace
 
 int main(int argc,char *argv[])
@@ -413,7 +598,19 @@ int main(int argc,char *argv[])
 
     app.setStyleSheet(engineeringStyleSheet());
 
+    const bool captureViewRequested = qEnvironmentVariableIsSet("IFCN_UI_SCREENSHOT_INPUT")
+        || qEnvironmentVariableIsSet("IFCN_UI_SCREENSHOT_VIEW");
+    if (captureViewRequested) qputenv("IFCN_NONINTERACTIVE", QByteArrayLiteral("1"));
     TabbedMainWindow mainWindow;
+    if (captureViewRequested) {
+        for (MainWindow *editor : mainWindow.findChildren<MainWindow *>()) editor->disableStartupRestore();
+        mainWindow.resize(1600, 900);
+        mainWindow.show();
+        QTimer::singleShot(0, &mainWindow, [&app, &mainWindow]() {
+            captureRequestedView(app, mainWindow);
+        });
+        return app.exec();
+    }
     const QString screenshotPath = qEnvironmentVariable("IFCN_UI_SCREENSHOT").trimmed();
     const auto environmentPath = [](const char *name, const char *legacyName) {
         const QString preferred = qEnvironmentVariable(name).trimmed();

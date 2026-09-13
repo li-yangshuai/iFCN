@@ -30,6 +30,19 @@ endif()
 # Boost
 set(Boost_USE_MULTITHREADED ON)
 find_package(Boost REQUIRED COMPONENTS filesystem program_options)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(IFCN_GRAPHVIZ REQUIRED IMPORTED_TARGET libgvc libcgraph)
+# Public headers use <graphviz/gvc.h>; pkg-config may advertise the graphviz
+# subdirectory itself (notably on Homebrew), so also resolve its parent.
+set(IFCN_GRAPHVIZ_HEADER_HINTS ${IFCN_GRAPHVIZ_INCLUDE_DIRS})
+foreach(IFCN_GRAPHVIZ_DIRECTORY IN LISTS IFCN_GRAPHVIZ_INCLUDE_DIRS)
+    get_filename_component(IFCN_GRAPHVIZ_PARENT "${IFCN_GRAPHVIZ_DIRECTORY}" DIRECTORY)
+    list(APPEND IFCN_GRAPHVIZ_HEADER_HINTS "${IFCN_GRAPHVIZ_PARENT}")
+endforeach()
+find_path(IFCN_GRAPHVIZ_HEADER_ROOT graphviz/gvc.h HINTS ${IFCN_GRAPHVIZ_HEADER_HINTS})
+if(NOT IFCN_GRAPHVIZ_HEADER_ROOT)
+    message(FATAL_ERROR "Graphviz public headers were not found")
+endif()
 
 # Set static library output directory
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -39,6 +52,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 # Sub directories
 add_subdirectory(include/autopr)  # Add autopr subdirectory
 add_subdirectory(include/simon)
+target_link_libraries(autopr PUBLIC Boost::boost PkgConfig::IFCN_GRAPHVIZ)
+target_include_directories(autopr PUBLIC "${IFCN_GRAPHVIZ_HEADER_ROOT}")
+target_link_libraries(simon INTERFACE Boost::boost)
 if(IFCN_BUILD_LAYOUT_BINDINGS)
     add_subdirectory(include/layout_backend)
 endif()

@@ -1,0 +1,255 @@
+name: Build desktop releases
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Ubuntu 24.04 x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build qtbase5-dev libqt5svg5-dev \
+            libboost-all-dev graphviz libgraphviz-dev python3-dev python3-venv
+          python3 -m venv "$RUNNER_TEMP/python"
+          "$RUNNER_TEMP/python/bin/pip" install -r include/layout_backend/requirements.txt
+      - name: Configure and build
+        run: |
+          cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DIFCN_BUILD_TESTS=OFF -DIFCN_BUILD_TOOLS=ON -DIFCN_BUILD_LAYOUT_BINDINGS=ON \
+            -DPython3_EXECUTABLE="$RUNNER_TEMP/python/bin/python" \
+            -Dpybind11_DIR="$("$RUNNER_TEMP/python/bin/python" -m pybind11 --cmakedir)"
+          cmake --build build-release --parallel 4
+          cmake --install build-release --prefix "$RUNNER_TEMP/installed"
+      - name: Verify installed application and fixed-clock backend
+        env:
+          IFCN_ENABLE_CONSOLE_LOG: '1'
+        run: |
+          "$RUNNER_TEMP/installed/ifcn" --version
+          IFCN_UI_SCREENSHOT="$RUNNER_TEMP/gui.png" \
+          IFCN_UI_SCREENSHOT_INPUT="$RUNNER_TEMP/installed/examples/regular_2ddwave/TOY/xor2_demo.ifcn" \
+          IFCN_UI_SCREENSHOT_VIEW=layout \
+            timeout 30s "$RUNNER_TEMP/installed/ifcn"
+          test -s "$RUNNER_TEMP/gui.png"
+          export IFCN_LAYOUT_BINDINGS_DIR="$RUNNER_TEMP/installed/python/lib"
+          export IFCN_MAPPING_METRICS_EXE="$RUNNER_TEMP/installed/bin/ifcn_mapping_metrics"
+          export MPLCONFIGDIR="$RUNNER_TEMP/matplotlib"
+          "$RUNNER_TEMP/python/bin/python" \
+            "$RUNNER_TEMP/installed/include/layout_backend/src/algorithm/main/test_normal_graph_draw.py" \
+            --benchmark "$RUNNER_TEMP/installed/tests/benchmarks_f/TOY/xor2_demo.v" \
+            --output-dir "$RUNNER_TEMP/layout-smoke" \
+            --skip-figures --skip-latex --skip-stage-snapshots
+          test -n "$(find "$RUNNER_TEMP/layout-smoke" -name '*.ifcn' -print -quit)"
+      - name: Package Linux, source and examples
+        run: |
+          mkdir -p dist
+          cpack --config build-release/CPackConfig.cmake -G TGZ -B dist \
+            -D CPACK_PACKAGE_FILE_NAME=iFCN-1.0.0-ubuntu24.04-x86_64
+          git archive --format=tar.gz --prefix=iFCN-1.0.0/ \
+            -o dist/iFCN-1.0.0-source.tar.gz HEAD
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          files = sorted(Path('examples').rglob('*.ifcn'))
+          assert len(files) == 90
+          with ZipFile('dist/iFCN-1.0.0-examples.zip', 'w', ZIP_DEFLATED) as archive:
+              for path in files:
+                  archive.write(path)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-linux
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Preserve source line endings
+        run: git config --global core.autocrlf input
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-boost
+            mingw-w64-ucrt-x86_64-qt5-base
+            mingw-w64-ucrt-x86_64-qt5-svg
+            mingw-w64-ucrt-x86_64-graphviz
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-pybind11
+            mingw-w64-ucrt-x86_64-python-numpy
+            mingw-w64-ucrt-x86_64-python-scipy
+            mingw-w64-ucrt-x86_64-python-matplotlib
+            mingw-w64-ucrt-x86_64-python-networkx
+            mingw-w64-ucrt-x86_64-python-packaging
+      - name: Build application and full runtime
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DIFCN_BUILD_TESTS=OFF -DIFCN_BUILD_TOOLS=ON -DIFCN_BUILD_LAYOUT_BINDINGS=ON -DIFCN_BUNDLE_WINDOWS_RUNTIME=ON
+          cmake --build build-release --parallel 4
+          cmake --install build-release --prefix "$PWD/stage/iFCN-1.0.0-windows-x86_64"
+      - name: Relocate and verify without development PATH
+        shell: pwsh
+        run: |
+          $relocated = Join-Path $env:RUNNER_TEMP 'iFCN release smoke/iFCN-1.0.0-windows-x86_64'
+          New-Item -ItemType Directory -Force (Split-Path $relocated) | Out-Null
+          Move-Item stage/iFCN-1.0.0-windows-x86_64 $relocated
+          & ./cmake/windows/smoke.ps1 -PackageDir $relocated -EvidenceDir "$env:RUNNER_TEMP/ifcn-windows-evidence"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows package smoke check failed' }
+          Move-Item $relocated stage/iFCN-1.0.0-windows-x86_64
+      - name: Create portable ZIP and Windows installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $package = (Resolve-Path stage/iFCN-1.0.0-windows-x86_64).Path
+          $output = (Resolve-Path dist).Path
+          & 'C:/Program Files/7-Zip/7z.exe' a -tzip "$output/iFCN-1.0.0-windows-x86_64.zip" "$package"
+          if ($LASTEXITCODE -ne 0) { throw 'Portable ZIP packaging failed' }
+          & 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe' "/DAppVersion=1.0.0" "/DPackageDir=$package" "/DOutputDir=$output" cmake/windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed' }
+      - name: Verify installer payload
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'iFCN installed smoke'
+          $installer = (Resolve-Path dist/iFCN-1.0.0-windows-x86_64-setup.exe).Path
+          $process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Silent installation failed' }
+          & ./cmake/windows/smoke.ps1 -PackageDir $destination -EvidenceDir "$env:RUNNER_TEMP/ifcn-windows-installed-evidence"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Windows application failed' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-windows-x86_64
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: evidence-windows-x86_64
+          path: |
+            ${{ runner.temp }}/ifcn-windows-evidence
+            ${{ runner.temp }}/ifcn-windows-installed-evidence
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS 15 / Apple Silicon
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      IFCN_RELEASE_VERSION: '1.0.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install build dependencies
+        run: |
+          brew install qt@5 boost graphviz ninja pkgconf
+          echo "IFCN_QT_PREFIX=$(brew --prefix qt@5)" >> "$GITHUB_ENV"
+          echo "IFCN_GRAPHVIZ_PREFIX=$(brew --prefix graphviz)" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix graphviz)/lib/pkgconfig" >> "$GITHUB_ENV"
+          brew list --versions qt@5 boost graphviz
+          test "$(uname -m)" = arm64
+      - name: Configure and build native application
+        run: |
+          cmake -S . -B build-macos -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_PREFIX_PATH="$IFCN_QT_PREFIX;$(brew --prefix boost)" \
+            -DIFCN_BUILD_TESTS=OFF -DIFCN_BUILD_TOOLS=ON \
+            -DIFCN_BUILD_LAYOUT_BINDINGS=OFF
+          cmake --build build-macos --parallel 3
+          cmake --install build-macos --prefix "$RUNNER_TEMP/ifcn-macos-stage"
+      - name: Deploy Qt, Graphviz, native libraries and create disk image
+        run: |
+          python3 cmake/macos/deploy.py \
+            --stage "$RUNNER_TEMP/ifcn-macos-stage" \
+            --qt-prefix "$IFCN_QT_PREFIX" \
+            --graphviz-prefix "$IFCN_GRAPHVIZ_PREFIX" \
+            --version "$IFCN_RELEASE_VERSION" --output dist
+      - name: Test relocated application without Homebrew
+        run: |
+          /usr/bin/python3 cmake/macos/smoke.py \
+            --app "$RUNNER_TEMP/ifcn-macos-stage/iFCN.app" \
+            --evidence "$RUNNER_TEMP/ifcn-macos-smoke" \
+            --hide-prefix /opt/homebrew
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-macos-arm64
+          path: |
+            dist/iFCN-*-macos-arm64.dmg
+            dist/iFCN-*-macos-arm64.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ifcn-macos-smoke-evidence
+          path: ${{ runner.temp }}/ifcn-macos-smoke/
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish verified release
+    needs: [linux, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+          pattern: release-*
+      - name: Checksums and release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$RELEASE_TAG" = v1.0.0
+          (cd dist && sha256sum * > SHA256SUMS)
+          python3 - <<'PY'
+          import os, posixpath, re
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          base = 'https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/blob/' + tag + '/'
+          text = Path('docs/release-v1.0.0.md').read_text()
+          def link(match):
+              url = match.group(1)
+              if url.startswith(('https://', 'http://', '#')):
+                  return match.group(0)
+              return '](' + base + posixpath.normpath(posixpath.join('docs', url)) + ')'
+          Path('release-notes.md').write_text(re.sub(r'\]\(([^)]+)\)', link, text))
+          PY
+      - name: Create release with all platform assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft \
+            --title "iFCN $RELEASE_TAG" --notes-file release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest

@@ -1,0 +1,15 @@
+iFCN 1.0.0
+
+iFCN's original source is provided under the MIT license in LICENSE.
+
+The GUI includes QCustomPlot 2.1.1 by Emanuel Eichhammer, distributed under
+the GNU General Public License, version 3 or later. Its original copyright
+and license notices are retained in src/ui/widgets/qcustomplot.cpp and
+src/ui/widgets/qcustomplot.h. The combined GUI executable is distributed
+under GPL-3.0-or-later; see LICENSES/GPL-3.0.txt. Complete corresponding
+source, including the build and packaging files, is provided with each
+release as the source archive at:
+https://github.com/li-yangshuai/iFCN/releases
+
+The Linux package uses system-provided Qt, Graphviz and Python libraries;
+these libraries are not bundled in the package. Their own licenses apply.

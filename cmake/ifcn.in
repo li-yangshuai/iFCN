@@ -1,0 +1,14 @@
+#!/bin/sh
+# Resolve runtime assets relative to this launcher while preserving the caller's
+# working directory, so relative input and output paths keep their meaning.
+set -eu
+ifcn_bundle_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export IFCN_LAYOUT_ROOT="$ifcn_bundle_root/include/layout_backend"
+export IFCN_LAYOUT_BINDINGS_DIR="$ifcn_bundle_root/python/lib"
+export IFCN_MAPPING_METRICS_EXE="$ifcn_bundle_root/bin/ifcn_mapping_metrics"
+: "${IFCN_LAYOUT_PYTHON:=python3}"
+export IFCN_LAYOUT_PYTHON
+# Matplotlib's writable cache belongs to the user's cache, outside the package.
+: "${MPLCONFIGDIR:=${XDG_CACHE_HOME:-$HOME/.cache}/ifcn/matplotlib}"
+export MPLCONFIGDIR
+exec "$ifcn_bundle_root/bin/fcnx_gui" "$@"

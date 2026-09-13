@@ -9,10 +9,12 @@
 #include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QRegularExpression>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QToolButton>
 #include <QtGlobal>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include "ui/mainwindow/MainWindow.h"
 #include "ui/mainwindow/TabbedMainWindow.h"
@@ -20,6 +22,49 @@
 #include "ui/widgets/LayeredStructure3DView.h"
 
 namespace {
+void configureBundledRuntime()
+{
+    const QDir binaryDir(QCoreApplication::applicationDirPath());
+#ifdef Q_OS_MACOS
+    const QString graphvizPlugins = binaryDir.absoluteFilePath(QStringLiteral("../PlugIns/graphviz"));
+    if (QDir(graphvizPlugins).exists() && !qEnvironmentVariableIsSet("GVBINDIR")) {
+        qputenv("GVBINDIR", graphvizPlugins.toLocal8Bit());
+    }
+#endif
+    const QDir bundle(binaryDir.absoluteFilePath(QStringLiteral("..")));
+    if (!bundle.exists(QStringLiteral("examples"))) return;
+
+    const auto useIfUnset = [](const char *name, const QString &value) {
+        if (!qEnvironmentVariableIsSet(name)) qputenv(name, value.toLocal8Bit());
+    };
+    const QString backend = bundle.filePath(QStringLiteral("include/layout_backend"));
+    if (QDir(backend).exists()) {
+        useIfUnset("IFCN_LAYOUT_ROOT", backend);
+        useIfUnset("IFCN_LAYOUT_BINDINGS_DIR", bundle.filePath(QStringLiteral("python/lib")));
+    }
+#ifdef Q_OS_WIN
+    const QString metrics = binaryDir.filePath(QStringLiteral("ifcn_mapping_metrics.exe"));
+    const QString python = bundle.filePath(QStringLiteral("runtime/python/bin/python.exe"));
+    if (QFileInfo::exists(python) && !qEnvironmentVariableIsSet("IFCN_LAYOUT_PYTHON")) {
+        qputenv("IFCN_LAYOUT_PYTHON", python.toLocal8Bit());
+        useIfUnset("PYTHONHOME", bundle.filePath(QStringLiteral("runtime/python")));
+    }
+    if (binaryDir.exists(QStringLiteral("graphviz"))) {
+        useIfUnset("GVBINDIR", binaryDir.filePath(QStringLiteral("graphviz")));
+    }
+    if (bundle.exists(QStringLiteral("etc/fonts"))) {
+        useIfUnset("FONTCONFIG_PATH", bundle.filePath(QStringLiteral("etc/fonts")));
+    }
+    qputenv("PATH", (binaryDir.absolutePath() + QLatin1Char(';')
+                     + qEnvironmentVariable("PATH")).toLocal8Bit());
+#else
+    const QString metrics = binaryDir.filePath(QStringLiteral("ifcn_mapping_metrics"));
+#endif
+    if (QFileInfo::exists(metrics)) useIfUnset("IFCN_MAPPING_METRICS_EXE", metrics);
+    useIfUnset("MPLCONFIGDIR", QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                                  + QStringLiteral("/matplotlib"));
+}
+
 bool consoleLoggingEnabled()
 {
     if (qEnvironmentVariableIsSet("IFCN_UI_SCREENSHOT_INPUT")
@@ -602,6 +647,10 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
 
 int main(int argc,char *argv[])
 {
+    if (argc == 2 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--version")) {
+        std::printf("iFCN %s\n", IFCN_VERSION);
+        return 0;
+    }
     if (!consoleLoggingEnabled()) {
         qInstallMessageHandler(silentQtMessageHandler);
         silenceProcessConsole();
@@ -613,6 +662,9 @@ int main(int argc,char *argv[])
 #endif
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
     QApplication app(argc, argv);
+    app.setApplicationName(QStringLiteral("iFCN"));
+    app.setApplicationVersion(QStringLiteral(IFCN_VERSION));
+    configureBundledRuntime();
     app.setStyle("Fusion");
 
     const QStringList preferredFonts = {

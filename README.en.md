@@ -16,6 +16,8 @@ Edit circuits, generate layouts, inspect clocks and 3D structures, and run physi
 
 iFCN is a Qt desktop editor that connects Verilog logic, circuit layout, QCA cell mapping, and simulation results in one workflow. It provides three combinational P&R families: regular-clock heuristics, fixed-2DDWave graph drawing, and irregular-clock graph drawing, plus a separate sequential P&R flow.
 
+Desktop downloads: [Windows / macOS / Linux Release](https://github.com/li-yangshuai/iFCN/releases/latest). See the [release guide](docs/release-v1.0.0.md) for installation and platform coverage.
+
 <a id="quickstart"></a>
 ## Install and launch
 
@@ -157,6 +159,6 @@ Further reading: [Algorithm results](docs/algorithm-availability.md) · [Classic
 
 <div align="center">
 
-[Back to top](#ifcn) · [简体中文](README.md) · [MIT License](LICENSE)
+[Back to top](#ifcn) · [简体中文](README.md) · [Licenses](NOTICE)
 
 </div>

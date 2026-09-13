@@ -56,12 +56,21 @@ add_executable(
 target_link_libraries(fcnx_gui PRIVATE autopr simon Threads::Threads ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg
                        ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
 
-target_compile_definitions(fcnx_gui PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_compile_definitions(fcnx_gui PRIVATE
+    IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    IFCN_VERSION="${PROJECT_VERSION}")
 
+# The fixed-clock GUI backend uses this helper to write mapped cell and
+# crossing counts into its IFCN output. Build it with the optional Python backend
+# or the command-line/test tools; the native GUI has no external CLI dependency.
+if(IFCN_BUILD_LAYOUT_BINDINGS OR IFCN_BUILD_TOOLS OR IFCN_BUILD_TESTS)
 add_executable(ifcn_mapping_metrics app/ifcn_mapping_metrics.cpp)
 target_link_libraries(ifcn_mapping_metrics PRIVATE autopr)
 target_compile_definitions(ifcn_mapping_metrics PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_dependencies(fcnx_gui ifcn_mapping_metrics)
+endif()
 
+if(IFCN_BUILD_TOOLS OR IFCN_BUILD_TESTS)
 add_executable(ifcn_sequential_pnr app/ifcn_sequential_pnr.cpp)
 target_link_libraries(ifcn_sequential_pnr PRIVATE autopr ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
 target_compile_definitions(ifcn_sequential_pnr PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -84,3 +93,4 @@ target_link_libraries(ifcn_physical_benchmark PRIVATE simon)
 # Headless adapters for the production combinational C++ layout algorithms.
 add_executable(ifcn_combinational_pnr app/ifcn_combinational_pnr.cpp)
 target_link_libraries(ifcn_combinational_pnr PRIVATE autopr ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
+endif()

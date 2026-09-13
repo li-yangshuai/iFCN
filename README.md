@@ -16,6 +16,8 @@
 
 iFCN 提供 Qt 桌面编辑器，将 Verilog 逻辑、电路布局、QCA 单元映射和仿真结果放在同一个工作流程中。提供三类组合电路布局布线：规则时钟启发式、固定 2DDWave 图绘制、不规则时钟图绘制；另有独立的时序电路布局布线流程。
 
+下载桌面版：[Windows / macOS / Linux Release](https://github.com/li-yangshuai/iFCN/releases/latest)。安装方式和平台功能范围见[发行说明](docs/release-v1.0.0.md)。
+
 <a id="quickstart"></a>
 ## 安装与启动
 
@@ -157,6 +159,6 @@ IO Contract 处理器件的输入输出连线；布局 compact 则优化时钟�
 
 <div align="center">
 
-[返回顶部](#ifcn) · [English](README.en.md) · [MIT License](LICENSE)
+[返回顶部](#ifcn) · [English](README.en.md) · [Licenses](NOTICE)
 
 </div>

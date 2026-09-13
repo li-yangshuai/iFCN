@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <utility>
 #include <functional>
 #include "patterns.h"

@@ -1,0 +1,41 @@
+#circuit name: legacy_encoded_4
+
+#designed by graph draw algorithm.
+
+#gate level placement and routing infomation
+#gates number: 2
+#input/output: 1 / 1
+#edges number: 1
+#total layers: 2
+#layout area: width: 6, height: 1, area: 6
+#critical path: 5
+#clocks: 2
+#phase encoding: enabled
+#phase count: 4
+#clock scheme: 2DDWave
+#block size: 4x4
+#coordinate origin: normalized top-left (0,0)
+#unassigned phase in raw map: none
+#encoded padding/unassigned compatibility fill: 0
+#encoding: row-major blocks; each block stores one byte per row; each cell uses 2 bits; column 0 is LSB
+
+#nodes info
+### nodeIndex, nodeName, nodeType, nodePosition ###
+0, a, input, (5,6);
+1, y, output, (10,6);
+#nodes info
+
+#paths info
+### {node1, node2} : path ###
+(0,1): (5,6),(6,6),(7,6),(8,6),(9,6),(10,6);
+#paths info
+
+#absolute bbox: (5,6) -> (10,6)
+#raw size: width: 6, height: 1
+#padded size: width: 8, height: 4
+#blocks: columns: 2, rows: 1
+
+#encoded phase map
+### (block_x,block_y): hex ###
+(0,0):0x93000000; (1,0):0x03000000;
+#encoded phase map

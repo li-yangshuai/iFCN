@@ -7,6 +7,7 @@ verilog解析结果注意点：
 
 
 #pragma once
+#include <cstdint>
 #include <iostream>
 #include <string>
 #include <vector>

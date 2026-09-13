@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include "individual.h"
 #include <random>
@@ -33,6 +34,7 @@ public:
 
     void reserve_the_best();
     void select_next_generation();
+    void evolve_next_generation();
     bool gaRun();
 
     //print node_pos

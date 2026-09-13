@@ -95,6 +95,26 @@ export IFCN_LAYOUT_BINDINGS_DIR="$PWD/build/python/lib"
 
 ![布局布线与时钟相位原理图](docs/images/xor2/03-routing.png)
 
+#### 各算法的实际布局效果
+
+**规则时钟启发式布局布线 · MUX41**
+
+选择 **Heuristic P&R** 并设置规则时钟方案。这里使用 2DDWave，MUX41 占用 **18 × 16 个时钟网格、626 个 QCA 元胞**；源逻辑的全部 64 组输入、DRC 和时钟检查通过，物理仿真尚未运行。[打开 `.ifcn` 样例](examples/regular_heuristic/2DDWave/TOY/mux41.ifcn)
+
+![规则时钟启发式算法生成的 MUX41：18×16 时钟网格、626 个 QCA 元胞](docs/images/algorithms/regular-heuristic-mux41.png)
+
+**固定 2DDWave 图绘制与收缩 · MUX41**
+
+选择 **2DDWave Fixed-Clock P&R**，运行图绘制、布线与收缩。四选一多路选择器使用 **13 × 11 个时钟网格、737 个 QCA 元胞**；源逻辑、DRC 和时钟检查通过，物理仿真尚未运行。[打开 `.ifcn` 样例](examples/regular_2ddwave/TOY/mux41.ifcn)
+
+![固定 2DDWave 图绘制算法生成的 MUX41：13×11 时钟网格、737 个 QCA 元胞](docs/images/algorithms/regular-2ddwave-mux41.png)
+
+**不规则时钟图绘制 · 四选一多路选择器**
+
+选择 `Irregular-Clock Graph P&R`，由统一算法搜索布局并分配时钟。MUX41 使用 **16 × 11 个时钟网格，596 个 QCA 元胞**；已通过 DRC、时钟规则及 Bistable 的 **全部 64 组输入检查**。[打开 `.ifcn` 样例](examples/irregular/TOY/mux41.ifcn)
+
+![不规则时钟算法生成的四选一多路选择器：16×11 时钟网格、596 个 QCA 元胞](docs/images/algorithms/irregular-mux41.png)
+
 ### 4. 查看器件映射与时钟
 
 布局完成后，在主画布查看映射得到的 QCA 单元。使用 **Clock0–Clock3** 设置单元相位，**Clock Grid** 显示或隐藏时钟网格，**Encode** 查看时钟区域编码。
@@ -142,7 +162,9 @@ IO Contract 处理器件的输入输出连线；布局 compact 则优化时钟�
 
 时序流程保留跨周期距离，并求解全局时钟和启动间隔。当前示例通过结构、映射和时钟检查，完整状态器件的多周期物理行为仍待验证。
 
-![实际时序反馈版图与时钟区域](docs/images/sequential-feedback.png)
+当前库中的时序案例规模较小。此 Toggle FF 为 **2 × 2 个时钟网格、19 个 QCA 元胞，II = 4**；它用于展示反馈结构，不能据此确认状态器件的多周期物理行为。
+
+<img src="docs/images/algorithms/sequential-cyclic-toggle.png" width="680" alt="保留反馈线路的 Toggle FF 时序结构">
 
 <a id="export"></a>
 ## 保存与导出
@@ -152,6 +174,8 @@ IO Contract 处理器件的输入输出连线；布局 compact 则优化时钟�
 - **View** 中的截图操作：保存界面画面；逻辑图和分层结构也提供导出功能。
 
 ![单元版图导出与截图菜单](docs/images/xor2/08-export.png)
+
+规则与不规则时钟的 `.ifcn` 都按块编码保存相位，打开时自动解码还原。[编码格式](docs/ifcn-format.md)。
 
 不规则时钟布局的界面和命令行共用一个算法入口，自动完成候选搜索、时钟分配与 compact。时序电路另提供寄存器切分、周期反馈布局与全局时钟求解。
 

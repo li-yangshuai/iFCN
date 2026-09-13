@@ -29,16 +29,9 @@
 (5,2): (2,0),(2,1),(2,2);
 #paths info
 #phase map
-### (x,y) : phase ###
-(0,0):0;
-(1,0):1;
-(2,0):2;
-(0,1):1;
-(1,1):0;
-(2,1):3;
-(0,2):2;
-(1,2):3;
-(2,2):0;
+#phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
+### tile(x,y) : packed_hex for a 4x4 phase block ###
+tile(0,0):0x24310E00;
 #phase map
 #fixed clock template original origin: (3, 2)
 #validation limitation: physical output truth has not been tested.

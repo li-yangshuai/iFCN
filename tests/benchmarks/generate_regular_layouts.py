@@ -38,6 +38,29 @@ SCOPE = ('Original-source exhaustive truth (up to 11 inputs), routed geometry, g
          'physical waveform behavior is not certified.')
 
 
+def complete_fixed_clock_template(candidate, scheme):
+    """Preserve routed phases and fill only the unoccupied regular-clock tiles."""
+    used = {(node['x'], node['y']) for node in candidate['nodes']}
+    used.update(tuple(point) for route in candidate['routes'] for point in route['path'])
+    if not used:
+        raise ValueError('Cannot export an empty fixed-clock layout')
+    phases = {}
+    for cell in candidate['cells']:
+        point = cell['x'], cell['y']
+        expected = PHASES[scheme][point[1] % 4][point[0] % 4]
+        if cell['phase'] != expected:
+            raise ValueError(f'Stored phase at {point} disagrees with the {scheme} clock template')
+        phases[point] = cell['phase']
+    if not used <= phases.keys():
+        raise ValueError('Fixed-clock candidate is missing an occupied tile phase')
+    for y in range(min(y for x, y in used), max(y for x, y in used) + 1):
+        for x in range(min(x for x, y in used), max(x for x, y in used) + 1):
+            phases.setdefault((x, y), PHASES[scheme][y % 4][x % 4])
+    return {**candidate, 'phase_map_scope': 'board',
+            'cells': [{'x': x, 'y': y, 'phase': phase}
+                      for (x, y), phase in sorted(phases.items())]}
+
+
 def fixed_worker(args):
     # Import the classic Python algorithm only in its isolated subprocess.
     from ifcn.backend import normal_candidate
@@ -91,7 +114,15 @@ def run_case(item, family, scheme, args, binaries, env):
         row.update(normalized_sha256=sha256(directory / 'normalized.v'), frontend=metadata)
         if family == 'regular_heuristic':
             command = [binaries['heuristic_layout_driver'], scheme,
-                       directory / 'normalized.v', directory / 'candidate.json']
+                       directory / 'normalized.v', directory / 'candidate.json',
+                       '--generations', args.ga_generations, '--population', args.ga_population,
+                       '--crossover', args.ga_crossover, '--mutation', args.ga_mutation]
+            if args.ga_width:
+                command += ['--grid-width', args.ga_width]
+            if args.ga_height:
+                command += ['--grid-height', args.ga_height]
+            if args.ga_stop_after_first:
+                command += ['--stop-after-first']
             timeout = args.ga_timeout
         else:
             command = [args.python, Path(__file__).resolve(), '--fixed-worker',
@@ -120,7 +151,8 @@ def run_case(item, family, scheme, args, binaries, env):
         write_json(directory / 'logic.json', logic)
         if logic['status'] != 'equivalent':
             raise ValueError(f'Source-DAG truth mismatch: {logic}')
-        width, height = export_native_ifcn(candidate, directory / 'layout.ifcn', family + '_' + scheme)
+        export_candidate = complete_fixed_clock_template(candidate, scheme)
+        width, height = export_native_ifcn(export_candidate, directory / 'layout.ifcn', family + '_' + scheme)
         used = {(node['x'], node['y']) for node in candidate['nodes']}
         used.update(tuple(point) for route in candidate['routes'] for point in route['path'])
         origin = min(x for x, y in used), min(y for x, y in used)
@@ -182,6 +214,13 @@ def main():
     parser.add_argument('--case', action='append', help='Limit to a case ID, e.g. TOY__xor2_demo; repeatable')
     parser.add_argument('--jobs', type=int, default=4)
     parser.add_argument('--ga-timeout', type=float, default=60)
+    parser.add_argument('--ga-generations', type=int, default=32)
+    parser.add_argument('--ga-population', type=int, default=64)
+    parser.add_argument('--ga-width', type=int, help='Override heuristic board width')
+    parser.add_argument('--ga-height', type=int, help='Override heuristic board height')
+    parser.add_argument('--ga-crossover', type=float, default=.9)
+    parser.add_argument('--ga-mutation', type=float, default=.5)
+    parser.add_argument('--ga-stop-after-first', action='store_true', help='Stop after the first production-GA legal incumbent')
     parser.add_argument('--fixed-timeout', type=float, default=180)
     parser.add_argument('--route-budget', type=float, default=60)
     parser.add_argument('--mapping-timeout', type=float, default=30)
@@ -194,6 +233,11 @@ def main():
         parser.error('--output-dir is required')
     if args.jobs < 1 or min(args.ga_timeout, args.fixed_timeout, args.route_budget, args.mapping_timeout) <= 0:
         parser.error('Job count and time budgets must be positive')
+    if args.ga_generations < 1 or args.ga_population < 2 or any(
+            value is not None and value < 1 for value in (args.ga_width, args.ga_height)):
+        parser.error('GA generations/grid sizes must be positive, and population must be at least two')
+    if not (0 <= args.ga_crossover <= 1 and 0 <= args.ga_mutation <= 1):
+        parser.error('GA crossover and mutation rates must be in [0,1]')
     if args.fixed_timeout <= args.route_budget:
         parser.error('--fixed-timeout must allow overhead beyond --route-budget')
     args.output_dir = args.output_dir.resolve()

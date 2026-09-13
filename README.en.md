@@ -95,6 +95,26 @@ Open an `.ifcn` from [examples](examples/) to inspect a generated layout, organi
 
 ![Routed schematic and clock phases](docs/images/xor2/03-routing.png)
 
+#### Actual layouts from each algorithm
+
+**Regular-clock heuristic P&R · MUX41**
+
+Choose **Heuristic P&R** and select a regular clock scheme. This 2DDWave MUX41 occupies **18 × 16 clock tiles and 626 QCA cells**. All 64 source-logic vectors, DRC and clock checks pass; physical simulation has not been run. [Open the `.ifcn` example](examples/regular_heuristic/2DDWave/TOY/mux41.ifcn).
+
+![MUX41 from regular-clock heuristic P&R: 18 by 16 clock tiles and 626 QCA cells](docs/images/algorithms/regular-heuristic-mux41.png)
+
+**Fixed 2DDWave graph drawing and compaction · MUX41**
+
+Choose **2DDWave Fixed-Clock P&R** to run graph drawing, routing, and compaction. This 4:1 multiplexer occupies **13 × 11 clock tiles and 737 QCA cells**. Source logic, DRC and clock checks pass; physical simulation has not been run. [Open the `.ifcn` example](examples/regular_2ddwave/TOY/mux41.ifcn).
+
+![MUX41 from fixed 2DDWave graph drawing: 13 by 11 clock tiles and 737 QCA cells](docs/images/algorithms/regular-2ddwave-mux41.png)
+
+**Irregular-clock graph drawing · 4:1 multiplexer**
+
+Choose `Irregular-Clock Graph P&R` to search layouts and assign clocks through the unified algorithm. MUX41 occupies **16 × 11 clock tiles and 596 QCA cells**. DRC, clock rules, and Bistable checks for **all 64 input combinations** pass. [Open the `.ifcn` example](examples/irregular/TOY/mux41.ifcn).
+
+![A 4-to-1 multiplexer from irregular-clock graph drawing: 16 by 11 clock tiles and 596 QCA cells](docs/images/algorithms/irregular-mux41.png)
+
 ### 4. Inspect mapped cells and clocks
 
 After layout, inspect the mapped QCA cells on the main canvas. Use **Clock0–Clock3** to set cell phases, **Clock Grid** to show or hide the clock grid, and **Encode** to inspect clock-region encoding.
@@ -142,7 +162,9 @@ Use **File → Open** to load the [feedback example](examples/sequential/cyclic/
 
 Sequential routing preserves cross-cycle distances and solves global clocks and the initiation interval. These examples pass structural, mapping, and clock checks; complete multi-cycle physical state behavior still requires validation.
 
-![Actual sequential feedback layout and clock regions](docs/images/sequential-feedback.png)
+The current library contains only small sequential structural examples. This Toggle FF uses **2 × 2 clock tiles, 19 QCA cells, and II = 4**; it illustrates retained feedback and does not establish multi-cycle physical state behavior.
+
+<img src="docs/images/algorithms/sequential-cyclic-toggle.png" width="680" alt="Toggle FF sequential structure with retained feedback">
 
 <a id="export"></a>
 ## Save and export
@@ -152,6 +174,8 @@ Sequential routing preserves cross-cycle distances and solves global clocks and 
 - **View** screenshot action: capture the application view; logic graphs and layered structures also provide exports.
 
 ![Cell layout export and capture menu](docs/images/xor2/08-export.png)
+
+Both regular- and irregular-clock `.ifcn` files store encoded phase blocks and decode them on load. [Format details](docs/ifcn-format.md).
 
 The GUI and batch tools share one irregular-clock layout algorithm, including candidate search, clock assignment and compaction. Sequential circuits use separate register-cut, cyclic-feedback and global clock-solving flows.
 

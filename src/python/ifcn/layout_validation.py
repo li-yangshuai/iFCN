@@ -191,7 +191,7 @@ def dag_from_candidate(candidate, validation):
 def export_native_ifcn(candidate, output, algorithm):
     """Serialize the actual C++ routing using the existing combinational IFCN format.
 
-    Native phases are 1..4; the shared IFCN/QCA mapping reader expects 0..3.
+    Native phases are 1..N; the shared IFCN/QCA mapping reader expects 0..N-1.
     Coordinates and phases are translated together without rotating or rerouting.
     """
     used = {tuple(p) for route in candidate['routes'] for p in route['path']}
@@ -199,11 +199,34 @@ def export_native_ifcn(candidate, output, algorithm):
     min_x, min_y = min(p[0] for p in used), min(p[1] for p in used)
     max_x, max_y = max(p[0] for p in used), max(p[1] for p in used)
     width, height = max_x-min_x+1, max_y-min_y+1
+    phase_count = candidate.get('phase_count', 4)
+    if phase_count not in (3, 4):
+        raise ValueError('IFCN phase_count must be 3 or 4')
+    phases = {}
+    for cell in candidate['cells']:
+        point = (cell['x'], cell['y'])
+        phase = cell['phase']
+        if not isinstance(phase, int) or not 1 <= phase <= phase_count:
+            raise ValueError(f'IFCN phase out of range at {point}: {phase}')
+        if point in phases and phases[point] != phase:
+            raise ValueError(f'Conflicting IFCN phases at {point}')
+        phases[point] = phase
+    if not used <= phases.keys():
+        raise ValueError('IFCN phase map is missing an occupied tile')
+    phase_scope = candidate.get('phase_map_scope', 'occupied')
+    if phase_scope not in ('occupied', 'board'):
+        raise ValueError('IFCN phase_map_scope must be occupied or board')
+    phase_points = used
+    if phase_scope == 'board':
+        phase_points = {(x, y) for y in range(min_y, max_y + 1)
+                        for x in range(min_x, max_x + 1)}
+        if not phase_points <= phases.keys():
+            raise ValueError('IFCN board phase map is missing a tile inside the layout bounds')
     def coord(p):
         return f'({p[0]-min_x},{p[1]-min_y})'
     lines = [f'#circuit name: {output.stem}', f'#algorithm: {algorithm}', '#mapping mode: combinational',
              '#primary output nodes: ' + ','.join(str(n['id']) for n in candidate['nodes'] if n.get('is_output')),
-             '#phase count: 4', '#clock scheme: irregular', '#clock scheme consistency: success',
+             f'#phase count: {phase_count}', '#clock scheme: irregular', '#clock scheme consistency: success',
              f'#layout area: width: {width}, height: {height}, area: {width*height}',
              '#nodes info', '### nodeIndex, nodeName, nodeType, nodePosition ###']
     for node in candidate['nodes']:
@@ -211,10 +234,18 @@ def export_native_ifcn(candidate, output, algorithm):
     lines += ['#nodes info', '#paths info', '### {node1, node2} : path ###']
     for route in candidate['routes']:
         lines.append(f"({route['source']},{route['target']}): "+','.join(coord(p) for p in route['path'])+';')
-    lines += ['#paths info', '#phase map', '### (x,y) : phase ###']
-    phases = {(c['x'],c['y']):c['phase'] for c in candidate['cells']}
-    for point in sorted(used, key=lambda p:(p[1],p[0])):
-        lines.append(f'{coord(point)}:{phases[point]-1};')
+    lines += ['#paths info', '#phase map',
+              f'#phase codec: phase_count={phase_count}, block_size=4, encoding=packed_hex_2bit_row_major']
+    for tile_y in range((height + 3) // 4):
+        for tile_x in range((width + 3) // 4):
+            code = 0
+            for local_y in range(4):
+                for local_x in range(4):
+                    point = (min_x + 4 * tile_x + local_x, min_y + 4 * tile_y + local_y)
+                    phase = phases[point] - 1 if point in phase_points else 0
+                    # Each row is one byte, column zero is that byte's LSB.
+                    code |= phase << (8 * (3 - local_y) + 2 * local_x)
+            lines.append(f'tile({tile_x},{tile_y}):0x{code:08x};')
     lines += ['#phase map', '']
     output.write_text('\n'.join(lines))
     return width,height

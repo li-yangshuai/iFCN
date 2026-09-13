@@ -17,10 +17,16 @@ import subprocess
 
 
 def run(*args: object, check: bool = True, env: dict | None = None) -> str:
-    result = subprocess.run([str(arg) for arg in args], check=check, env=env,
+    command = [str(arg) for arg in args]
+    result = subprocess.run(command, check=False, env=env,
                             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if check and result.stderr:
         print(result.stderr, end="", flush=True)
+    if check and result.returncode:
+        if result.stdout:
+            print(result.stdout, end="", flush=True)
+        raise subprocess.CalledProcessError(result.returncode, command,
+                                            output=result.stdout, stderr=result.stderr)
     return result.stdout
 
 

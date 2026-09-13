@@ -189,6 +189,63 @@ int main() {
         require(ga.getNodePos() == originalNodes && ga.getRoutes() == originalRoutes,
                 "Mutating the elite copy changed the incumbent snapshot");
 
+        GeneticAlgorithm protectedElite(parse, board, router, 2, 4, 1, 1);
+        protectedElite.populations = {delayed, valid, delayed, delayed};
+        protectedElite.reserve_the_best();
+        protectedElite.evolve_next_generation();
+        require(protectedElite.populations.back().nodeindex_pos == originalNodes &&
+                protectedElite.populations.back().routes == originalRoutes &&
+                protectedElite.populations.back().is_synced,
+                "Crossover/mutation destroyed the selected legal elite at 100% operator rates");
+
+        // Neither starting placement is fully routed. Keep the real one-edge
+        // progress while evolving; preservation must not depend on having an
+        // already valid layout in best_individuals.
+        Individual partial(parse, board, router, {{a, {0, 4}}, {b, {4, 0}}, {y, {2, 4}}});
+        Individual weak(parse, board, router, {{a, {0, 4}}, {b, {4, 0}}, {y, {1, 1}}});
+        partial.infoReset(); partial.computeFitness();
+        weak.infoReset(); weak.computeFitness();
+        require(!partial.is_routed && !weak.is_routed && partial.fitness > weak.fitness,
+                "Partial-routing regression fixture did not distinguish useful progress");
+        GeneticAlgorithm progress(parse, board, router, 4, 4, 1, 1);
+        progress.populations = {partial, weak, weak, weak};
+        progress.evolve_next_generation();
+        require(progress.best_individuals.empty() &&
+                progress.populations.back().nodeindex_pos == partial.nodeindex_pos &&
+                progress.populations.back().routes == partial.routes,
+                "Evolution lost the best partial routing before finding a legal layout");
+        long double previousMaximum = partial.fitness;
+        for (int generation = 0; generation < 4; ++generation) {
+            long double maximum = 0;
+            for (auto& individual : progress.populations) {
+                individual.infoReset(); individual.computeFitness();
+                maximum = std::max(maximum, individual.fitness);
+            }
+            require(maximum >= previousMaximum,
+                    "Evolution regressed below previously evaluated routing progress");
+            previousMaximum = maximum;
+            progress.reserve_the_best();
+            progress.evolve_next_generation();
+        }
+
+        // With multiple repeated mutations, all fanins must still reach their
+        // gate in the directed 2DDWave grid and both PIs must share one launch.
+        auto directedMutation = valid;
+        for (int iteration = 0; iteration < 20; ++iteration) {
+            directedMutation.mutateNodes(5);
+            for (const auto edge : parse.getEffectiveEdges()) {
+                const auto from = directedMutation.nodeindex_pos.at(edge.first);
+                const auto to = directedMutation.nodeindex_pos.at(edge.second);
+                require(from != to && from.first <= to.first && from.second <= to.second,
+                        "2DDWave mutation made a previously reachable fanin/fanout edge point backward");
+            }
+            const auto first = directedMutation.nodeindex_pos.at(a), second = directedMutation.nodeindex_pos.at(b);
+            require(first.first + first.second == second.first + second.second &&
+                    board.getCoorPos_Phase(first.first, first.second) == 1 &&
+                    board.getCoorPos_Phase(second.first, second.second) == 1,
+                    "Directed mutation changed primary-input launch epochs or phases");
+        }
+
         Individual area(parse, board, router, {{a, {0, 0}}, {b, {0, 1}}, {y, {0, 2}}});
         area.is_placed = true;
         area.add_area_value_to();

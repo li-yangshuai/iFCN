@@ -69,7 +69,7 @@ jobs:
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           files = sorted(Path('examples').rglob('*.ifcn'))
-          assert len(files) == 90
+          assert len(files) == 91
           with ZipFile('dist/iFCN-1.0.0-examples.zip', 'w', ZIP_DEFLATED) as archive:
               for path in files:
                   archive.write(path)

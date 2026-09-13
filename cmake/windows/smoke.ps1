@@ -65,7 +65,7 @@ while (!(Test-Path "$evidence\windows-launcher.png") -and (Get-Date) -lt $deadli
     Start-Sleep -Milliseconds 200
 }
 if (!(Test-Path "$evidence\windows-launcher.png")) { throw 'Root launcher did not render the circuit' }
-if ((Get-ChildItem "$package\examples" -Recurse -File).Count -ne 90) {
-    throw 'The release must contain exactly 90 curated IFCN examples'
+if ((Get-ChildItem "$package\examples" -Recurse -File).Count -ne 91) {
+    throw 'The release must contain exactly 91 curated IFCN examples'
 }
 Write-Output 'Windows release runtime checks passed without MSYS2 on PATH.'

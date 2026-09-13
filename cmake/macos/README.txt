@@ -6,7 +6,7 @@ This build has an ad-hoc integrity signature only. It is not signed with an
 Apple Developer ID or notarized. macOS may require approval in System Settings
 > Privacy & Security when opening an app downloaded from the Internet.
 
-Open an IFCN circuit using File > Open. The 90 examples, bilingual manual,
+Open an IFCN circuit using File > Open. The 91 examples, bilingual manual,
 validation table, and licenses are inside the app at Contents/Resources.
 In Finder, right-click iFCN.app and select Show Package Contents to reach them.
 Examples marked __drc_only have known failed physical-output checks; see
@@ -30,7 +30,7 @@ macOS 15 及更新版本，Apple Silicon（arm64）
 目标机器无需安装 Homebrew。本包仅有本地完整性签名，没有 Apple Developer ID
 签名或公证；首次运行时，系统可能要求在“系统设置 > 隐私与安全性”批准打开。
 
-通过 File > Open 打开 .ifcn。90 个电路示例、中英文说明、验证表和许可证位于
+通过 File > Open 打开 .ifcn。91 个电路示例、中英文说明、验证表和许可证位于
 应用内部 Contents/Resources；在 Finder 中右键应用，选择“显示包内容”查看。
 __drc_only 示例的物理输出检查失败，所有案例限制见 docs/examples.md。
 

@@ -267,6 +267,9 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
     currentMappingFilePath = filePath;
     phaseCodecPhaseCount = 4;
     phaseCodecBlockSize = 4;
+    phaseCodecDeclared = false;
+    packedPhasesSeen = false;
+    legacyEncodedPhaseMap = false;
     mappingMode = MappingMode::Combinational;
     mappingModeExplicit = false;
 
@@ -474,7 +477,8 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
             nodeSection = phaseSection = false;
             continue;
         }
-        else if (line.startsWith("#phase map")) {
+        else if (line.startsWith("#phase map") || line.startsWith("#encoded phase map")) {
+            if (line.startsWith("#encoded phase map")) legacyEncodedPhaseMap = true;
             if (rejectDanglingDistance()) break;
             const bool opening = !phaseSection;
             phaseSection = opening;
@@ -482,7 +486,12 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
             continue;
         }
         else if (line.startsWith("#phase codec")) {
-            parsePhaseCodecLine(line);
+            try {
+                parsePhaseCodecLine(line);
+            } catch (const std::exception &error) {
+                parseError = QString::fromUtf8(error.what());
+                break;
+            }
             continue;
         }
         else if (iterationDistanceKeyPattern.match(line).hasMatch()) {
@@ -541,7 +550,12 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
             hasPendingIterationDistance = false;
         }
         else if (phaseSection && line.contains(':')) {
-            parsePhaseLine(line);
+            try {
+                parsePhaseLine(line);
+            } catch (const std::exception &error) {
+                parseError = QString::fromUtf8(error.what());
+                break;
+            }
         }
     }
 
@@ -552,6 +566,18 @@ bool GateLevelMapping::parseGateLevelMappingFile(const QString &filePath,
     }
     if (parseError.isEmpty() && physicalPhaseSection) {
         parseError = QStringLiteral("IFCN physical phase map section is not closed");
+    }
+    if (parseError.isEmpty() && (packedPhasesSeen || phaseCodecDeclared || legacyEncodedPhaseMap)) {
+        QSet<QPoint> occupied;
+        for (const auto &node : nodes) occupied.insert(node.pos);
+        for (const auto &path : routes) for (const auto &point : path) occupied.insert(point);
+        for (const auto &point : occupied) {
+            if (!coordPhaseMap.contains(point)) {
+                parseError = QStringLiteral("packed phase map is missing occupied tile (%1,%2)")
+                    .arg(point.x()).arg(point.y());
+                break;
+            }
+        }
     }
     if (parseError.isEmpty()) {
         mappingModeResolver.observeFlowValue(
@@ -1077,6 +1103,7 @@ bool GateLevelMapping::parsePathLine(const QString &line,
 
 void GateLevelMapping::parsePhaseLine(const QString &line)
 {
+    if (line.startsWith('#')) return;
     int layoutWidth = 0;
     int layoutHeight = 0;
     const QString layoutArea = metadataValue({QStringLiteral("layout area")});
@@ -1097,40 +1124,75 @@ void GateLevelMapping::parsePhaseLine(const QString &line)
         return pt.x() >= 0 && pt.y() >= 0 && pt.x() < layoutWidth && pt.y() < layoutHeight;
     };
 
-    // 新格式: tile(x,y):0xhhhh; 其中 tile 坐标映射到 block_size x block_size 的相位块。
-    QRegularExpression tileEntry("tile\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)\\s*:\\s*(?:0x)?([0-9a-fA-F]+)");
-    QRegularExpressionMatchIterator tileIt = tileEntry.globalMatch(line);
-    bool decodedTile = false;
-    while (tileIt.hasNext()) {
-        decodedTile = true;
-        QRegularExpressionMatch m = tileIt.next();
-        const int tileX = m.captured(1).toInt();
-        const int tileY = m.captured(2).toInt();
-        const std::string hex = m.captured(3).toStdString();
-
-        try {
-            const auto matrix = fcngraph::phase_codec::decodePackedHexToMatrix(
-                hex,
-                phaseCodecPhaseCount,
-                phaseCodecBlockSize
-            );
-            for (int row = 0; row < phaseCodecBlockSize; ++row) {
-                for (int column = 0; column < phaseCodecBlockSize; ++column) {
-                    const QPoint pt(tileX * phaseCodecBlockSize + column,
-                                    tileY * phaseCodecBlockSize + row);
-                    if (!inLayoutBounds(pt)) {
-                        continue;
-                    }
-                    coordPhaseMap.insert(pt, matrix[static_cast<size_t>(row)][static_cast<size_t>(column)]);
+    // Packed files can place several blocks on one line. Historical encoded
+    // files omit the tile prefix and declare "#block size: 3x3" instead.
+    if (!line.startsWith('#') && (line.startsWith(QStringLiteral("tile"), Qt::CaseInsensitive)
+        || line.contains(QStringLiteral("0x"), Qt::CaseInsensitive))) {
+        const QRegularExpression entry(QStringLiteral(
+            "(?:(tile)\\s*)?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)\\s*:\\s*(?:0[xX])?([0-9a-fA-F]+)\\s*;"));
+        auto entries = entry.globalMatch(line);
+        int end = 0;
+        bool any = false;
+        while (entries.hasNext()) {
+            const auto match = entries.next();
+            if (!line.mid(end, match.capturedStart() - end).trimmed().isEmpty())
+                throw std::runtime_error("malformed packed phase tile");
+            end = match.capturedEnd();
+            any = true;
+            const bool legacy = match.captured(1).isEmpty();
+            int count = phaseCodecPhaseCount, size = phaseCodecBlockSize;
+            int originX = 0, originY = 0;
+            if (legacy) {
+                if (!legacyEncodedPhaseMap || phaseCodecDeclared)
+                    throw std::runtime_error("packed phase entry requires a tile(x,y) prefix");
+                const QString phaseText = metadataValue({QStringLiteral("phase count")});
+                if (!phaseText.isEmpty()) count = phaseText.toInt();
+                const QString blockText = metadataValue({QStringLiteral("block size")});
+                const QRegularExpression blockPattern(QStringLiteral("^(3|4)x\\1$"));
+                const auto block = blockPattern.match(blockText);
+                if (!blockText.isEmpty() && !block.hasMatch())
+                    throw std::runtime_error("invalid legacy phase block size");
+                size = block.hasMatch() ? block.captured(1).toInt() : count;
+                const QRegularExpression originPattern(QStringLiteral("\\((\\d+)\\s*,\\s*(\\d+)\\)"));
+                const auto origin = originPattern.match(metadataValue({QStringLiteral("absolute bbox")}));
+                if (origin.hasMatch()) {
+                    bool originXOk = false, originYOk = false;
+                    originX = origin.captured(1).toInt(&originXOk);
+                    originY = origin.captured(2).toInt(&originYOk);
+                    if (!originXOk || !originYOk)
+                        throw std::runtime_error("legacy phase origin is out of range");
                 }
             }
-        } catch (const std::exception &ex) {
-            qWarning() << "[GateLevelMapping] Failed to decode phase tile:" << ex.what();
+            bool xOk = false, yOk = false;
+            const auto tileX = match.captured(2).toULongLong(&xOk);
+            const auto tileY = match.captured(3).toULongLong(&yOk);
+            if (size != 3 && size != 4) throw std::runtime_error("invalid phase block size");
+            const auto maxCoordinate = static_cast<qulonglong>(std::numeric_limits<int>::max());
+            if (static_cast<qulonglong>(originX) > maxCoordinate - size + 1
+                || static_cast<qulonglong>(originY) > maxCoordinate - size + 1
+                || !xOk || !yOk || tileX > (maxCoordinate - originX - size + 1) / size
+                || tileY > (maxCoordinate - originY - size + 1) / size)
+                throw std::runtime_error("packed phase tile coordinate is out of range");
+            const auto matrix = fcngraph::phase_codec::decodePackedHexToMatrix(
+                match.captured(4).toStdString(), count, size);
+            for (int row = 0; row < size; ++row) {
+                for (int column = 0; column < size; ++column) {
+                    const QPoint point(static_cast<int>(tileX * size + column + originX),
+                                       static_cast<int>(tileY * size + row + originY));
+                    if (!legacy && !inLayoutBounds(point)) continue;
+                    if (coordPhaseMap.contains(point))
+                        throw std::runtime_error("duplicate or overlapping packed phase tile");
+                    coordPhaseMap.insert(point, matrix[row][column]);
+                }
+            }
         }
-    }
-    if (decodedTile) {
+        if (!any || !line.mid(end).trimmed().isEmpty())
+            throw std::runtime_error("malformed packed phase tile");
+        packedPhasesSeen = true;
         return;
     }
+    if ((packedPhasesSeen || phaseCodecDeclared || legacyEncodedPhaseMap) && !line.startsWith('#'))
+        throw std::runtime_error("mixed or malformed packed phase map entry");
 
     // 格式: (x,y):phase
     QRegularExpression entry("\\((-?\\d+),(-?\\d+)\\)\\s*:\\s*(-?\\d+)");
@@ -1211,25 +1273,24 @@ bool GateLevelMapping::parsePhysicalPhaseLine(const QString &line,
 
 void GateLevelMapping::parsePhaseCodecLine(const QString &line)
 {
-    QRegularExpression phaseCountPattern("phase_count\\s*=\\s*(\\d+)");
-    QRegularExpression blockSizePattern("block_size\\s*=\\s*(\\d+)");
-
-    QRegularExpressionMatch phaseMatch = phaseCountPattern.match(line);
-    if (phaseMatch.hasMatch()) {
-        phaseCodecPhaseCount = phaseMatch.captured(1).toInt();
-    }
-
-    QRegularExpressionMatch blockMatch = blockSizePattern.match(line);
-    if (blockMatch.hasMatch()) {
-        phaseCodecBlockSize = blockMatch.captured(1).toInt();
-    }
-
-    if (phaseCodecPhaseCount != 3 && phaseCodecPhaseCount != 4) {
-        phaseCodecPhaseCount = 4;
-    }
-    if (phaseCodecBlockSize != 3 && phaseCodecBlockSize != 4) {
-        phaseCodecBlockSize = phaseCodecPhaseCount;
-    }
+    if (phaseCodecDeclared || packedPhasesSeen)
+        throw std::runtime_error("duplicate or late phase codec declaration");
+    const QRegularExpression phaseCountPattern("phase_count\\s*=\\s*(\\d+)");
+    const QRegularExpression blockSizePattern("block_size\\s*=\\s*(\\d+)");
+    const QRegularExpression encodingPattern("encoding\\s*=\\s*([A-Za-z0-9_]+)");
+    const auto phase = phaseCountPattern.match(line);
+    const auto block = blockSizePattern.match(line);
+    const auto encoding = encodingPattern.match(line);
+    if (!phase.hasMatch() || !block.hasMatch() || !encoding.hasMatch())
+        throw std::runtime_error("phase codec requires phase_count, block_size and encoding");
+    phaseCodecPhaseCount = phase.captured(1).toInt();
+    phaseCodecBlockSize = block.captured(1).toInt();
+    if ((phaseCodecPhaseCount != 3 && phaseCodecPhaseCount != 4)
+        || (phaseCodecBlockSize != 3 && phaseCodecBlockSize != 4))
+        throw std::runtime_error("phase codec phase_count and block_size must be 3 or 4");
+    if (encoding.captured(1) != QStringLiteral("packed_hex_2bit_row_major"))
+        throw std::runtime_error("unsupported phase codec encoding");
+    phaseCodecDeclared = true;
 }
 
 void GateLevelMapping::applyClockSchemePhaseTemplate()
@@ -1238,7 +1299,7 @@ void GateLevelMapping::applyClockSchemePhaseTemplate()
     // clock tile.  Legacy 2DDWave/TDDWave metadata is only a combinational
     // phase-map shorthand; applying it here would silently overwrite the
     // globally solved sequential tile phases after they passed DRC.
-    if (mappingMode == MappingMode::Sequential) {
+    if (mappingMode == MappingMode::Sequential || packedPhasesSeen || phaseCodecDeclared) {
         return;
     }
 
@@ -1280,9 +1341,13 @@ void GateLevelMapping::applyClockSchemePhaseTemplate()
         return;
     }
 
+    const int phaseCount = metadataValue({QStringLiteral("phase count")}).toInt() == 3 ? 3 : 4;
     for (int y = minY; y <= maxY; ++y) {
         for (int x = minX; x <= maxX; ++x) {
-            coordPhaseMap.insert(QPoint(x, y), (x + y) & 0x3);
+            const QPoint point(x, y);
+            if (!coordPhaseMap.contains(point)) {
+                coordPhaseMap.insert(point, (x + y) % phaseCount);
+            }
         }
     }
 }

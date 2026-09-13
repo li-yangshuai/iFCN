@@ -1,5 +1,6 @@
 #include <autopr/algorithms/astar.h>
 #include <autopr/algorithms/mapping.h>
+#include <autopr/algorithms/phase_codec.h>
 #include <autopr/graph/circuitGraph.h>
 #include <autopr/graph/parse.h>
 #include <autopr/grid/grid.h>
@@ -2253,10 +2254,12 @@ void writeLayout(const std::string &path,
     output << "#paths info\n\n#phase map\n"
            << "### authoritative clock tile (x,y) : zero-based phase ###\n"
            << "### every mapped QCA cell in this tile inherits the same phase ###\n";
-    for (const auto &phase : phases)
+    output << "#phase codec: phase_count=4, block_size=4, "
+              "encoding=packed_hex_2bit_row_major\n";
+    for (const auto &tile : fcngraph::phase_codec::encodePhaseMapToTiles(phases, 4, 4))
     {
-        output << '(' << phase.first.first << ',' << phase.first.second
-               << "): " << phase.second << ";\n";
+        output << "tile(" << tile.tileX << ',' << tile.tileY << "):0x"
+               << tile.hex << ";\n";
     }
     output << "#phase map\n";
     if (!output)

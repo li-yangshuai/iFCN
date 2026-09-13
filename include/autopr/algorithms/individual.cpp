@@ -189,7 +189,44 @@ void Individual::mutateNodes(std::size_t count) {
         auto node = nodeindex_pos.begin();
         std::advance(node, index(generator));
         position replacement;
-        if (!findUnusedPosition(used, replacement, parse.getNodeType(node->first) == "input")) continue;
+        const bool primaryInput = parse.getNodeType(node->first) == "input";
+        if (chessboard.patternData == &tdd_pattern[0][0]) {
+            // Every 2DDWave route moves right/down. Preserve that necessary
+            // reachability constraint instead of moving a node behind a fanin
+            // or beyond a fanout and discarding almost all routing progress.
+            auto lower = chessboard.chessboard_nw;
+            const auto se = chessboard.chessboard_se;
+            if (se.first <= lower.first || se.second <= lower.second) continue;
+            position upper{se.first - 1, se.second - 1};
+            for (const auto edge : parse.getEffectiveEdges()) {
+                if (edge.second == node->first) {
+                    const auto source = nodeindex_pos.find(edge.first);
+                    if (source == nodeindex_pos.end()) continue;
+                    lower.first = std::max(lower.first, source->second.first);
+                    lower.second = std::max(lower.second, source->second.second);
+                }
+                if (edge.first == node->first) {
+                    const auto sink = nodeindex_pos.find(edge.second);
+                    if (sink == nodeindex_pos.end()) continue;
+                    upper.first = std::min(upper.first, sink->second.first);
+                    upper.second = std::min(upper.second, sink->second.second);
+                }
+            }
+            if (lower.first > upper.first || lower.second > upper.second) continue;
+            const auto diagonal = primaryInput ? primaryInputDiagonal() : -1;
+            std::vector<position> choices;
+            for (unsigned y = lower.second; y <= upper.second; ++y) {
+                for (unsigned x = lower.first; x <= upper.first; ++x) {
+                    if (used.count({x, y})) continue;
+                    if (primaryInput && (chessboard.getCoorPos_Phase(x, y) != 1 ||
+                        diagonal < 0 || std::uint64_t(x) + y != std::uint64_t(diagonal))) continue;
+                    choices.emplace_back(x, y);
+                }
+            }
+            if (choices.empty()) continue;
+            std::uniform_int_distribution<std::size_t> choice(0, choices.size() - 1);
+            replacement = choices[choice(generator)];
+        } else if (!findUnusedPosition(used, replacement, primaryInput)) continue;
         used.erase(node->second);
         node->second = replacement;
         used.insert(replacement);

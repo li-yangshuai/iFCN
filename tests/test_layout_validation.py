@@ -1,6 +1,7 @@
 """Regression cases for rejecting incomplete/shorted routing artifacts."""
 from copy import deepcopy
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -69,8 +70,10 @@ class LayoutValidationTests(unittest.TestCase):
             self.assertEqual(export_native_ifcn(shifted,output,'compact'),(3,4))
             exported=output.read_text()
             self.assertIn('0, a, input, (0,0);',exported)
-            self.assertIn('(0,0):0;',exported)
-            self.assertIn('(1,1):2;',exported)
+            code = int(re.search(r'tile\(0,0\):0x([0-9a-f]+);', exported)[1], 16)
+            self.assertEqual((code >> 24) & 3, 0)
+            self.assertEqual((code >> 18) & 3, 2)
+            self.assertIn('block_size=4, encoding=packed_hex_2bit_row_major', exported)
             self.assertIn('#mapping mode: combinational',exported)
 
     def test_real_compact_xor_rejects_a_whole_cycle_fanin_mismatch(self):
@@ -97,6 +100,27 @@ class LayoutValidationTests(unittest.TestCase):
         result = validate_clock_epochs(nodes, routes, phases)
         self.assertFalse(result['passed'])
         self.assertTrue(any('epoch conflict' in e for e in result['errors']))
+
+    def test_regular_board_export_preserves_empty_tile_clock_without_changing_padding(self):
+        candidate = deepcopy(self.candidate)
+        # (0,3) is an unoccupied hole inside this 3x4 XOR footprint. (3,0)
+        # lies outside it and must remain padding even if the source has a value.
+        candidate['cells'] += [{'x': 0, 'y': 3, 'phase': 4}, {'x': 3, 'y': 0, 'phase': 4}]
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / 'layout.ifcn'
+            export_native_ifcn(candidate, output, 'irregular')
+            sparse = int(re.search(r'tile\(0,0\):0x([0-9a-f]+);', output.read_text())[1], 16)
+            candidate['phase_map_scope'] = 'board'
+            export_native_ifcn(candidate, output, 'regular')
+            board = int(re.search(r'tile\(0,0\):0x([0-9a-f]+);', output.read_text())[1], 16)
+            self.assertEqual(sparse & 3, 0)
+            self.assertEqual(board & 3, 3)
+            self.assertEqual(board >> 30, 0)
+            self.assertEqual(sparse ^ board, 3)
+            candidate['cells'] = [cell for cell in candidate['cells']
+                                  if (cell['x'], cell['y']) != (0, 3)]
+            with self.assertRaisesRegex(ValueError, 'missing a tile inside'):
+                export_native_ifcn(candidate, output, 'regular')
 
     def test_globally_consistent_fixed_clock_reconvergence(self):
         result = validate_candidate(self.candidate, source_crossings=True)

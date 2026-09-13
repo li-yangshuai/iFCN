@@ -106,8 +106,11 @@ add_test(
     NAME packed_phase_export_regression
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/test_ifcn_packed_phase_export.py"
-            $<TARGET_FILE:ifcn_energy_analysis>)
-set_tests_properties(packed_phase_export_regression PROPERTIES TIMEOUT 30)
+            $<TARGET_FILE:ifcn_energy_analysis>
+            $<TARGET_FILE:fcnx_gui>
+            $<TARGET_FILE:ifcn_sequential_pnr>
+            $<TARGET_FILE:ifcn_paper_cyclic_pnr>)
+set_tests_properties(packed_phase_export_regression PROPERTIES TIMEOUT 45)
 
 add_test(
     NAME primary_output_mapping_regression

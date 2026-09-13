@@ -86,6 +86,9 @@ private:
     MainWindow *mainWindow;
     int phaseCodecPhaseCount = 4;
     int phaseCodecBlockSize = 4;
+    bool phaseCodecDeclared = false;
+    bool packedPhasesSeen = false;
+    bool legacyEncodedPhaseMap = false;
     MappingMode mappingMode = MappingMode::Combinational;
     bool mappingModeExplicit = false;
     std::set<std::tuple<unsigned int, unsigned int, int>> emittedPhysicalSites;

@@ -226,6 +226,10 @@ LayoutData parseIfcn(const std::string &filename)
     int codecPhaseCount = 4;
     int codecBlockSize = 4;
     bool packedPhasesSeen = false;
+    bool phaseCodecSeen = false;
+    bool legacyEncodedPhaseMap = false;
+    int legacyPhaseCount = 4, legacyBlockSize = 0;
+    unsigned int legacyOriginX = 0, legacyOriginY = 0;
 
     const std::regex nodePattern(
         R"(^\s*(\d+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*\((-?\d+),(-?\d+)\)\s*;)");
@@ -237,7 +241,8 @@ LayoutData parseIfcn(const std::string &filename)
     const std::regex codecBlockSizePattern(R"(block_size\s*=\s*(\d+))");
     const std::regex codecEncodingPattern(R"(encoding\s*=\s*([A-Za-z0-9_]+))");
     const std::regex packedTilePattern(
-        R"(^\s*tile\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*:\s*(?:0[xX])?([0-9a-fA-F]+)\s*;\s*$)");
+        R"((?:(tile)\s*)?\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*:\s*(?:0[xX])?([0-9a-fA-F]+)\s*;)",
+        std::regex::icase);
     const std::regex packedTileKeyPattern(R"(^\s*tile\b.*$)", std::regex::icase);
     const std::regex physicalPhaseSectionPattern(
         R"(^\s*#\s*physical\s+phase\s+map\s*$)", std::regex::icase);
@@ -293,6 +298,23 @@ LayoutData parseIfcn(const std::string &filename)
             continue;
         }
         std::smatch metadataMatch;
+        static const std::regex legacyCountPattern(R"(^\s*#phase count:\s*(\d+)\s*$)");
+        static const std::regex legacyBlockPattern(R"(^\s*#block size:\s*(3|4)x\1\s*$)");
+        static const std::regex legacyOriginPattern(R"(^\s*#absolute bbox:\s*\((\d+),(\d+)\).*$)");
+        if (std::regex_match(line, metadataMatch, legacyCountPattern))
+            legacyPhaseCount = std::stoi(metadataMatch[1]);
+        if (std::regex_match(line, metadataMatch, legacyBlockPattern))
+            legacyBlockSize = std::stoi(metadataMatch[1]);
+        else if (line.rfind("#block size:", 0) == 0)
+            throw std::runtime_error("invalid legacy phase block size");
+        if (std::regex_match(line, metadataMatch, legacyOriginPattern)) {
+            const auto x = std::stoull(metadataMatch[1]), y = std::stoull(metadataMatch[2]);
+            if (x > std::numeric_limits<unsigned int>::max() || y > std::numeric_limits<unsigned int>::max())
+                throw std::runtime_error("legacy phase origin is out of range");
+            legacyOriginX = static_cast<unsigned int>(x);
+            legacyOriginY = static_cast<unsigned int>(y);
+        }
+
         if (std::regex_match(line, physicalPhaseSectionPattern)) {
             rejectDanglingDistance();
             if (section == "physical_phase") {
@@ -383,6 +405,9 @@ LayoutData parseIfcn(const std::string &filename)
             continue;
         }
         if (std::regex_match(line, codecKeyPattern)) {
+            if (phaseCodecSeen || packedPhasesSeen) {
+                throw std::runtime_error("duplicate or late phase codec declaration");
+            }
             if (!std::regex_search(line, metadataMatch, codecPhaseCountPattern)) {
                 throw std::runtime_error("phase codec requires phase_count");
             }
@@ -395,10 +420,11 @@ LayoutData parseIfcn(const std::string &filename)
                 (codecBlockSize != 3 && codecBlockSize != 4)) {
                 throw std::runtime_error("phase codec phase_count and block_size must be 3 or 4");
             }
-            if (std::regex_search(line, metadataMatch, codecEncodingPattern) &&
+            if (!std::regex_search(line, metadataMatch, codecEncodingPattern) ||
                 metadataMatch[1].str() != "packed_hex_2bit_row_major") {
                 throw std::runtime_error("unsupported phase codec encoding");
             }
+            phaseCodecSeen = true;
             packedPhasesSeen = true;
             continue;
         }
@@ -468,6 +494,7 @@ LayoutData parseIfcn(const std::string &filename)
         }
         if (line.rfind("#phase map", 0) == 0 ||
             line.rfind("#encoded phase map", 0) == 0) {
+            if (line.rfind("#encoded phase map", 0) == 0) legacyEncodedPhaseMap = true;
             rejectDanglingDistance();
             section = (section == "phase") ? "" : "phase";
             continue;
@@ -507,33 +534,57 @@ LayoutData parseIfcn(const std::string &filename)
             }
             pendingIterationDistance.reset();
         } else if (section == "phase") {
-            if (std::regex_match(line, packedTileKeyPattern)) {
-                if (!std::regex_match(line, match, packedTilePattern)) {
-                    throw std::runtime_error("malformed packed phase tile: " + line);
-                }
-                const auto tileX = std::stoull(match[1].str());
-                const auto tileY = std::stoull(match[2].str());
-                const auto maxCoordinate = std::numeric_limits<unsigned int>::max();
-                if (tileX > (maxCoordinate - codecBlockSize + 1ULL) / codecBlockSize ||
-                    tileY > (maxCoordinate - codecBlockSize + 1ULL) / codecBlockSize) {
-                    throw std::runtime_error("packed phase tile coordinate is out of range");
-                }
-                const auto matrix = fcngraph::phase_codec::decodePackedHexToMatrix(
-                    match[3].str(), codecPhaseCount, codecBlockSize);
-                for (int row = 0; row < codecBlockSize; ++row) {
-                    for (int column = 0; column < codecBlockSize; ++column) {
-                        const position coordinate{
-                            static_cast<unsigned int>(tileX * codecBlockSize + column),
-                            static_cast<unsigned int>(tileY * codecBlockSize + row)};
-                        data.phases[coordinate] = matrix[row][column];
+            if (line[line.find_first_not_of(" \t\r\n")] == '#') continue;
+            if (std::regex_match(line, packedTileKeyPattern) ||
+                (line.find('#') == std::string::npos &&
+                 (line.find("0x") != std::string::npos || line.find("0X") != std::string::npos))) {
+                std::size_t end = 0;
+                bool any = false;
+                const auto blank = [](const std::string &value) {
+                    return std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isspace(c); });
+                };
+                for (auto it = std::sregex_iterator(line.begin(), line.end(), packedTilePattern);
+                     it != std::sregex_iterator(); ++it) {
+                    const auto &tile = *it;
+                    if (!blank(line.substr(end, tile.position() - end)))
+                        throw std::runtime_error("malformed packed phase tile: " + line);
+                    end = tile.position() + tile.length();
+                    any = true;
+                    const bool legacy = tile[1].str().empty();
+                    if (legacy && (!legacyEncodedPhaseMap || phaseCodecSeen))
+                        throw std::runtime_error("packed phase entry requires a tile(x,y) prefix");
+                    const int count = legacy ? legacyPhaseCount : codecPhaseCount;
+                    const int size = legacy ? (legacyBlockSize ? legacyBlockSize : count) : codecBlockSize;
+                    if (size != 3 && size != 4) throw std::runtime_error("invalid phase block size");
+                    const auto originX = legacy ? legacyOriginX : 0U;
+                    const auto originY = legacy ? legacyOriginY : 0U;
+                    const auto tileX = std::stoull(tile[2].str()), tileY = std::stoull(tile[3].str());
+                    const auto maximum = std::numeric_limits<unsigned int>::max();
+                    if (originX > maximum - size + 1ULL || originY > maximum - size + 1ULL ||
+                        tileX > (maximum - originX - size + 1ULL) / size ||
+                        tileY > (maximum - originY - size + 1ULL) / size)
+                        throw std::runtime_error("packed phase tile coordinate is out of range");
+                    const auto matrix = fcngraph::phase_codec::decodePackedHexToMatrix(tile[4].str(), count, size);
+                    for (int row = 0; row < size; ++row) {
+                        for (int column = 0; column < size; ++column) {
+                            const position coordinate{
+                                static_cast<unsigned int>(tileX * size + column + originX),
+                                static_cast<unsigned int>(tileY * size + row + originY)};
+                            if (!data.phases.emplace(coordinate, matrix[row][column]).second)
+                                throw std::runtime_error("duplicate or overlapping packed phase tile");
+                        }
                     }
                 }
+                if (!any || !blank(line.substr(end))) throw std::runtime_error("malformed packed phase tile: " + line);
                 packedPhasesSeen = true;
                 continue;
             }
             for (auto it = std::sregex_iterator(line.begin(), line.end(), phasePattern);
                  it != std::sregex_iterator();
                  ++it) {
+                if (packedPhasesSeen) {
+                    throw std::runtime_error("mixed packed and expanded phase map entries");
+                }
                 position pos;
                 if (parsePosition((*it)[1].str(), (*it)[2].str(), pos)) {
                     data.phases[pos] = std::stoi((*it)[3].str());
@@ -548,7 +599,7 @@ LayoutData parseIfcn(const std::string &filename)
     const fcngraph::IfcnMappingModeResolution modeResolution =
         mappingModeResolver.resolve();
     data.mappingMode = modeResolution.mode;
-    if (packedPhasesSeen) {
+    if (packedPhasesSeen || legacyEncodedPhaseMap) {
         // A partial packed map must not silently assign phase zero to an
         // uncovered circuit tile, the original failure for Legacy exports.
         const auto requirePhase = [&](const position &tile) {

@@ -13,7 +13,7 @@ The first public release includes circuit editing, combinational and sequential 
 | Windows 10 / 11, x86_64 | `iFCN-1.0.0-windows-x86_64-setup.exe` 或 / or `.zip` | 运行安装器，或完整解压 ZIP 后双击 `iFCN.exe` / Run the installer, or extract the entire ZIP and open `iFCN.exe` |
 | macOS 15+, Apple Silicon | `iFCN-1.0.0-macos-arm64.dmg` | 打开磁盘映像，将 iFCN 拖到 Applications / Open the disk image and drag iFCN to Applications |
 | Ubuntu 24.04, x86_64 | `iFCN-1.0.0-ubuntu24.04-x86_64.tar.gz` | 安装下面的运行依赖，解压后运行 `./ifcn` / Install the runtime dependencies below, extract, and run `./ifcn` |
-| 电路示例 / Circuit examples | `iFCN-1.0.0-examples.zip` | 90 个按算法分类的 `.ifcn` / 90 `.ifcn` files grouped by algorithm |
+| 电路示例 / Circuit examples | `iFCN-1.0.0-examples.zip` | 91 个按算法分类的 `.ifcn` / 91 `.ifcn` files grouped by algorithm |
 | 完整源码 / Complete source | `iFCN-1.0.0-source.tar.gz` | 包含全部构建、测试及打包源码 / Includes build, test and packaging sources |
 
 下载同一 Release 的 `SHA256SUMS` 可核对文件完整性。Windows 和 macOS 包尚未进行商业代码签名或 Apple 公证；系统可能显示未识别开发者提示。只使用本仓库 Release 的文件。macOS Intel 用户请从源码构建，此次 macOS 二进制面向 Apple Silicon。
@@ -56,12 +56,12 @@ Development builds retain all existing tests and command-line targets. Release p
 
 Use **File → Open** to load `.ifcn` examples. On macOS, examples are also available through Finder's **Show Package Contents → Contents → Resources**, or in the separate examples archive.
 
-- 保存的 88 个组合电路通过 DRC 与 16,392 组源逻辑向量比对；另有 2 个时序结构示例。
-- 41 个“电路 × 算法”组合在记录的搜索预算内没有合法布局，未伪造输出文件。
+- 保存的 89 个组合电路通过 DRC 与 16,456 组源逻辑向量比对；另有 2 个时序结构示例。
+- 40 个“电路 × 算法”组合在记录的搜索预算内没有合法布局，未伪造输出文件。
 - 5 个物理输出失败的案例用 `__drc_only` 标记，不能作为功能正确的器件使用。
-- 已保存案例的物理验证分为：31 个穷举通过、7 个抽样通过、5 个失败、45 个未运行、2 个时序未表征。
+- 已保存案例的物理验证分为：31 个穷举通过、7 个抽样通过、5 个失败、46 个未运行、2 个时序未表征。
 
-The 88 saved combinational layouts pass DRC and 16,392 source-logic comparisons, alongside two sequential structural examples. Forty-one circuit/algorithm combinations have no legal result within the recorded search budget. Five known physical-output failures are marked `__drc_only`. Saved cases comprise 31 exhaustive physical passes, seven sampled passes, five failures, 45 not simulated and two sequential cases whose state behavior remains uncharacterized.
+The 89 saved combinational layouts pass DRC and 16,456 source-logic comparisons, alongside two sequential structural examples. Forty circuit/algorithm combinations have no legal result within the recorded search budget. Five known physical-output failures are marked `__drc_only`. Saved cases comprise 31 exhaustive physical passes, seven sampled passes, five failures, 46 not simulated and two sequential cases whose state behavior remains uncharacterized.
 
 [完整案例结果 / Full results](examples.md) · [算法说明 / Algorithms](algorithm-availability.md) · [验证记录 / Validation](validation.md)
 

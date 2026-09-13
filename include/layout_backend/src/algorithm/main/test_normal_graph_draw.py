@@ -591,7 +591,7 @@ def main():
         print(
             "[IFCN] Illegal layout artifacts skipped; failure core retained in summary."
         )
-    encoded_ifcn_path = os.path.join(output_dir, f"{stem}_normal_graph_draw_encoded.ifcn")
+    encoded_ifcn_path = ifcn_path
     contraction_history = list(getattr(draw, "contraction_history", []))
     pre_contraction_width = (
         int(contraction_history[0]["old_width"])

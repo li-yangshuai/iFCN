@@ -1,4 +1,5 @@
 import os
+import io
 import subprocess
 from pathlib import Path
 
@@ -341,12 +342,16 @@ def _estimate_layout_clocks(graphDraw, phase_cycle):
     return max((_clock_cycles_for_sequence(graphDraw, path, phase_cycle) for path in routes.values()), default=0.0)
 
 
-def _pack_phase_block(block):
+def _pack_phase_block(block, phase_count=4):
+    if phase_count not in (3, 4) or len(block) != 4 or any(len(row) != 4 for row in block):
+        raise ValueError("IFCN phase codec requires 3/4 phases and a 4x4 block")
     packed_rows = []
     for row in block:
         row_byte = 0
         for column_index, phase in enumerate(row):
-            row_byte |= (int(phase) & 0x3) << (2 * column_index)
+            if int(phase) != phase or not 0 <= phase < phase_count:
+                raise ValueError("IFCN phase out of range")
+            row_byte |= int(phase) << (2 * column_index)
         packed_rows.append(f"{row_byte:02x}")
     return "".join(packed_rows)
 
@@ -361,145 +366,6 @@ def _template_phase_for_coord(graphDraw, coord, phase_cycle):
     if _is_2ddwave_scheme(scheme):
         return (int(coord[0]) + int(coord[1])) % int(phase_cycle)
     return 0
-
-
-def _write_encoded_phase_mapping_file(
-    graphDraw,
-    output_dir,
-    filename_stem,
-    phase_cycle,
-    verbose=True,
-):
-    phase_cycle = int(phase_cycle)
-    if phase_cycle not in (3, 4):
-        raise ValueError("phase_cycle must be 3 or 4 for encoded IFCN output.")
-    block_size = 3 if phase_cycle == 3 else 4
-
-    encoded_filename = os.path.join(output_dir, f"{filename_stem}_encoded.ifcn")
-    critical_path, critical_phase_cycle = _estimate_critical_path_metrics(graphDraw, phase_cycle)
-    phase_enabled = True
-    if hasattr(graphDraw, "mapChessboard") and hasattr(graphDraw.mapChessboard, "isPhaseEnabled"):
-        phase_enabled = bool(graphDraw.mapChessboard.isPhaseEnabled())
-    clock_scheme_name = str(getattr(graphDraw, "clock_scheme_name", "random phase"))
-    raw_unassigned_phase = "none" if phase_enabled and _is_2ddwave_scheme(clock_scheme_name) else "-1"
-
-    with open(encoded_filename, "w") as f:
-        f.write(f"#circuit name: {graphDraw.parse.fileName}\n\n")
-        algorithm_desc = getattr(
-            graphDraw,
-            "algorithm_description",
-            "graph draw algorithm",
-        )
-        run_time = getattr(graphDraw, "run_time_sec", None)
-        f.write(f"#designed by {algorithm_desc}.\n\n")
-        f.write("#gate level placement and routing infomation\n")
-        f.write(f"#gates number: {graphDraw.parse.effective_nodes_num}\n")
-        f.write(f"#input/output: {graphDraw.parse.InputNodesNum} / {graphDraw.parse.OutputNodesNum}\n")
-        f.write(f"#edges number: {graphDraw.parse.effective_edges_num}\n")
-        f.write(f"#total layers: {graphDraw.parse.total_layers}\n")
-        f.write(f"#layout area: width: {graphDraw.width}, height: {graphDraw.height}, area: {graphDraw.width * graphDraw.height}\n")
-        f.write(f"#critical path: {critical_path}\n")
-        f.write(f"#clocks: {critical_phase_cycle}\n")
-        if run_time is not None:
-            f.write(f"#run time: {float(run_time):.6f} s\n")
-        f.write("#phase encoding: enabled\n")
-        f.write(f"#phase count: {phase_cycle}\n")
-        f.write(f"#clock scheme: {clock_scheme_name if phase_enabled else 'disabled'}\n")
-        f.write(f"#block size: {block_size}x{block_size}\n")
-        f.write("#coordinate origin: normalized top-left (0,0)\n")
-        f.write(f"#unassigned phase in raw map: {raw_unassigned_phase}\n")
-        f.write("#encoded padding/unassigned compatibility fill: 0\n")
-        f.write("#encoding: row-major blocks; each block stores one byte per row; each cell uses 2 bits; column 0 is LSB\n\n")
-
-        f.write("#nodes info \n")
-        f.write("### nodeIndex, nodeName, nodeType, nodePosition ###\n")
-        for node_id in graphDraw.parse.effective_nodes:
-            node_name = graphDraw.parse.getNodeName(node_id)
-            node_type = graphDraw.parse.getNodeTypeString(node_id)
-            x, y = graphDraw.get_node_coord(node_id)
-            f.write(f"{node_id}, {node_name}, {node_type}, ({x},{y});\n")
-        f.write("#nodes info \n\n")
-
-        if hasattr(graphDraw, "mapChessboard") and hasattr(graphDraw.mapChessboard, "nodePairRoutes"):
-            f.write("#paths info\n")
-            f.write("### {node1, node2} : path ###\n")
-            for (u, v), path in graphDraw.mapChessboard.nodePairRoutes.items():
-                path_str = ",".join([f"({px},{py})" for px, py in path])
-                f.write(f"({u},{v}): {path_str};\n")
-            f.write("#paths info\n")
-        else:
-            f.write("#paths info\n### empty ###\n#paths info\n")
-        f.write("\n")
-
-        if not phase_enabled:
-            f.write("#encoded phase map\n### disabled ###\n#encoded phase map\n")
-        else:
-            min_x, min_y, max_x, max_y = graphDraw.mapChessboard.findLayoutBoard()
-            if max_x < min_x or max_y < min_y:
-                f.write("#encoded phase map\n### empty layout ###\n#encoded phase map\n")
-            else:
-                raw_width = int(max_x - min_x + 1)
-                raw_height = int(max_y - min_y + 1)
-                padded_width = ((raw_width + block_size - 1) // block_size) * block_size
-                padded_height = ((raw_height + block_size - 1) // block_size) * block_size
-                blocks_x = padded_width // block_size
-                blocks_y = padded_height // block_size
-
-                f.write(f"#absolute bbox: ({min_x},{min_y}) -> ({max_x},{max_y})\n")
-                f.write(f"#raw size: width: {raw_width}, height: {raw_height}\n")
-                f.write(f"#padded size: width: {padded_width}, height: {padded_height}\n")
-                f.write(f"#blocks: columns: {blocks_x}, rows: {blocks_y}\n\n")
-                f.write("#encoded phase map\n")
-                f.write("### (block_x,block_y): hex ###\n")
-
-                for block_row in range(blocks_y):
-                    line_items = []
-                    for block_col in range(blocks_x):
-                        block = []
-                        for local_y in range(block_size):
-                            row = []
-                            for local_x in range(block_size):
-                                norm_x = block_col * block_size + local_x
-                                norm_y = block_row * block_size + local_y
-                                if norm_x >= raw_width or norm_y >= raw_height:
-                                    phase_val = 0
-                                else:
-                                    abs_x = min_x + norm_x
-                                    abs_y = min_y + norm_y
-                                    if _is_2ddwave_scheme(clock_scheme_name):
-                                        phase_val = _template_phase_for_coord(
-                                            graphDraw,
-                                            (abs_x, abs_y),
-                                            phase_cycle,
-                                        )
-                                    else:
-                                        phase_val = int(
-                                            graphDraw.mapChessboard.getPhase((abs_x, abs_y))
-                                        )
-                                        if phase_val < 0:
-                                            phase_val = _template_phase_for_coord(
-                                                graphDraw,
-                                                (abs_x, abs_y),
-                                                phase_cycle,
-                                            )
-                                if phase_val < 0 or phase_val >= phase_cycle:
-                                    raise ValueError(
-                                        "phase value out of range for encoded IFCN: "
-                                        f"phase={phase_val}, phase_cycle={phase_cycle}, "
-                                        f"normalized=({norm_x},{norm_y})"
-                                    )
-                                row.append(phase_val)
-                            block.append(row)
-
-                        encoded = _pack_phase_block(block)
-                        line_items.append(f"({block_col},{block_row}):0x{encoded};")
-                    f.write(" ".join(line_items) + "\n")
-                f.write("#encoded phase map\n")
-
-    _insert_or_update_mapping_metrics(encoded_filename, verbose=verbose)
-    if verbose:
-        print(f"[IFCN] Encoded mapping file generated -> {encoded_filename}")
-    return encoded_filename
 
 
 def generate_gate_level_mapping_file(
@@ -541,12 +407,22 @@ def generate_gate_level_mapping_file(
     stem = filename_stem if filename_stem is not None else f"{circuit_name}_gate_level_pr"
     filename = os.path.join(output_dir, f"{stem}.ifcn")
     phase_cycle = int(getattr(graphDraw, "phase_cycle", phase_cycle))
+    if phase_cycle not in (3, 4):
+        raise ValueError("IFCN phase_count must be 3 or 4")
+    routes = getattr(graphDraw.mapChessboard, "nodePairRoutes", {})
+    used = {tuple(point) for path in routes.values() for point in path}
+    used.update(tuple(graphDraw.get_node_coord(node)) for node in graphDraw.parse.effective_nodes)
+    if not used:
+        raise ValueError("Cannot export an empty IFCN layout")
+    min_x, min_y = min(x for x, _ in used), min(y for _, y in used)
+    width = max(x for x, _ in used) - min_x + 1
+    height = max(y for _, y in used) - min_y + 1
     critical_path, critical_phase_cycle = _estimate_critical_path_metrics(graphDraw, phase_cycle)
 
     # ----------------------------------------
     # 2️⃣ 打开文件写入
     # ----------------------------------------
-    with open(filename, 'w') as f:
+    with io.StringIO() as f:
         # ----------------------------------------
         # 写电路名
         # ----------------------------------------
@@ -564,7 +440,7 @@ def generate_gate_level_mapping_file(
         f.write(f"#input/output: {graphDraw.parse.InputNodesNum} / {graphDraw.parse.OutputNodesNum}\n")
         f.write(f"#edges number: {graphDraw.parse.effective_edges_num}\n")
         f.write(f"#total layers: {graphDraw.parse.total_layers}\n")
-        f.write(f"#layout area: width: {graphDraw.width}, height: {graphDraw.height}, area: {graphDraw.width * graphDraw.height}\n")
+        f.write(f"#layout area: width: {width}, height: {height}, area: {width * height}\n")
         f.write(f"#critical path: {critical_path}\n")
         f.write(f"#clocks: {critical_phase_cycle}\n")
         if run_time is not None:
@@ -615,7 +491,7 @@ def generate_gate_level_mapping_file(
 
             x, y = graphDraw.get_node_coord(node_id)
 
-            f.write(f"{node_id}, {node_name}, {node_type}, ({x},{y});\n")
+            f.write(f"{node_id}, {node_name}, {node_type}, ({x-min_x},{y-min_y});\n")
 
         f.write("#nodes info \n\n")
 
@@ -628,66 +504,47 @@ def generate_gate_level_mapping_file(
 
             for (u, v), path in graphDraw.mapChessboard.nodePairRoutes.items():
                 # path 应该是 [(x1,y1), (x2,y2), ...]
-                path_str = ",".join([f"({px},{py})" for px, py in path])
+                path_str = ",".join([f"({px-min_x},{py-min_y})" for px, py in path])
                 f.write(f"({u},{v}): {path_str};\n")
 
             f.write("#paths info\n")
         else:
             f.write("#paths info\n### empty ###\n#paths info\n")
 
-                # ----------------------------------------
-        # 输出已实际铺设区域的相位；未使用格保持 -1。
-        # ----------------------------------------
+        # The primary IFCN artifact always stores 4x4 packed phase tiles.
+        # All coordinates translate together; phases retain their original
+        # absolute-clock assignment. Padding beyond the layout is zero.
         f.write("#phase map\n")
-        f.write("### (x,y) : phase ###\n")
-
-        if not phase_enabled:
-            f.write("### disabled ###\n")
-            f.write("#phase map\n")
-        else:
-            # 获取实际布线边界
-            minX, minY, maxX, maxY = graphDraw.mapChessboard.findLayoutBoard()
-            if maxX < minX or maxY < minY:
-                f.write("### empty layout ###\n#phase map\n")
-            else:
-                for y in range(minY, maxY + 1):
-                    line_items = []
-                    for x in range(minX, maxX + 1):
-                        if _is_2ddwave_scheme(clock_scheme_name):
-                            phase_val = _template_phase_for_coord(
-                                graphDraw,
-                                (x, y),
-                                phase_cycle,
-                            )
+        f.write(f"#phase codec: phase_count={phase_cycle}, block_size=4, "
+                "encoding=packed_hex_2bit_row_major\n")
+        for tile_y in range((height + 3) // 4):
+            for tile_x in range((width + 3) // 4):
+                block = []
+                for local_y in range(4):
+                    row = []
+                    for local_x in range(4):
+                        x = min_x + 4 * tile_x + local_x
+                        y = min_y + 4 * tile_y + local_y
+                        if not phase_enabled or x >= min_x + width or y >= min_y + height:
+                            phase = 0
+                        elif _is_2ddwave_scheme(clock_scheme_name):
+                            phase = _template_phase_for_coord(graphDraw, (x, y), phase_cycle)
                         else:
-                            phase_val = graphDraw.mapChessboard.getPhase((x, y))
-                            if phase_val < 0:
-                                phase_val = _template_phase_for_coord(
-                                    graphDraw,
-                                    (x, y),
-                                    phase_cycle,
-                                )
-                        line_items.append(f"({x},{y}):{phase_val};")
-                    f.write(" ".join(line_items) + "\n")
-                f.write("#phase map\n")
+                            phase = graphDraw.mapChessboard.getPhase((x, y))
+                            if phase < 0 and (x, y) not in used:
+                                phase = 0
+                        if int(phase) != phase or not 0 <= phase < phase_cycle:
+                            raise ValueError(f"IFCN phase out of range at ({x},{y}): {phase}")
+                        row.append(int(phase))
+                    block.append(row)
+                f.write(f"tile({tile_x},{tile_y}):0x{_pack_phase_block(block, phase_cycle)};\n")
+        f.write("#phase map\n")
+        content = f.getvalue()
 
+    Path(filename).write_text(content, encoding="utf-8")
     _insert_or_update_mapping_metrics(filename, verbose=verbose)
     if verbose:
         print(f"[IFCN] Gate-level mapping file generated -> {filename}")
-    if write_encoded:
-        encoded_phase_cycle = int(getattr(graphDraw, "phase_cycle", phase_cycle))
-        if encoded_phase_cycle in (3, 4):
-            _write_encoded_phase_mapping_file(
-                graphDraw,
-                output_dir,
-                stem,
-                encoded_phase_cycle,
-                verbose=verbose,
-            )
-        else:
-            if verbose:
-                print(
-                    "[IFCN] Encoded mapping skipped: "
-                    f"phase_cycle={encoded_phase_cycle} is not supported."
-                )
+    # Keep the keyword accepted for existing callers. There is now one
+    # canonical packed artifact, never an additional *_encoded.ifcn copy.
     return filename

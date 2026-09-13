@@ -90,6 +90,19 @@ and four dedicated tests were removed while retaining functional regressions.
 
 ## 检查结果 / Checks
 
+v1.0.0 的相位编码与 GA 修复完成后，完整 Debug 和 Release 构建通过；
+全部 71 项 CTest 最终通过：首次 69 项通过，两项时序报告测试更新为按公式
+解码并排除空白填充后，单独复跑通过。原有时钟推进与资源计数断言保留，
+将实际生成文件的相位全部置零时，两项测试仍明确失败。安装目录中的 GUI
+成功打开编码 MUX41，安装后的固定时钟后端也完成 XOR 的布局及编码导出。
+
+After the phase-codec and GA fixes, complete Debug and Release builds pass.
+All 71 CTest checks ultimately pass: 69 initially, then two sequential report
+checks after adapting their readers to formula decoding and excluding unused
+padding. Clock progression and resource-count assertions remain; both checks
+reject generated files whose phases are deliberately zeroed. The installed GUI
+opens encoded MUX41, and the installed fixed-clock backend routes and exports XOR.
+
 - 清理后完整 Debug 构建与 **71/71 项 CTest 通过**。首次执行通过 70 项，
   一项测试文件重命名后的注册路径修正后，单独重跑通过。清理前的 75 项中，
   4 项仅属于已删除的历史报告工具。
@@ -106,14 +119,19 @@ and four dedicated tests were removed while retaining functional regressions.
   **4/4 selected CTest checks**: expression parsing, genetic-layout legality,
   sequential mapping metadata and layout artifact validation. This selected
   Release run is recorded separately from the full Debug suite.
-- 独立重新读取最终保存的 **88 个组合 IFCN**：51 个规则版图通过全部
-  **9,152** 个源逻辑向量和 DRC，37 个不规则版图通过 **7,240** 个向量和 DRC，
-  合计 **16,392** 个向量。这里检查实际保存文件，物理功能范围仍按
+- 独立重新读取最终保存的 **89 个组合 IFCN**：52 个规则版图通过全部
+  **9,216** 个源逻辑向量和 DRC，37 个不规则版图通过 **7,240** 个向量和 DRC，
+  合计 **16,456** 个向量。这里检查实际保存文件，物理功能范围仍按
   [案例记录](examples.md) 区分。
-  Independent rereading of all **88 saved combinational IFCN files** passes DRC
-  and **16,392 source-logic vectors**: 9,152 across 51 regular layouts and 7,240
+  Independent rereading of all **89 saved combinational IFCN files** passes DRC
+  and **16,456 source-logic vectors**: 9,216 across 52 regular layouts and 7,240
   across 37 irregular layouts. Physical coverage remains separately recorded
   in the [example inventory](examples.md).
+  其中新增 MUX41 的 64 组比对来自 GA 精英保留修复后的独立复测；原 88 份
+  文件的审查记录继续保留，物理波形没有继承其他 MUX41 版图的结果。
+  The additional 64 MUX41 comparisons come from a separate rerun after the GA
+  elitism repair; the original 88-file audit is retained, and physical results
+  from other MUX41 layouts are not reused.
 - 迁移后独立 Python 单元检查：**99/99**，包含源逻辑、工作流状态和组合 DRC。
   Post-migration Python unit checks: **99/99**, including source logic, workflow
   state and combinational DRC.
@@ -158,6 +176,21 @@ exit; this is not a leak-free result. The original run used
 archive and is not distributed with the repository.
 
 ## 规则时钟补充检查 / Regular-clock follow-up
+
+GA 交叉和变异现在跳过独立精英槽，尚无合法解时也保留最优有限适应度个体。
+使用 96 代、128 个体、交叉率 0.9、20×20 网格、变异率 0.3 复测 MUX41，
+在首个合法解处停止，得到 18×16、626 元胞版图；64/64 源逻辑向量、DRC、
+全局时钟及实际映射均通过，物理波形未运行。相同代数与种群的 24×24/0.5
+搜索失败，16×24/0.5 得到面积更大的 14×23、813 元胞结果；三组证据均保留于
+仓库外 `ifcn-ga-mux41-repaired/`，完整比较与新增案例见[结果表](examples.md)。
+
+GA crossover and mutation now skip an independent elite slot, preserving the
+best finite-fitness individual even before a legal layout exists. A MUX41 rerun with 96 generations, 128 individuals, crossover 0.9,
+a 20×20 grid and mutation 0.3 stops at its first legal result: 18×16 tiles and
+626 cells, passing all 64 logic vectors, DRC, global clocks and mapping. Physical
+waveforms are not run. At the same generation/population budget, 24×24/0.5 fails
+and 16×24/0.5 finds a larger 14×23, 813-cell result. All three evidence sets are
+retained outside the repository in `ifcn-ga-mux41-repaired/`; see [results](examples.md).
 
 2DDWave 的相位模板保持不变。检查额外比较主输入的绝对启动周期
 `floor((x+y)/4)`；同模四相位但相差整周期也会被拒绝。扩容在重布线前重新

@@ -109,20 +109,41 @@ void GeneticAlgorithm::select_next_generation() {
         }
     }
 
-    // Optionally keep the best individual if not already included
+    // Keep progress even before the first fully legal layout is found. Without
+    // this partial elite, crossover/mutation can lose a nearly routed seed and
+    // leave later generations worse than the initial population.
     if (!best_individuals.empty()) {
-        // Make sure the best individual is added to the new generation
         new_populations.back() = best_individuals.back();
+    } else {
+        const Individual* elite = nullptr;
+        for (const auto& individual : populations) {
+            if (!std::isfinite(individual.getfitness())) continue;
+            if (!elite || individual.getfitness() > elite->getfitness()) elite = &individual;
+        }
+        if (elite) new_populations.back() = *elite;
     }
 
     // Replace the old population with the new one
     populations = std::move(new_populations);
 }
 
-bool GeneticAlgorithm::gaRun(){
-    static std::random_device engine;
+void GeneticAlgorithm::evolve_next_generation() {
+    select_next_generation();
+    if (populations.size() < 2) return;
+    static std::mt19937 engine(std::random_device{}());
     static std::uniform_real_distribution<double> dis(0.0, 1.0);
+    // Selection puts an independent elite in the last slot. Genetic operators
+    // must exclude that slot, including the last pair in even-sized populations.
+    const std::size_t offspringCount = populations.size() - 1;
+    for (std::size_t index = 0; index + 1 < offspringCount; index += 2) {
+        if (dis(engine) < crossoverRate) crossover(populations[index], populations[index + 1]);
+    }
+    for (std::size_t index = 0; index < offspringCount; ++index) {
+        if (dis(engine) < mutationRate) mutate(populations[index]);
+    }
+}
 
+bool GeneticAlgorithm::gaRun(){
     populations.clear();
     best_individuals.clear();
     if (!generationSize || !populationSize || !genSize ||
@@ -143,19 +164,7 @@ bool GeneticAlgorithm::gaRun(){
         }
 
         reserve_the_best();
-        select_next_generation();
-
-        for (std::size_t index = 0; index + 1 < populations.size(); index += 2) {
-            if (dis(engine) < crossoverRate) {
-                crossover(populations[index], populations[index + 1]);
-            }
-        }
-
-        for (auto &individual: populations) {
-            if (dis(engine) < mutationRate) {
-                mutate(individual);
-            }
-        }
+        evolve_next_generation();
     }
 
     if(best_individuals.empty() ){

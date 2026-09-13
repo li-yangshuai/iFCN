@@ -8,6 +8,8 @@ import re
 import sys
 from pathlib import Path
 
+from ifcn_clock_support import occupied_tile_phases
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -48,13 +50,7 @@ def main() -> int:
     assert stale_physical_clock_keys.isdisjoint(report)
     assert not any(key.startswith("physical_phase_") for key in report)
 
-    phase_entries = re.findall(
-        r"(?m)^\((\d+),(\d+)\):\s*([0-3]);$", ifcn
-    )
-    tile_phases = {
-        (int(x), int(y)): int(phase) for x, y, phase in phase_entries
-    }
-    assert len(phase_entries) == len(tile_phases)
+    tile_phases = occupied_tile_phases(ifcn)
     assert len(tile_phases) == report["tile_clock_resources"]
 
     measured_max_run = 0

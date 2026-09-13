@@ -61,7 +61,7 @@ std::string cleanHex(const std::string& raw) {
         }
     }
     if (s.empty()) {
-        s = "0";
+        throw std::runtime_error("Empty packed phase hex input.");
     }
     for (char ch : s) {
         const bool isHex = (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
@@ -78,7 +78,7 @@ std::vector<uint8_t> hexToRowBytesPadLeft(const std::string& hexInput, int block
     if (s.size() < hexDigits) {
         s = std::string(hexDigits - s.size(), '0') + s;
     } else if (s.size() > hexDigits) {
-        s = s.substr(s.size() - hexDigits);
+        throw std::runtime_error("Packed phase hex input exceeds block size.");
     }
 
     std::vector<uint8_t> bytes(static_cast<size_t>(blockSize), 0);
@@ -90,6 +90,9 @@ std::vector<uint8_t> hexToRowBytesPadLeft(const std::string& hexInput, int block
 }
 
 std::vector<int> unpackRowFromByte(uint8_t rowByte, int blockSize, int phaseCount) {
+    if (blockSize == 3 && (rowByte & 0xc0u) != 0) {
+        throw std::runtime_error("Nonzero unused bits in packed phase row.");
+    }
     std::vector<int> row(static_cast<size_t>(blockSize), 0);
     for (int column = 0; column < blockSize; ++column) {
         const int phase = static_cast<int>((rowByte >> (2 * column)) & 0x3u);

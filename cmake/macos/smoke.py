@@ -23,7 +23,7 @@ def main() -> None:
     binaries = relocated / "Contents/MacOS"
     sample = relocated / "Contents/Resources/examples/regular_2ddwave/TOY/xor2_demo.ifcn"
     assert sample.is_file(), sample
-    assert len(list((relocated / "Contents/Resources/examples").rglob("*.ifcn"))) == 90
+    assert len(list((relocated / "Contents/Resources/examples").rglob("*.ifcn"))) == 91
     environment = {
         "HOME": str(evidence), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
         "TMPDIR": str(evidence), "QT_QPA_PLATFORM": "offscreen",
@@ -72,7 +72,7 @@ def main() -> None:
         assert data["routed"] is True and data["native_mapping_valid"] is True
         (evidence / "result.json").write_text(json.dumps({
             "passed": True, "relocated": True, "homebrew_hidden": hidden is not None,
-            "examples": 90, "gui_views": ["layout", "schematic"],
+            "examples": 91, "gui_views": ["layout", "schematic"],
             "mapping": True, "graphviz_svg": True, "native_irregular_pnr": True,
             "python_backend_bundled": False,
         }, indent=2) + "\n", encoding="utf-8")

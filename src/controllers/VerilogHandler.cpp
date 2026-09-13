@@ -2375,7 +2375,7 @@ QString VerilogHandler::saveGateLevelIfcn(
     const QString &outputDirSuffix,
     const QString &outputFileSuffix)
 {
-    const int blockSize = phaseCount == 3 ? 3 : 4;
+    const int blockSize = 4;
     const QFileInfo sourceInfo(sourceFilePath);
     const QString circuitFileName = sourceInfo.fileName().isEmpty()
         ? QString::fromStdString(parse.get_moduleName())

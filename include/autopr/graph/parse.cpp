@@ -1,5 +1,6 @@
 #include"parse.h"
 #include <autopr/graph/scalarExpression.h>
+#include <limits>
 
 namespace fcngraph{
 
@@ -293,7 +294,7 @@ void Parse::optimizeNOTNode(){
         //断言not的扇入数量为1
         assert(indegree_num == 1);
         // 获取 index1 的扇入节点的索引
-        int faninIndex = graphLink->inDegreeIndex[index1][0];
+        const auto faninIndex = graphLink->inDegreeIndex[index1][0];
         //获取扇入节点的扇出数量
         auto faninIndex_fanout_num = graphLink->m_verticesArray[faninIndex].outdegree;
         //获取非门的扇出数量
@@ -307,7 +308,13 @@ void Parse::optimizeNOTNode(){
             auto fanouts = graphLink->outDegreeIndex[index1];
             //记录非门的扇入和扇出的节点
             for(auto &fanout : fanouts){
-                hide_not_place_pair.insert({index1,{faninIndex, fanout}});
+                // Native placement uses unsigned-int node IDs. Check before
+                // narrowing the graph's 64-bit IDs into that representation.
+                const auto maxIndex = std::numeric_limits<unsigned int>::max();
+                if (index1 > maxIndex || faninIndex > maxIndex || fanout > maxIndex)
+                    throw std::overflow_error("Hidden NOT node exceeds native placement index range");
+                hide_not_place_pair.emplace(static_cast<unsigned int>(index1),
+                    std::make_pair(static_cast<unsigned int>(faninIndex), static_cast<unsigned int>(fanout)));
             }
             //隐藏非门
             effectiveNodes.erase(index1);

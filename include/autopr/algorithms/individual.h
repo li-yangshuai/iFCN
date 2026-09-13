@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include "autopr/grid/grid.h"
 #include "autopr/graph/parse.h"
 #include "astar.h"

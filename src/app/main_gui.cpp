@@ -504,6 +504,21 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
         const QStringList supportedViews = {"source", "layout", "schematic", "structure", "waveform",
                                             "algorithms", "export-menu"};
         const bool menuCapture = viewName == "algorithms" || viewName == "export-menu";
+        const bool fullWindowCapture = qEnvironmentVariable("IFCN_UI_SCREENSHOT_FULL_WINDOW") == QStringLiteral("1")
+            && viewName != "waveform" && !menuCapture;
+        QSize requestedSize;
+        const QString sizeSetting = qEnvironmentVariable("IFCN_UI_SCREENSHOT_SIZE").trimmed();
+        if (!sizeSetting.isEmpty()) {
+            const QRegularExpression sizePattern(QStringLiteral("\\A(\\d{3,4})[xX](\\d{3,4})\\z"));
+            const auto sizeMatch = sizePattern.match(sizeSetting);
+            const int width = sizeMatch.captured(1).toInt();
+            const int height = sizeMatch.captured(2).toInt();
+            if (!sizeMatch.hasMatch() || width < 640 || width > 4096 || height < 480 || height > 2160) {
+                throw std::runtime_error("IFCN_UI_SCREENSHOT_SIZE must be WIDTHxHEIGHT, with width 640..4096 and height 480..2160");
+            }
+            requestedSize = QSize(width, height);
+            mainWindow.resize(requestedSize);
+        }
         if (path.isEmpty() || inputPath.isEmpty() || !supportedViews.contains(viewName)
             || QFileInfo(path).suffix().compare("png", Qt::CaseInsensitive) != 0) {
             throw std::runtime_error("Set IFCN_UI_SCREENSHOT=<output.png>, IFCN_UI_SCREENSHOT_INPUT=<input>, and IFCN_UI_SCREENSHOT_VIEW=source|layout|schematic|structure|waveform|algorithms|export-menu");
@@ -542,9 +557,11 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
             if (suffix != "v") throw std::runtime_error("Source capture requires a Verilog .v file");
             editor = mainWindow.openVerilogSourceInNewTab(inputText, inputInfo.absoluteFilePath());
             if (!menuCapture) captureWidget = editor->verilogSourceDock;
-            QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-            font.setPointSize(14);
-            editor->verilogSourceEditor->setFont(font);
+            if (!fullWindowCapture) {
+                QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+                font.setPointSize(14);
+                editor->verilogSourceEditor->setFont(font);
+            }
         } else {
             if (suffix != "ifcn" && suffix != "qca") {
                 throw std::runtime_error("Layout views require an .ifcn or .qca file");
@@ -557,7 +574,7 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
             if (!sourcePath.isEmpty()) {
                 editor->setVerilogSourceContent(sourceText, QFileInfo(sourcePath).absoluteFilePath());
             }
-            if (viewName == "layout") {
+            if (viewName == "layout" && !fullWindowCapture) {
                 editor->phaseCodecDock->hide();
                 if (editor->circuitSchematicView->scene()->items().isEmpty()) {
                     editor->circuitSchematicDock->hide();
@@ -605,6 +622,35 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
             captureMenu->popup(mainWindow.mapToGlobal(QPoint(40, 80)));
         }
 
+        if (fullWindowCapture) {
+            captureWidget = &mainWindow;
+            // These are the same dock/splitter adjustments available by
+            // dragging in the UI. Keep the panels attached to their editor.
+            editor->resizeDocks(QList<QDockWidget *>() << editor->circuitSchematicDock
+                                  << editor->phaseCodecDock << editor->layoutInfoDock,
+                                QList<int>() << 460 << 460 << 460, Qt::Horizontal);
+            if (viewName == "structure"
+                || ((viewName == "layout" || viewName == "schematic")
+                    && editor->phaseCodecTable->rowCount() == 0)) {
+                // The 3D view has already consumed the encoded phase map.
+                // Close its editor panel to leave room for all three views.
+                editor->phaseCodecDock->hide();
+                editor->resizeDocks(QList<QDockWidget *>() << editor->circuitSchematicDock
+                                      << editor->layoutInfoDock,
+                                    QList<int>() << 430 << 570, Qt::Vertical);
+            } else {
+                editor->resizeDocks(QList<QDockWidget *>() << editor->circuitSchematicDock
+                                      << editor->phaseCodecDock << editor->layoutInfoDock,
+                                    QList<int>() << 260 << 200 << 540, Qt::Vertical);
+            }
+            editor->splitter->setSizes(QList<int>() << 184 << 360
+                << qMax(400, mainWindow.width() - 1060));
+            if (viewName == "structure") {
+                editor->resizeDocks(QList<QDockWidget *>() << editor->structure3DDock,
+                                    QList<int>() << 550, Qt::Vertical);
+            }
+        }
+
         // Host the actual dock in its own window for a readable, unclipped view,
         // including its native filename/title bar. Only this batch session changes.
         if (captureWidget != &mainWindow && viewName != "waveform" && !menuCapture) {
@@ -619,9 +665,11 @@ void captureRequestedView(QApplication &app, TabbedMainWindow &mainWindow)
             captureWidget->resize(viewName == "source" ? 1200 : 1400,
                                   viewName == "source" ? sourceHeight : 900);
         }
+        if (requestedSize.isValid() && !menuCapture) captureWidget->resize(requestedSize);
         captureWidget->show();
-        QTimer::singleShot(250, captureWidget, [editor, captureWidget, viewName, captureMenu, highlightedAction]() {
+        QTimer::singleShot(250, captureWidget, [editor, captureWidget, viewName, captureMenu, highlightedAction, fullWindowCapture]() {
             if (editor != nullptr) {
+                if (fullWindowCapture) editor->layoutInfoTable->resizeRowsToContents();
                 editor->centerViewOnItems();
                 editor->circuitSchematicView->fitToCircuit();
                 if (viewName == "structure") editor->structure3DView->fitToStructure();

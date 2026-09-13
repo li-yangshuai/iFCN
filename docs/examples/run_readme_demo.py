@@ -333,8 +333,8 @@ def screenshots(output, target, env):
     views = [("01-source", "source", "xor2.v"),
              ("03-algorithms", "algorithms", "xor2.v"),
              ("03-routing", "schematic", "xor2_layout.ifcn"),
-             ("04-device", "layout", "xor2_device.qca"),
-             ("05-structure", "structure", "xor2_device.qca"),
+             ("04-device", "layout", "xor2_layout.ifcn"),
+             ("05-structure", "structure", "xor2_layout.ifcn"),
              ("06-waveform", "waveform", "xor2_bistable_baseline.rst"),
              ("06-coherence", "waveform", "xor2_coherence_baseline.rst"),
              ("08-export", "export-menu", "xor2_device.qca")]
@@ -344,6 +344,10 @@ def screenshots(output, target, env):
         capture.update(QT_QPA_PLATFORM="offscreen", IFCN_UI_SCREENSHOT=str(target / f"{name}.png"),
                        IFCN_UI_SCREENSHOT_INPUT=str(output / filename), IFCN_UI_SCREENSHOT_VIEW=view,
                        IFCN_UI_SOURCE_FILE=str(output / "xor2.v"))
+        if view in {"source", "layout", "schematic", "structure"}:
+            capture.update(IFCN_UI_SCREENSHOT_FULL_WINDOW="1", IFCN_UI_SCREENSHOT_SIZE="2000x1200")
+        if view == "structure":
+            capture["IFCN_UI_SCREENSHOT_SIZE"] = "2000x1600"
         if view in {"algorithms", "export-menu"}:
             capture["QT_SCALE_FACTOR"] = "2"
         run([gui], output=output / f"screenshot-{name}.log", env=capture, timeout=60)

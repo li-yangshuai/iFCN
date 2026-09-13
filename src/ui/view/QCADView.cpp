@@ -115,7 +115,7 @@ void QCADView::paintEvent(QPaintEvent *event)
     painter.drawText(QRectF(card.left() + 82.0, card.top() + 55.0,
                             card.width() - 108.0, 42.0),
                      Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-                     tr("Open or drop an .ifcn/.qca layout, or run Universal AI P&R from the toolbar."));
+                     tr("Open or drop an .ifcn/.qca layout, or choose a layout algorithm from the toolbar."));
 
     painter.setPen(QColor("#7b8493"));
     painter.drawText(QRectF(card.left() + 24.0, card.bottom() - 44.0,

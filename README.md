@@ -93,27 +93,31 @@ export IFCN_LAYOUT_BINDINGS_DIR="$PWD/build/python/lib"
 
 直接打开 [examples](examples/) 中按算法分类的 `.ifcn` 可查看实际结果。规则时钟示例来自 TOY，不规则时钟示例来自 TOY 和 MAJ。[示例验证表](docs/examples.md) 列出每个电路的来源和检查结果；`__drc_only` 表示物理输出检查失败，不能作为功能正确的电路使用。
 
-![布局布线与时钟相位原理图](docs/images/xor2/03-routing.png)
+打开布局文件后，软件同时显示器件映射和右侧的电路结构；两者对应同一份布局。
+
+![布局布线结果的完整界面：器件映射与时钟结构](docs/images/xor2/03-routing.png)
 
 #### 各算法的实际布局效果
 
-**规则时钟启发式布局布线 · MUX41**
+下面的完整界面将器件版图、门级电路结构和三维分层结构同屏显示，并保留源码和布局指标。点击 **3D** 打开分层结构，将结构窗口停靠在主界面即可对照查看。三个示例使用不同电路，均通过 DRC 与源逻辑检查；所列面积用于说明案例规模，不能据此横向比较算法性能。
 
-选择 **Heuristic P&R** 并设置规则时钟方案。这里使用 2DDWave，MUX41 占用 **18 × 16 个时钟网格、626 个 QCA 元胞**；源逻辑的全部 64 组输入、DRC 和时钟检查通过，物理仿真尚未运行。[打开 `.ifcn` 样例](examples/regular_heuristic/2DDWave/TOY/mux41.ifcn)
+**规则时钟启发式布局布线 · 进位电路**
 
-![规则时钟启发式算法生成的 MUX41：18×16 时钟网格、626 个 QCA 元胞](docs/images/algorithms/regular-heuristic-mux41.png)
+选择 **Heuristic P&R** 并设置 2DDWave 时钟方案。此进位电路使用 **5 × 6 个时钟网格、145 个 QCA 元胞**，物理仿真尚未运行。[打开 `.ifcn` 样例](examples/regular_heuristic/2DDWave/TOY/paper_2ddwave_carry_demo.ifcn)
 
-**固定 2DDWave 图绘制与收缩 · MUX41**
+![进位电路完整界面：器件版图、门级结构与三维分层同屏显示](docs/images/algorithms/regular-heuristic-carry-ui.png)
 
-选择 **2DDWave Fixed-Clock P&R**，运行图绘制、布线与收缩。四选一多路选择器使用 **13 × 11 个时钟网格、737 个 QCA 元胞**；源逻辑、DRC 和时钟检查通过，物理仿真尚未运行。[打开 `.ifcn` 样例](examples/regular_2ddwave/TOY/mux41.ifcn)
+**固定 2DDWave 图绘制与收缩 · 一位全加器**
 
-![固定 2DDWave 图绘制算法生成的 MUX41：13×11 时钟网格、737 个 QCA 元胞](docs/images/algorithms/regular-2ddwave-mux41.png)
+选择 **2DDWave Fixed-Clock P&R**，运行图绘制、布线与收缩。此一位全加器使用 **6 × 7 个时钟网格、232 个 QCA 元胞**，物理仿真尚未运行。[打开 `.ifcn` 样例](examples/regular_2ddwave/TOY/1bitAdderAOIG.ifcn)
 
-**不规则时钟图绘制 · 四选一多路选择器**
+![一位全加器完整界面：器件版图、门级结构与三维分层同屏显示](docs/images/algorithms/regular-2ddwave-adder-ui.png)
 
-选择 `Irregular-Clock Graph P&R`，由统一算法搜索布局并分配时钟。MUX41 使用 **16 × 11 个时钟网格，596 个 QCA 元胞**；已通过 DRC、时钟规则及 Bistable 的 **全部 64 组输入检查**。[打开 `.ifcn` 样例](examples/irregular/TOY/mux41.ifcn)
+**不规则时钟图绘制 · 双输出多数逻辑电路（MAJ/t）**
 
-![不规则时钟算法生成的四选一多路选择器：16×11 时钟网格、596 个 QCA 元胞](docs/images/algorithms/irregular-mux41.png)
+选择 **Irregular-Clock Graph P&R**，自动搜索布局并分配时钟。此双输出多数逻辑电路使用 **7 × 9 个时钟网格、254 个 QCA 元胞**，已通过 Bistable 的 **全部 32 组输入检查**。[打开 `.ifcn` 样例](examples/irregular/MAJ/t.ifcn)
+
+![MAJ/t 完整界面：器件版图、门级结构与三维分层同屏显示](docs/images/algorithms/irregular-majority-t-ui.png)
 
 ### 4. 查看器件映射与时钟
 
@@ -164,7 +168,7 @@ IO Contract 处理器件的输入输出连线；布局 compact 则优化时钟�
 
 当前库中的时序案例规模较小。此 Toggle FF 为 **2 × 2 个时钟网格、19 个 QCA 元胞，II = 4**；它用于展示反馈结构，不能据此确认状态器件的多周期物理行为。
 
-<img src="docs/images/algorithms/sequential-cyclic-toggle.png" width="680" alt="保留反馈线路的 Toggle FF 时序结构">
+![Toggle FF 完整界面：器件版图、门级反馈结构与三维分层同屏显示](docs/images/algorithms/sequential-cyclic-toggle-ui.png)
 
 <a id="export"></a>
 ## 保存与导出

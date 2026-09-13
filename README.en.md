@@ -93,27 +93,31 @@ Watch the progress and check results, then inspect routes and phases in the sche
 
 Open an `.ifcn` from [examples](examples/) to inspect a generated layout, organized by algorithm. Regular-clock examples use TOY; irregular-clock examples use TOY and MAJ. The [example validation table](docs/examples.md) records inputs and checks. A `__drc_only` suffix identifies a failed physical-output check; these circuits are not functionally validated examples.
 
-![Routed schematic and clock phases](docs/images/xor2/03-routing.png)
+Opening a layout shows its mapped cells together with the circuit structure on the right; both views represent the same layout.
+
+![Full layout interface with mapped cells and the clock schematic](docs/images/xor2/03-routing.png)
 
 #### Actual layouts from each algorithm
 
-**Regular-clock heuristic P&R · MUX41**
+These full application views show the device layout, gate-level circuit structure, and layered 3D structure together, alongside source code and layout metrics. Click **3D** to open the layered structure and dock its window in the main interface to compare the views. The three examples use different circuits and pass DRC and source-logic checks. Their areas describe each example's size and are not an algorithm performance comparison.
 
-Choose **Heuristic P&R** and select a regular clock scheme. This 2DDWave MUX41 occupies **18 × 16 clock tiles and 626 QCA cells**. All 64 source-logic vectors, DRC and clock checks pass; physical simulation has not been run. [Open the `.ifcn` example](examples/regular_heuristic/2DDWave/TOY/mux41.ifcn).
+**Regular-clock heuristic P&R · Carry circuit**
 
-![MUX41 from regular-clock heuristic P&R: 18 by 16 clock tiles and 626 QCA cells](docs/images/algorithms/regular-heuristic-mux41.png)
+Choose **Heuristic P&R** and select the 2DDWave clock scheme. This carry circuit uses **5 × 6 clock tiles and 145 QCA cells**; physical simulation has not been run. [Open the `.ifcn` example](examples/regular_heuristic/2DDWave/TOY/paper_2ddwave_carry_demo.ifcn).
 
-**Fixed 2DDWave graph drawing and compaction · MUX41**
+![Full carry-circuit interface showing device layout, gate-level structure, and layered 3D structure together](docs/images/algorithms/regular-heuristic-carry-ui.png)
 
-Choose **2DDWave Fixed-Clock P&R** to run graph drawing, routing, and compaction. This 4:1 multiplexer occupies **13 × 11 clock tiles and 737 QCA cells**. Source logic, DRC and clock checks pass; physical simulation has not been run. [Open the `.ifcn` example](examples/regular_2ddwave/TOY/mux41.ifcn).
+**Fixed 2DDWave graph drawing and compaction · One-bit full adder**
 
-![MUX41 from fixed 2DDWave graph drawing: 13 by 11 clock tiles and 737 QCA cells](docs/images/algorithms/regular-2ddwave-mux41.png)
+Choose **2DDWave Fixed-Clock P&R** to run graph drawing, routing, and compaction. This one-bit full adder uses **6 × 7 clock tiles and 232 QCA cells**; physical simulation has not been run. [Open the `.ifcn` example](examples/regular_2ddwave/TOY/1bitAdderAOIG.ifcn).
 
-**Irregular-clock graph drawing · 4:1 multiplexer**
+![Full one-bit adder interface showing device layout, gate-level structure, and layered 3D structure together](docs/images/algorithms/regular-2ddwave-adder-ui.png)
 
-Choose `Irregular-Clock Graph P&R` to search layouts and assign clocks through the unified algorithm. MUX41 occupies **16 × 11 clock tiles and 596 QCA cells**. DRC, clock rules, and Bistable checks for **all 64 input combinations** pass. [Open the `.ifcn` example](examples/irregular/TOY/mux41.ifcn).
+**Irregular-clock graph drawing · Two-output majority logic (MAJ/t)**
 
-![A 4-to-1 multiplexer from irregular-clock graph drawing: 16 by 11 clock tiles and 596 QCA cells](docs/images/algorithms/irregular-mux41.png)
+Choose **Irregular-Clock Graph P&R** to search layouts and assign clocks automatically. This two-output majority-logic circuit uses **7 × 9 clock tiles and 254 QCA cells**. Bistable checks pass for **all 32 input combinations**. [Open the `.ifcn` example](examples/irregular/MAJ/t.ifcn).
+
+![Full MAJ/t interface showing device layout, gate-level structure, and layered 3D structure together](docs/images/algorithms/irregular-majority-t-ui.png)
 
 ### 4. Inspect mapped cells and clocks
 
@@ -164,7 +168,7 @@ Sequential routing preserves cross-cycle distances and solves global clocks and 
 
 The current library contains only small sequential structural examples. This Toggle FF uses **2 × 2 clock tiles, 19 QCA cells, and II = 4**; it illustrates retained feedback and does not establish multi-cycle physical state behavior.
 
-<img src="docs/images/algorithms/sequential-cyclic-toggle.png" width="680" alt="Toggle FF sequential structure with retained feedback">
+![Full Toggle FF interface showing device layout, gate-level feedback, and layered 3D structure together](docs/images/algorithms/sequential-cyclic-toggle-ui.png)
 
 <a id="export"></a>
 ## Save and export

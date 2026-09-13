@@ -27,7 +27,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\iFCN.exe
-LicenseFile={#PackageDir}\LICENSE
+LicenseFile={#PackageDir}\LICENSES\GPL-3.0.txt
 ChangesAssociations=yes
 
 [Languages]

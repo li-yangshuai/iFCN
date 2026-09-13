@@ -2,6 +2,7 @@
 #include "patterns.h"
 #include <algorithm>
 #include <optional>
+#include <cstdint>
 
 namespace fcngraph{
 

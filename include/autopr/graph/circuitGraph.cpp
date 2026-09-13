@@ -468,14 +468,14 @@ namespace fcngraph
 
         for (size_t i = 0; i < layerNodes.size(); ++i)
         {
-            Agraph_t *subgraph = agsubg(A, const_cast<char *>(("layer" + std::to_string(i)).c_str()), TRUE);
+            Agraph_t *subgraph = agsubg(A, const_cast<char *>(("layer" + std::to_string(i)).c_str()), true);
             if (subgraph == nullptr)
             {
                 throw std::runtime_error("Graphviz failed to create a circuit rank group.");
             }
             for (int node : layerNodes[i])
             {
-                if (agsubnode(subgraph, node_map.at(node), TRUE) == nullptr)
+                if (agsubnode(subgraph, node_map.at(node), true) == nullptr)
                 {
                     throw std::runtime_error("Graphviz failed to populate a circuit rank group.");
                 }

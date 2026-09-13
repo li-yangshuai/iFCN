@@ -2,6 +2,7 @@
 #include<vector>
 #include<memory>
 #include<stdexcept>
+#include <cstdint>
 
 namespace fcngraph{
 

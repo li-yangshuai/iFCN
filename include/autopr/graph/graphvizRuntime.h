@@ -7,6 +7,12 @@
 
 namespace fcngraph::detail {
 
+// Graphviz changed gvRenderData's length parameter from unsigned int to size_t.
+// Derive it from the installed header so old and current releases both compile.
+template <typename Length>
+Length graphvizRenderLengthType(int (*)(GVC_t *, Agraph_t *, const char *, char **, Length *));
+using GraphvizRenderLength = decltype(graphvizRenderLengthType(&gvRenderData));
+
 // Graphviz's Pango plugin caches font data across layouts. Destroying and
 // recreating a GVC_t can leave that cache referring to the previous context.
 // Both layout entry points therefore share one context until process exit,

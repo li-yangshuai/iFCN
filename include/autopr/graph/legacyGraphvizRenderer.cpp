@@ -107,7 +107,7 @@ LegacyGraphvizResult renderLegacyGraphviz(Parse &parse,
             for (int nodeIndex : layer) {
                 const std::string nodeName = std::to_string(nodeIndex);
                 Agnode_t *node = agnode(resources.graph,
-                                       const_cast<char *>(nodeName.c_str()), TRUE);
+                                       const_cast<char *>(nodeName.c_str()), true);
                 if (node == nullptr) {
                     throw std::runtime_error("Graphviz failed to create node " + nodeName + ".");
                 }
@@ -125,7 +125,7 @@ LegacyGraphvizResult renderLegacyGraphviz(Parse &parse,
                     "The circuit contains an edge whose endpoint is not in a logic layer: " +
                     std::to_string(edge.first) + " -> " + std::to_string(edge.second) + ".");
             }
-            if (agedge(resources.graph, source->second, sink->second, nullptr, TRUE) == nullptr) {
+            if (agedge(resources.graph, source->second, sink->second, nullptr, true) == nullptr) {
                 throw std::runtime_error(
                     "Graphviz failed to create edge " + std::to_string(edge.first) + " -> " +
                     std::to_string(edge.second) + ".");
@@ -135,12 +135,12 @@ LegacyGraphvizResult renderLegacyGraphviz(Parse &parse,
         for (std::size_t layerIndex = 0; layerIndex < layerNodes.size(); ++layerIndex) {
             const std::string layerName = "layer" + std::to_string(layerIndex);
             Agraph_t *subgraph = agsubg(resources.graph,
-                                        const_cast<char *>(layerName.c_str()), TRUE);
+                                        const_cast<char *>(layerName.c_str()), true);
             if (subgraph == nullptr) {
                 throw std::runtime_error("Graphviz failed to create rank group " + layerName + ".");
             }
             for (int nodeIndex : layerNodes[layerIndex]) {
-                agsubnode(subgraph, nodes.at(nodeIndex), TRUE);
+                agsubnode(subgraph, nodes.at(nodeIndex), true);
             }
             agsafeset(subgraph, const_cast<char *>("rank"), const_cast<char *>("same"),
                       const_cast<char *>("same"));
@@ -171,7 +171,7 @@ LegacyGraphvizResult renderLegacyGraphviz(Parse &parse,
         }
 
         GraphvizRenderBuffer svgBuffer;
-        unsigned int svgLength = 0;
+        detail::GraphvizRenderLength svgLength = 0;
         if (gvRenderData(resources.context, resources.graph, "svg",
                          &svgBuffer.data, &svgLength) != 0 ||
             svgBuffer.data == nullptr || svgLength == 0) {

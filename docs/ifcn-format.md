@@ -81,3 +81,20 @@ completion at unused positions also preserve QCA bytes and are recorded
 separately from the original 90-file conversion. Hashes and provenance are in the
 [case table](examples.csv); storage equivalence does not replace
 [physical functional validation](examples.md).
+
+其中，展示用的 [2DDWave MUX41](../examples/regular_2ddwave/TOY/mux41.ifcn)
+随后单独补齐了 **13 × 11** 范围内的规则时钟背景：保留全部 **97 个已占用
+位置**和既有非零相位，补全 36 个原为 0 的空白位置及两个缺失的空块，范围外
+仍补 0。节点、路径与其他元数据未变；当前映射器转换前后的 **737 个 QCA
+元胞逐字节一致**。此项空白模板审计独立记录在案例结果表中，不改写原 90 个
+文件的转换证据或转换前哈希，也不代表新增物理验证。
+
+The displayed [2DDWave MUX41](../examples/regular_2ddwave/TOY/mux41.ifcn)
+subsequently received a separate completion of its **13 × 11** regular-clock
+background. All **97 occupied positions** and all existing nonzero phases were
+preserved; 36 unused zero-valued positions and two missing empty blocks were
+completed, with zero padding outside the bounds. Nodes, routes, and other
+metadata are unchanged. The current mapper produced **737 QCA cells with
+byte-identical data before and after**. This separate template audit is recorded
+in the case table, retains the original 90-file conversion evidence and
+pre-encoding hashes, and does not add physical validation.

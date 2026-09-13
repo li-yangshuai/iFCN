@@ -69,7 +69,7 @@ set_tests_properties(verilog_expression_semantics_regression PROPERTIES TIMEOUT 
 
 add_executable(irregular_layout_tests IrregularLayoutUnitTest.cpp)
 target_include_directories(irregular_layout_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
-target_link_libraries(irregular_layout_tests PRIVATE autopr gvc cgraph)
+target_link_libraries(irregular_layout_tests PRIVATE autopr PkgConfig::IFCN_GRAPHVIZ)
 add_test(NAME irregular_layout_incumbent_regression COMMAND irregular_layout_tests)
 set_tests_properties(irregular_layout_incumbent_regression PROPERTIES TIMEOUT 15)
 add_test(NAME irregular_candidate_export_regression
@@ -79,7 +79,7 @@ add_test(NAME irregular_candidate_export_regression
 set_tests_properties(irregular_candidate_export_regression PROPERTIES TIMEOUT 45)
 add_executable(heuristic_layout_tests HeuristicLayoutUnitTest.cpp)
 target_include_directories(heuristic_layout_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
-target_link_libraries(heuristic_layout_tests PRIVATE autopr gvc cgraph)
+target_link_libraries(heuristic_layout_tests PRIVATE autopr PkgConfig::IFCN_GRAPHVIZ)
 add_test(NAME heuristic_layout_validation_regression COMMAND heuristic_layout_tests)
 set_tests_properties(heuristic_layout_validation_regression PROPERTIES TIMEOUT 30)
 
@@ -383,23 +383,17 @@ target_include_directories(phase_aware_routing_tests PRIVATE ${PROJECT_SOURCE_DI
 target_link_libraries(phase_aware_routing_tests PRIVATE autopr)
 add_test(NAME phase_aware_routing_regression COMMAND phase_aware_routing_tests)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(TEST_GVC REQUIRED libgvc)
-pkg_check_modules(TEST_CGRAPH REQUIRED libcgraph)
 set(IFCN_OGDF_TEST_ORDERER "" CACHE FILEPATH
     "Optional OGDF executable for fixed-layer ordering regression tests")
 add_executable(stochastic_compact_graph_tests StochasticCompactGraphUnitTest.cpp)
 target_include_directories(stochastic_compact_graph_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/include
-    ${TEST_GVC_INCLUDE_DIRS}
-    ${TEST_CGRAPH_INCLUDE_DIRS})
+    ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(stochastic_compact_graph_tests PRIVATE
     IFCN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     IFCN_TEST_OGDF_ORDERER="${IFCN_OGDF_TEST_ORDERER}")
 target_link_libraries(stochastic_compact_graph_tests PRIVATE
     autopr
-    ${TEST_GVC_LIBRARIES}
-    ${TEST_CGRAPH_LIBRARIES})
+    PkgConfig::IFCN_GRAPHVIZ)
 add_test(NAME stochastic_compact_graph_regression COMMAND stochastic_compact_graph_tests)
 add_test(
     NAME stochastic_compact_graph_fallback_regression
@@ -511,28 +505,22 @@ endforeach()
 
 add_executable(legacy_graphviz_renderer_tests LegacyGraphvizRendererUnitTest.cpp)
 target_include_directories(legacy_graphviz_renderer_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/include
-    ${TEST_GVC_INCLUDE_DIRS}
-    ${TEST_CGRAPH_INCLUDE_DIRS})
+    ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(legacy_graphviz_renderer_tests PRIVATE
     IFCN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(legacy_graphviz_renderer_tests PRIVATE
     autopr
-    ${TEST_GVC_LIBRARIES}
-    ${TEST_CGRAPH_LIBRARIES})
+    PkgConfig::IFCN_GRAPHVIZ)
 add_test(NAME legacy_graphviz_renderer_regression COMMAND legacy_graphviz_renderer_tests)
 
 add_executable(june_random_clock_graph_tests JuneRandomClockGraphUnitTest.cpp)
 target_include_directories(june_random_clock_graph_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/include
-    ${TEST_GVC_INCLUDE_DIRS}
-    ${TEST_CGRAPH_INCLUDE_DIRS})
+    ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(june_random_clock_graph_tests PRIVATE
     IFCN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(june_random_clock_graph_tests PRIVATE
     autopr
-    ${TEST_GVC_LIBRARIES}
-    ${TEST_CGRAPH_LIBRARIES})
+    PkgConfig::IFCN_GRAPHVIZ)
 add_test(NAME june_random_clock_graph_regression COMMAND june_random_clock_graph_tests)
 add_test(
     NAME june_random_clock_graph_fallback_regression
@@ -663,4 +651,4 @@ endforeach()
 # Reproducible benchmark adapter; this invokes the production GUI heuristic.
 add_executable(heuristic_layout_driver HeuristicLayoutDriver.cpp)
 target_include_directories(heuristic_layout_driver PRIVATE "${PROJECT_SOURCE_DIR}/include")
-target_link_libraries(heuristic_layout_driver PRIVATE autopr Qt5::Core gvc cgraph)
+target_link_libraries(heuristic_layout_driver PRIVATE autopr Qt5::Core PkgConfig::IFCN_GRAPHVIZ)

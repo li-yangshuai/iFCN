@@ -2,23 +2,11 @@ set(CMAKE_AUTOMOC ON)
 find_package(Qt5 REQUIRED COMPONENTS Widgets PrintSupport Svg)
 find_package(Threads REQUIRED)
 
-##graph render libraries##
-find_package(PkgConfig REQUIRED)
-find_package(Qt5 COMPONENTS Svg REQUIRED)
-pkg_check_modules(GVC REQUIRED libgvc)
-pkg_check_modules(CGRAPH REQUIRED libcgraph)
-#graph render libraries##
-
 qt5_add_resources(RES_RCC "${PROJECT_SOURCE_DIR}/resources/ui_images/images.qrc")
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
-
-##graph render libraries##
-include_directories(${GVC_INCLUDE_DIRS})
-include_directories(${CGRAPH_INCLUDE_DIRS})
-##graph render libraries##
 
 add_executable(
     fcnx_gui 
@@ -54,7 +42,7 @@ add_executable(
     ${RES_RCC})
     
 target_link_libraries(fcnx_gui PRIVATE autopr simon Threads::Threads ${Boost_LIBRARIES} Qt5::Widgets  Qt5::PrintSupport Qt5::Svg
-                       ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
+                       PkgConfig::IFCN_GRAPHVIZ)
 
 target_compile_definitions(fcnx_gui PRIVATE
     IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
@@ -72,11 +60,11 @@ endif()
 
 if(IFCN_BUILD_TOOLS OR IFCN_BUILD_TESTS)
 add_executable(ifcn_sequential_pnr app/ifcn_sequential_pnr.cpp)
-target_link_libraries(ifcn_sequential_pnr PRIVATE autopr ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
+target_link_libraries(ifcn_sequential_pnr PRIVATE autopr PkgConfig::IFCN_GRAPHVIZ)
 target_compile_definitions(ifcn_sequential_pnr PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 add_executable(ifcn_paper_cyclic_pnr app/ifcn_paper_cyclic_pnr.cpp)
-target_link_libraries(ifcn_paper_cyclic_pnr PRIVATE autopr ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
+target_link_libraries(ifcn_paper_cyclic_pnr PRIVATE autopr PkgConfig::IFCN_GRAPHVIZ)
 target_compile_definitions(ifcn_paper_cyclic_pnr PRIVATE IFCN_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 add_executable(ifcn_physical_state_layout app/ifcn_physical_state_layout.cpp)
@@ -92,5 +80,5 @@ target_link_libraries(ifcn_physical_benchmark PRIVATE simon)
 
 # Headless adapters for the production combinational C++ layout algorithms.
 add_executable(ifcn_combinational_pnr app/ifcn_combinational_pnr.cpp)
-target_link_libraries(ifcn_combinational_pnr PRIVATE autopr ${GVC_LIBRARIES} ${CGRAPH_LIBRARIES})
+target_link_libraries(ifcn_combinational_pnr PRIVATE autopr PkgConfig::IFCN_GRAPHVIZ)
 endif()

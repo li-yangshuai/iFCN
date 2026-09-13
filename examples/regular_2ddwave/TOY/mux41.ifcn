@@ -57,15 +57,17 @@
 #phase map
 #phase codec: phase_count=4, block_size=4, encoding=packed_hex_2bit_row_major
 ### tile(x,y) : packed_hex for a 4x4 phase block ###
-tile(0,0):0x00004090;
-tile(1,0):0xC0394E93;
-tile(2,0):0x00394E93;
-tile(0,1):0xE0314E90;
-tile(1,1):0xE4314E93;
+tile(0,0):0xE4394E93;
+tile(1,0):0xE4394E93;
+tile(2,0):0xE4394E93;
+tile(3,0):0x00010203;
+tile(0,1):0xE4394E93;
+tile(1,1):0xE4394E93;
 tile(2,1):0xE4394E93;
 tile(3,1):0x00010203;
-tile(1,2):0xC0390000;
-tile(2,2):0xE4394C00;
+tile(0,2):0xE4394E00;
+tile(1,2):0xE4394E00;
+tile(2,2):0xE4394E00;
 tile(3,2):0x00010200;
 #phase map
 #fixed clock template original origin: (0, 0)
